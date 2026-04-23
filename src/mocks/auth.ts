@@ -30,11 +30,12 @@ export function isNewAccountCredential(email: string, password: string): boolean
 }
 
 /**
- * 입력이 "데모(데이터 있는) 계정"으로 취급될 자격 증명인지 판별합니다.
+ * 입력이 "기존 계정 로그인"으로 취급될 자격 증명인지 판별합니다.
  * - 이메일/비밀번호 모두 비어있지 않아야 함
  * - 신규 계정 자격 증명(1111@test.com / 1111)은 제외
- * 이 조건을 만족하면 transactionsStore.resetToSeed()로 시드 데이터를 복원해
- * "데이터가 이미 쌓여 있는 계정" 화면을 바로 보여줍니다. (데모/테스트 시나리오 전용)
+ * 이 조건을 만족하면 "튜토리얼 자동 표시는 건너뛴다"는 시그널로 동작합니다.
+ * (과거에는 이 경로에서 시드 거래를 강제로 채워 넣었지만, 실제 입력만 저장하는
+ * 정책으로 바뀌면서 현재는 거래 데이터를 건드리지 않습니다.)
  */
 export function isSeededDemoCredential(email: string, password: string): boolean {
   if (!email || !password) return false;

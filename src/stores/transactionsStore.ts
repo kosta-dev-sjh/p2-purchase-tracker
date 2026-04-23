@@ -1,45 +1,24 @@
 /**
  * 역할: Transactions 전역 상태를 Zustand + localStorage 기반으로 보관합니다.
  *       기존 transactionsStore API(loadAll/addOne/updateOne...)는 유지해 호출부 변경을 최소화합니다.
+ *
+ *       이전 버전에는 화면을 비워 두지 않으려고 월별 랜덤 시드 거래(무신사·쿠팡 등)를
+ *       자동으로 채워 넣던 buildSeed()가 있었지만, 실제 입력 경로(수동/OCR/CSV)가 모두
+ *       동작하는 현재는 "사용자가 넣은 데이터만 보인다"로 정책을 바꿨습니다. 시드를
+ *       제거한 이후에도 구버전 localStorage에는 musinsa 같은 더 이상 지원하지 않는
+ *       플랫폼 값이 남아 있어, STORAGE_KEY를 v4로 bump 해 자동으로 깨끗한 상태에서
+ *       시작하도록 했습니다.
  * 위치: src\stores\transactionsStore.ts
  */
 import { create } from "zustand";
 import type { TxRow } from "../pages/Transactions/components/TransactionTable";
-import { getTransactionsMockData } from "../pages/Transactions/data";
 
-const STORAGE_KEY = "spendtrack:transactions:v3";
-const LEGACY_STORAGE_KEY_V2 = "spendtrack:transactions:v2";
-const SEED_MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04"];
-
-type LegacyV2Row = Omit<TxRow, "categories"> & { category?: unknown };
-
-function migrateRow(raw: LegacyV2Row): TxRow {
-  const preserved = raw as unknown as TxRow;
-  if (Array.isArray(preserved.categories) && preserved.categories.length > 0) {
-    return preserved;
-  }
-  const legacy = raw.category;
-  const single =
-    legacy === "living" ||
-    legacy === "fashion" ||
-    legacy === "digital" ||
-    legacy === "food" ||
-    legacy === "etc"
-      ? (legacy as TxRow["categories"][number])
-      : "etc";
-  const { category: _discarded, ...rest } = raw;
-  void _discarded;
-  return { ...(rest as unknown as TxRow), categories: [single] };
-}
-
-function buildSeed(): TxRow[] {
-  return SEED_MONTHS.flatMap((month) =>
-    getTransactionsMockData(month).rows.map((row) => ({
-      ...row,
-      source: row.source ?? "mock",
-    }))
-  );
-}
+/**
+ * localStorage 키. 가짜 시드를 제거하면서 v3 → v4 로 올렸습니다.
+ * v3에는 "musinsa" 플랫폼의 랜덤 시드 행이 들어 있어 현재 타입(TxPlatform)에서
+ * undefined 참조로 크래시가 났기 때문에, v4부터는 무조건 빈 상태로 시작합니다.
+ */
+const STORAGE_KEY = "spendtrack:transactions:v4";
 
 function readCurrent(): TxRow[] | null {
   try {
@@ -52,35 +31,19 @@ function readCurrent(): TxRow[] | null {
   }
 }
 
-function migrateFromV2IfAny(): TxRow[] | null {
-  try {
-    const raw = localStorage.getItem(LEGACY_STORAGE_KEY_V2);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return null;
-    const migrated = (parsed as LegacyV2Row[]).map(migrateRow);
-    localStorage.removeItem(LEGACY_STORAGE_KEY_V2);
-    return migrated;
-  } catch {
-    return null;
-  }
-}
-
 function writeCurrent(rows: TxRow[]): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
 }
 
-function ensureSeeded(): TxRow[] {
+/**
+ * 초기 로드. 저장된 rows가 있으면 그대로 사용하고, 없으면 빈 배열로 시작합니다.
+ * (과거에는 여기서 월별 시드 거래를 자동 생성했지만 제거했습니다.)
+ */
+function loadInitial(): TxRow[] {
   const existing = readCurrent();
   if (existing) return existing;
-  const migrated = migrateFromV2IfAny();
-  if (migrated) {
-    writeCurrent(migrated);
-    return migrated;
-  }
-  const seed = buildSeed();
-  writeCurrent(seed);
-  return seed;
+  writeCurrent([]);
+  return [];
 }
 
 interface TransactionsState {
@@ -95,11 +58,12 @@ interface TransactionsState {
     items: { name: string; price: number; link?: string }[],
     source?: "OCR" | "MANUAL"
   ) => void;
-  resetToSeed: () => TxRow[];
+  /** 저장된 거래를 모두 지워 "빈 계정" 상태로 돌립니다. */
+  clearAll: () => TxRow[];
 }
 
 const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
-  rows: ensureSeeded(),
+  rows: loadInitial(),
   replaceAll: (rows) => {
     writeCurrent(rows);
     set({ rows });
@@ -140,18 +104,17 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     writeCurrent(next);
     set({ rows: next });
   },
-  resetToSeed: () => {
-    const seed = buildSeed();
-    writeCurrent(seed);
-    set({ rows: seed });
-    return seed;
+  clearAll: () => {
+    writeCurrent([]);
+    set({ rows: [] });
+    return [];
   },
 }));
 
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
     if (event.key === STORAGE_KEY) {
-      useTransactionsStoreBase.setState({ rows: ensureSeeded() });
+      useTransactionsStoreBase.setState({ rows: loadInitial() });
     }
   });
 }
@@ -182,8 +145,8 @@ export const transactionsStore = {
   ): void {
     useTransactionsStoreBase.getState().appendItemsToTransaction(id, items, source);
   },
-  resetToSeed(): TxRow[] {
-    return useTransactionsStoreBase.getState().resetToSeed();
+  clearAll(): TxRow[] {
+    return useTransactionsStoreBase.getState().clearAll();
   },
   subscribe(listener: (rows: TxRow[]) => void): () => void {
     return useTransactionsStoreBase.subscribe((state) => listener(state.rows));

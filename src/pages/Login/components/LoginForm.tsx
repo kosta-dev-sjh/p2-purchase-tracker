@@ -65,14 +65,17 @@ export const LoginForm: React.FC = () => {
 
         // TODO(auth): src/mocks/auth.ts 제거 시 이 분기 통째로 실제 auth SDK 호출로 교체.
         // 현재는 프런트엔드만 있는 MVP라서 아래 두 시나리오를 입력값으로 흉내 냅니다.
-        //   1) 1111@test.com / 1111 → "비어있는 신규 계정" (0건 + 튜토리얼 무조건 표시)
-        //   2) 그 외 이메일/비밀번호 모두 입력 → "데이터 있는 데모 계정" (시드 강제 복원)
+        //   1) 1111@test.com / 1111 → "비어있는 신규 계정" (튜토리얼 자동 표시)
+        //   2) 그 외 이메일/비밀번호 모두 입력 → "기존 계정 로그인"
+        //      (저장된 거래가 있으면 그대로 유지, 없으면 빈 화면)
         //   3) 둘 다 비어있음 → 현재 세션 상태 그대로 유지
+        //
+        // 과거에는 2) 경로에서 월별 랜덤 시드 거래를 강제로 채워 넣어
+        // "데이터 있는 데모 계정"을 연출했지만, 이제 실제 입력(수동/OCR/CSV)만 저장/표시하기로
+        // 정책을 바꿨기 때문에 이 경로에서도 기존 localStorage 데이터를 그대로 둡니다.
         //
         // 테스트 결정성(determinism)을 위해 "튜토리얼을 무조건 띄운다"는 신호는
         // localStorage 플래그가 아니라 React Router navigation state로 Home에 직접 전달합니다.
-        // 이렇게 해야 여러 번 1111로 재로그인해도 항상 "0건 + 튜토리얼"이 뜨고,
-        // 다른 계정 로그인은 항상 "시드 로드"로 떨어집니다.
         if (isNewAccountCredential(email, password)) {
           // 신규 계정: 거래/프로필을 전부 초기화
           transactionsStore.replaceAll([]);
@@ -91,13 +94,12 @@ export const LoginForm: React.FC = () => {
           return;
         }
         if (isSeededDemoCredential(email, password)) {
-          // 데이터 있는 데모 계정: 시드 거래를 강제로 복원해 "쌓여 있는 계정" 화면을 바로 보여줍니다.
-          // 이전 세션에 1111@test.com으로 거래를 비워둔 적이 있어도 이 경로로 다시 채워집니다.
-          transactionsStore.resetToSeed();
+          // 기존 계정 로그인: 저장된 거래는 그대로 두고 프로필만 입력한 이메일로 갱신합니다.
+          // (과거 "시드 거래 강제 복원" 로직은 제거했습니다.)
           profileStore.reset();
           profileStore.save({ email });
           try {
-            // 데모 계정은 튜토리얼을 띄우지 않습니다. (신규 계정 전용 가이드라서)
+            // 기존 계정 경로는 튜토리얼을 띄우지 않습니다. (신규 계정 전용 가이드라서)
             localStorage.setItem(ONBOARDING_SEEN_KEY, "1");
           } catch {
             // localStorage 접근 불가 환경(예: 서버 렌더)은 무시
