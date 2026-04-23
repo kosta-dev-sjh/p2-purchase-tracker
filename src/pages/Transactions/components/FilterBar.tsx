@@ -2,7 +2,7 @@
  * 역할: 특정 페이지 안에서만 사용하는 화면 전용 UI 블록입니다.
  * 위치: src\pages\Transactions\components\FilterBar.tsx
  */
-import { useRef, useState } from "react";
+import { memo, useRef, useState } from "react";
 import styled, { css } from "styled-components";
 import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import { SegmentedControl } from "../../../components/primitives/SegmentedControl";
@@ -320,7 +320,7 @@ const ChevronIcon = () => (
   </svg>
 );
 
-export const FilterBar = ({
+export const FilterBar = memo(({
   search,
   typeFilter,
   platform,
@@ -544,4 +544,6 @@ export const FilterBar = ({
       </MobileBar>
     </Wrap>
   );
-};
+});
+
+FilterBar.displayName = "FilterBar";

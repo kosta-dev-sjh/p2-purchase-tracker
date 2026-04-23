@@ -243,13 +243,21 @@ const LinkButton = styled.button`
   cursor: pointer;
 `;
 
-export const DetailPanel: React.FC<{
+interface DetailPanelProps {
   row: TxRow;
   onClose: () => void;
   onEdit: () => void;
   onDelete: () => void;
   onOpenSource: () => void;
-}> = ({ row, onClose, onEdit, onDelete, onOpenSource }) => {
+}
+
+const DetailPanelInner = ({
+  row,
+  onClose,
+  onEdit,
+  onDelete,
+  onOpenSource,
+}: DetailPanelProps) => {
   // 카테고리 색은 설정 화면에서 사용자가 바꿀 수 있으므로 스토어에서 구독해 실시간으로 반영합니다.
   const categoryColorMap = useCategoryColorMap();
   // 메모는 빈 문자열/공백만 있는 경우 섹션을 숨겨, 불필요한 빈 박스가 패널을 지저분하게 만들지 않게 합니다.
@@ -387,3 +395,6 @@ export const DetailPanel: React.FC<{
   );
 };
 
+export const DetailPanel = React.memo(DetailPanelInner);
+
+DetailPanel.displayName = "DetailPanel";

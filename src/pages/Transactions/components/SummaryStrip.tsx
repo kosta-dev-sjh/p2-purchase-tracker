@@ -131,7 +131,11 @@ const formatDelta = (delta: SummaryDelta) => {
   return `${sign}${Math.abs(delta.percent)}%`;
 };
 
-export const SummaryStrip: React.FC<{ summary: SummaryData }> = ({ summary }) => (
+interface SummaryStripProps {
+  summary: SummaryData;
+}
+
+export const SummaryStrip = React.memo(({ summary }: SummaryStripProps) => (
   <Strip>
     <Cell>
       <Label>전체 거래</Label>
@@ -169,4 +173,6 @@ export const SummaryStrip: React.FC<{ summary: SummaryData }> = ({ summary }) =>
       <Sub>지출 − 수입</Sub>
     </Cell>
   </Strip>
-);
+));
+
+SummaryStrip.displayName = "SummaryStrip";

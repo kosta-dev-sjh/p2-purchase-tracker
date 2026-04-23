@@ -2,7 +2,7 @@
  * 역할: 특정 페이지 안에서만 사용하는 화면 전용 UI 블록입니다.
  * 위치: src\pages\Transactions\components\TransactionTable.tsx
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { memo, useEffect, useRef, useState } from "react";
 import styled, { css, keyframes } from "styled-components";
 import { Card } from "../../../components/primitives/Card";
 import { Tag } from "../../../components/primitives/Tag";
@@ -473,7 +473,7 @@ interface Props {
   renderMobileDetail?: (row: TxRow) => React.ReactNode;
 }
 
-export const TransactionTable: React.FC<Props> = ({
+export const TransactionTable = memo<Props>(({
   rows,
   totalCount,
   selectedId,
@@ -695,4 +695,6 @@ export const TransactionTable: React.FC<Props> = ({
       )}
     </Card>
   );
-};
+});
+
+TransactionTable.displayName = "TransactionTable";

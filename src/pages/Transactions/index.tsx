@@ -177,6 +177,10 @@ export const TransactionsPage: React.FC = () => {
     return allRows.filter((row) => toMonthKey(row.date) === prevKey);
   }, [allRows, month]);
   const monthOption = getMonthOption(month);
+  const summary = useMemo(
+    () => buildTransactionSummary(monthRows, prevMonthRows),
+    [monthRows, prevMonthRows]
+  );
 
   const filteredRows = useMemo(() => {
     // 검색어, 플랫폼, 카테고리 조건을 한 번에 적용해 실제 표에 보여줄 후보 목록을 만듭니다.
@@ -283,6 +287,18 @@ export const TransactionsPage: React.FC = () => {
       return Math.min(current + LOAD_STEP, filteredRows.length);
     });
   }, [filteredRows.length]);
+
+  const handleToggleSort = useCallback(() => {
+    setSortOrder((current) => (current === "desc" ? "asc" : "desc"));
+  }, []);
+
+  const handleSelectRow = useCallback((id: string) => {
+    setSelectedId(id || null);
+  }, []);
+
+  const handleCloseDetail = useCallback(() => {
+    setSelectedId(null);
+  }, []);
 
   const resolvedSelectedId = useMemo(() => {
     if (selectedId === null) return null;
@@ -401,10 +417,32 @@ export const TransactionsPage: React.FC = () => {
   // 있어(mock/구데이터), 모달 본문에서 플레이스홀더로 떨어뜨립니다.
   const [sourceImageUrl, setSourceImageUrl] = useState<string | null>(null);
 
-  const handleOpenSource = useCallback(() => {
+  const handleOpenSource = useCallback((row: TxRow) => {
+    setSourceImageUrl(row.detail?.sourceImageUrl ?? "");
+  }, []);
+
+  const handleEditDisplayed = useCallback(() => {
     if (!displayed) return;
-    setSourceImageUrl(displayed.detail?.sourceImageUrl ?? "");
-  }, [displayed]);
+    handleEditOpen(displayed);
+  }, [displayed, handleEditOpen]);
+
+  const handleDeleteDisplayed = useCallback(() => {
+    if (!displayed) return;
+    handleDelete(displayed);
+  }, [displayed, handleDelete]);
+
+  const renderMobileDetail = useCallback(
+    (row: TxRow) => (
+      <DetailPanel
+        row={row}
+        onClose={handleCloseDetail}
+        onEdit={() => handleEditOpen(row)}
+        onDelete={() => handleDelete(row)}
+        onOpenSource={() => handleOpenSource(row)}
+      />
+    ),
+    [handleCloseDetail, handleDelete, handleEditOpen, handleOpenSource]
+  );
 
   return (
     <AppShell
@@ -414,7 +452,7 @@ export const TransactionsPage: React.FC = () => {
       headerRight={<MonthPicker value={month} onChange={handleMonthChange} />}
     >
       <Grid>
-        <SummaryStrip summary={buildTransactionSummary(monthRows, prevMonthRows)} />
+        <SummaryStrip summary={summary} />
         <Body $hasPanel={isOpen}>
           <Left>
             {/* 왼쪽 영역은 필터와 표, 오른쪽 영역은 상세 패널로 역할을 분리합니다.
@@ -427,9 +465,7 @@ export const TransactionsPage: React.FC = () => {
               category={category}
               statusFilter={statusFilter}
               sortOrder={sortOrder}
-              onToggleSort={() =>
-                setSortOrder((current) => (current === "desc" ? "asc" : "desc"))
-              }
+              onToggleSort={handleToggleSort}
               onSearchChange={handleSearchChange}
               onTypeChange={handleTypeChange}
               onPlatformChange={handlePlatformChange}
@@ -440,23 +476,11 @@ export const TransactionsPage: React.FC = () => {
               rows={visibleRows}
               totalCount={filteredRows.length}
               selectedId={selected?.id ?? ""}
-              onSelect={setSelectedId}
+              onSelect={handleSelectRow}
               onLoadMore={handleLoadMore}
               sortOrder={sortOrder}
-              onToggleSort={() =>
-                setSortOrder((current) => (current === "desc" ? "asc" : "desc"))
-              }
-              // 모바일 아코디언: 활성 행 바로 아래에 기존 DetailPanel 을 그대로 붙여 보여줍니다.
-              // 같은 컴포넌트를 재활용해, 데스크톱 오른쪽 패널과 정보 구조가 분화되지 않도록 합니다.
-              renderMobileDetail={(row) => (
-                <DetailPanel
-                  row={row}
-                  onClose={() => setSelectedId(null)}
-                  onEdit={() => handleEditOpen(row)}
-                  onDelete={() => handleDelete(row)}
-                  onOpenSource={handleOpenSource}
-                />
-              )}
+              onToggleSort={handleToggleSort}
+              renderMobileDetail={renderMobileDetail}
             />
           </Left>
           <PanelSlot>
@@ -464,10 +488,10 @@ export const TransactionsPage: React.FC = () => {
               <PanelInner $open={isOpen}>
                 <DetailPanel
                   row={displayed}
-                  onClose={() => setSelectedId(null)}
-                  onEdit={() => handleEditOpen(displayed)}
-                  onDelete={() => handleDelete(displayed)}
-                  onOpenSource={handleOpenSource}
+                  onClose={handleCloseDetail}
+                  onEdit={handleEditDisplayed}
+                  onDelete={handleDeleteDisplayed}
+                  onOpenSource={() => handleOpenSource(displayed)}
                 />
               </PanelInner>
             )}
