@@ -108,25 +108,28 @@ export const OcrUploadPage: React.FC = () => {
     setImages((current) => current.filter((image) => image.id !== id));
   };
 
-  const handleAddMock = () => {
+  const handleFileSelect = (files: File[]) => {
     setImages((current) => {
-      // v1 데모에서는 실제 파일 대신 목업 썸네일 행을 추가해 흐름만 검증합니다.
-      if (current.length >= MAX_IMAGES) {
-        return current;
-      }
-      const nextIndex = current.length + 1;
-      return [
-        ...current,
-        {
-          id: `mock-${Date.now()}`,
-          thumbUrl: "",
-          fileName: `${platform}-capture-${nextIndex}.png`,
-          sizeLabel: `${(0.8 + nextIndex * 0.2).toFixed(1)} MB`,
-          status: "ready",
-          // 현재 선택된 플랫폼을 이미지에 "찍어" 둡니다. 이 값이 OcrEdit까지 그대로 이어집니다.
+      // 남은 개수만큼만 파일 받기
+      const remainingSlots = MAX_IMAGES - current.length;
+      if (remainingSlots <= 0) return current;
+
+      const filesToAdd = files.slice(0, remainingSlots);
+      
+      const newImages = filesToAdd.map((file, index) => {
+        return {
+          id: `file-${Date.now()}-${index}`,
+          thumbUrl: URL.createObjectURL(file),
+          fileName: file.name,
+          sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+          status: "ready" as const,
+          // 현재 선택된 플랫폼을 이미지에 "찍어" 둡니다.
           platform,
-        },
-      ];
+          file, // OCR 파싱에 쓸 원본 파일
+        };
+      });
+
+      return [...current, ...newImages];
     });
   };
 
@@ -160,7 +163,7 @@ export const OcrUploadPage: React.FC = () => {
               maxCount={MAX_IMAGES}
               activePlatformLabel={PLATFORM_LABELS[platform]}
               disabled={atCapacity}
-              onPick={handleAddMock}
+              onPick={handleFileSelect}
             />
           </div>
         </UploadStack>
