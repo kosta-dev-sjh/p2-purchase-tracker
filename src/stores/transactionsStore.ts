@@ -11,7 +11,60 @@
  * 위치: src\stores\transactionsStore.ts
  */
 import { create } from "zustand";
-import type { TxRow } from "../pages/Transactions/components/TransactionTable";
+import type { TxCategory, TxRow } from "../pages/Transactions/components/TransactionTable";
+import { categoriesStore } from "./categoriesStore";
+import {
+  inferCategory,
+  normalizeMerchantKey,
+  shouldInferCategory,
+} from "../utils/categoryInference";
+
+/**
+ * 저장 경계에서 참조하는 "가맹점명 → 사용자 선택 카테고리" 학습 캐시.
+ * 사용자가 거래 수정으로 카테고리를 바꾸면 여기에 기록되고, 다음 import에서 룰보다 우선 적용됩니다.
+ */
+const LEARNED_STORAGE_KEY = "spendtrack:category-learned:v1";
+
+function readLearned(): Record<string, TxCategory> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(LEARNED_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, TxCategory>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLearned(map: Record<string, TxCategory>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LEARNED_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    /* localStorage 용량 초과 등은 조용히 무시 — 학습 캐시는 보조 신호라서 실패해도 기능 회귀 없음. */
+  }
+}
+
+/**
+ * 주어진 row 배열을 "저장 직전" 시점에 카테고리 자동추정으로 보강합니다.
+ * - `categories`가 비었거나 `["etc"]`인 경우에만 건드립니다. 사용자가 명시적으로 고른 값은 그대로.
+ * - 추정에 실패한 행은 그대로 두어, 호출부가 이미 붙여둔 `etc` 기본값이 유지됩니다.
+ */
+function enrichCategories(rows: TxRow[]): TxRow[] {
+  const bindings = categoriesStore.getBindings();
+  const learned = readLearned();
+  return rows.map((row) => {
+    if (!shouldInferCategory(row.categories)) return row;
+    // TxRow에는 별도의 merchant 필드가 없고 가맹점명은 title에 정규화돼 담깁니다(csvImport 참조).
+    const guess = inferCategory(row.title, { bindings, learnedMap: learned });
+    if (!guess) return row;
+    return { ...row, categories: [guess] };
+  });
+}
 
 /**
  * localStorage 키. 가짜 시드를 제거하면서 v3 → v4 로 올렸습니다.
@@ -49,7 +102,19 @@ function loadInitial(): TxRow[] {
 interface TransactionsState {
   rows: TxRow[];
   replaceAll: (rows: TxRow[]) => void;
+  /**
+   * CSV/OCR 등 자동 입력 경로에서 사용합니다. 저장 직전에 카테고리 자동추정이 돌아
+   * `etc`로 들어온 행들을 가맹점명 룰에 맞춰 재분류합니다.
+   */
+  addFromImport: (rows: TxRow[]) => void;
+  /**
+   * 수동 입력 경로에서 사용합니다. 사용자가 화면에서 직접 카테고리를 고른 값이므로
+   * 자동추정을 돌리지 않고 그대로 저장합니다.
+   */
+  addFromManual: (row: TxRow) => void;
+  /** @deprecated `addFromImport`를 쓰세요. 하위 호환을 위해 자동추정을 그대로 태워줍니다. */
   addMany: (rows: TxRow[]) => void;
+  /** @deprecated `addFromManual` 또는 `addFromImport`를 쓰세요. 지금은 자동추정 없이 저장합니다. */
   addOne: (row: TxRow) => void;
   updateOne: (id: string, patch: Partial<TxRow>) => void;
   removeOne: (id: string) => void;
@@ -68,8 +133,20 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     writeCurrent(rows);
     set({ rows });
   },
+  addFromImport: (rows) => {
+    const enriched = enrichCategories(rows);
+    const next = [...enriched, ...get().rows];
+    writeCurrent(next);
+    set({ rows: next });
+  },
+  addFromManual: (row) => {
+    const next = [row, ...get().rows];
+    writeCurrent(next);
+    set({ rows: next });
+  },
   addMany: (rows) => {
-    const next = [...rows, ...get().rows];
+    const enriched = enrichCategories(rows);
+    const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
   },
@@ -79,9 +156,29 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
   },
   updateOne: (id, patch) => {
+    const prev = get().rows.find((row) => row.id === id);
     const next = get().rows.map((row) => (row.id === id ? { ...row, ...patch } : row));
     writeCurrent(next);
     set({ rows: next });
+
+    // 사용자가 카테고리를 명시적으로 바꾼 경우만 학습 캐시에 기록합니다.
+    // - patch.categories가 포함돼 있고
+    // - 이전 값과 다르고
+    // - `etc`가 아닌 실질적인 선택일 때
+    // 가맹점명(title) 변경까지 포함하려면 복잡해지므로, 키는 patch에 title이 오면 그것을, 아니면 이전 title을 씁니다.
+    if (prev && Array.isArray(patch.categories) && patch.categories.length > 0) {
+      const nextCat = patch.categories[0];
+      const prevCat = prev.categories?.[0];
+      const titleForKey = typeof patch.title === "string" ? patch.title : prev.title;
+      if (nextCat && nextCat !== "etc" && nextCat !== prevCat && titleForKey) {
+        const key = normalizeMerchantKey(titleForKey);
+        if (key) {
+          const learned = readLearned();
+          learned[key] = nextCat;
+          writeLearned(learned);
+        }
+      }
+    }
   },
   removeOne: (id) => {
     const next = get().rows.filter((row) => row.id !== id);
@@ -126,9 +223,17 @@ export const transactionsStore = {
   replaceAll(rows: TxRow[]): void {
     useTransactionsStoreBase.getState().replaceAll(rows);
   },
+  addFromImport(rows: TxRow[]): void {
+    useTransactionsStoreBase.getState().addFromImport(rows);
+  },
+  addFromManual(row: TxRow): void {
+    useTransactionsStoreBase.getState().addFromManual(row);
+  },
+  /** @deprecated 새 호출부는 addFromImport를 쓰세요. */
   addMany(rows: TxRow[]): void {
     useTransactionsStoreBase.getState().addMany(rows);
   },
+  /** @deprecated 새 호출부는 addFromManual 또는 addFromImport를 쓰세요. */
   addOne(row: TxRow): void {
     useTransactionsStoreBase.getState().addOne(row);
   },

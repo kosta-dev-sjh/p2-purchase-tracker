@@ -498,7 +498,8 @@ export const OcrEditPage: React.FC = () => {
     const changedItemsToSave = resolved.toSave.filter((r) => !freshIds.has(r.id));
 
     if (changedItemsToSave.length > 0) {
-      transactionsStore.addMany(changedItemsToSave);
+      // OCR 파생 거래는 카테고리가 비거나 etc로 들어오므로 자동추정 경계를 태운다.
+      transactionsStore.addFromImport(changedItemsToSave);
     }
 
     proceedSave(freshToMatch, resolved.skipped, resolved.toMerge, flat);
@@ -536,7 +537,7 @@ export const OcrEditPage: React.FC = () => {
     const autoSaved = canAutoSave.map((entry) => entry.candidate);
 
     if (autoSaved.length > 0) {
-      transactionsStore.addMany(autoSaved);
+      transactionsStore.addFromImport(autoSaved);
     }
 
     if (needsModal.length === 0) {
@@ -594,7 +595,8 @@ export const OcrEditPage: React.FC = () => {
   const handleSaveAsNew = () => {
     const [current, ...rest] = matchQueue;
     if (!current) return;
-    transactionsStore.addOne(current.candidate);
+    // OCR 경로에서 새로 저장하는 한 건도 자동추정 대상.
+    transactionsStore.addFromImport([current.candidate]);
     advanceQueue(rest, current.candidate);
   };
 
