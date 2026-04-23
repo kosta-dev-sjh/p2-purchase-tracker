@@ -11,7 +11,7 @@
  * 위치: src\pages\OcrUpload\index.tsx
  */
 import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import styled from "styled-components";
 import { createWorker } from "tesseract.js";
 import { AppShell } from "../../components/layout/AppShell";
@@ -109,10 +109,22 @@ const MAX_IMAGES = 5;
 
 export const OcrUploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isAppendMode = location.state?.append === true;
+
   // 여기서의 platform은 "다음에 올릴 이미지에 찍힐 태그"입니다.
   // 업로드를 실행할 때마다 새 이미지의 UploadedImage.platform에 스냅샷으로 복사됩니다.
   const [platform, setPlatform] = useState<Platform>("coupang");
-  const [images, setImages] = useState<UploadedImage[]>(ocrUploadMockData.images);
+  
+  // append 모드일 때는 빈 상태로 시작하여 이전에 올린 이미지와 혼동되지 않게 합니다.
+  const [images, setImages] = useState<UploadedImage[]>(isAppendMode ? [] : ocrUploadMockData.images);
+
+  React.useEffect(() => {
+    // 새로운 세션 시작일 경우에만 스토어를 초기화합니다.
+    if (!isAppendMode) {
+      ocrStore.clear();
+    }
+  }, [isAppendMode]);
 
   const handleRemove = (id: string) => {
     setImages((current) => current.filter((image) => image.id !== id));
@@ -220,7 +232,7 @@ export const OcrUploadPage: React.FC = () => {
 
       await worker.terminate();
       
-      ocrStore.setImages(processedImages);
+      ocrStore.setImages(isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages);
       navigate("/ocr-edit");
     } catch (error) {
       console.error('OCR 파싱 실패:', error);

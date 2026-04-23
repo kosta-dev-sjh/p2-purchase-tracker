@@ -23,7 +23,7 @@ import {
   type OcrImageItem,
   type OcrOrder,
 } from "./data";
-import { useOcrStore } from "../../stores/ocrStore";
+import { ocrStore, useOcrStore } from "../../stores/ocrStore";
 import {
   transactionsStore,
   useTransactionsStore,
@@ -644,7 +644,7 @@ export const OcrEditPage: React.FC = () => {
           images={images}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onAdd={() => navigate("/ocr-upload")}
+          onAdd={() => navigate("/ocr-upload", { state: { append: true } })}
           onDelete={handleDeleteImage}
         />
         <ImagePreview image={selected} />
@@ -671,7 +671,10 @@ export const OcrEditPage: React.FC = () => {
           mergedActions={saveResult.mergedActions}
           allRows={allRows}
           skipped={saveResult.skipped}
-          onConfirm={() => navigate("/transactions")}
+          onConfirm={() => {
+            ocrStore.clear();
+            navigate("/transactions");
+          }}
         />
       )}
       {currentMatch && (
