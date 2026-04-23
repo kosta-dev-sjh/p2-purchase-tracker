@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 역할: 버튼, 카드처럼 여러 화면에서 재사용하는 기본 UI 컴포넌트입니다.
  * 위치: src\components\primitives\Tag.tsx
  */
@@ -11,6 +11,8 @@ type ModernKind =
   | "coupang"
   | "naver"
   | "musinsa"
+  | "auction"
+  | "temu"
   | "unspecified"
   | "expense"
   | "income"

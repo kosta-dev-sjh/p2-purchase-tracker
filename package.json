@@ -20,6 +20,7 @@
     "react-router-dom": "^7.14.1",
     "recharts": "^3.8.1",
     "styled-components": "^6.4.0",
+    "tesseract.js": "^7.0.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zustand": "^5.0.12"
   },

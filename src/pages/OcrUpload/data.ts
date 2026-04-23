@@ -11,6 +11,10 @@ export interface UploadedImage {
   sizeLabel: string;
   status: "ready" | "analyzing" | "done";
   /**
+   * 원본 파일 객체 (실제 파일 업로드 후 OCR 처리에 사용)
+   */
+  file?: File;
+  /**
    * 이 이미지를 올릴 때 선택돼 있던 플랫폼. 한 배치 안의 모든 이미지가 같은 값을 갖지만,
    * 사용자가 중간에 플랫폼을 바꿔 다른 배치를 올리면 이미지마다 값이 달라집니다.
    * 나중에 OcrEdit 단계에서 이 값이 각 OcrImageItem.platform으로 승격됩니다.

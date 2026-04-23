@@ -97,6 +97,8 @@ function buildPlatform(rows: TxRow[]): {
     coupang: { value: 0, count: 0 },
     naver: { value: 0, count: 0 },
     musinsa: { value: 0, count: 0 },
+    auction: { value: 0, count: 0 },
+    temu: { value: 0, count: 0 },
     // "미지정"도 하나의 막대로 구분해 보여줍니다. 값이 0이면 아래 filter에서 빠지므로
     // 실제 데이터가 없으면 차트에 등장하지 않습니다.
     unspecified: { value: 0, count: 0 },
