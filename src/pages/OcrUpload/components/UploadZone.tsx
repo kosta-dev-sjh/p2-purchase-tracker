@@ -98,6 +98,35 @@ const PlatformHint = styled.div`
   font-weight: 600;
 `;
 
+/**
+ * 쿠팡 캡쳐 전용 보조 안내.
+ *
+ * 2026-04-24: 쿠팡 주문 상세 화면은 스크롤 위치에 따라 "2026. 4. 22 주문" 같은 주문일자
+ * 줄이 화면에서 잘리는 경우가 많고, 그러면 OCR 파서가 날짜를 붙이지 못해 편집 화면에서
+ * 사용자가 수동으로 날짜를 다시 입력해야 합니다. 플랫폼을 쿠팡으로 고른 상태일 때만
+ * 이 팁을 노출해, 캡쳐 전에 주문일자 줄을 포함시키도록 유도합니다.
+ *
+ * PlatformHint 바로 아래에 붙여, "이 플랫폼 태그로 저장 + 이 플랫폼만의 캡쳐 주의사항"이
+ * 시각적으로 한 묶음으로 읽히도록 배치했습니다.
+ */
+const PlatformTip = styled.div`
+  margin: -8px auto 14px;
+  max-width: 420px;
+  padding: 8px 12px;
+  border: 1px dashed ${tokens.color.accentBorder};
+  border-radius: 10px;
+  background: ${tokens.color.foot};
+  color: ${tokens.color.ink2};
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-align: left;
+
+  strong {
+    color: ${tokens.color.accentHover};
+    font-weight: 700;
+  }
+`;
+
 const PickButton = styled.button<{ $disabled?: boolean }>`
   padding: 8px 16px;
   border: none;
@@ -291,6 +320,12 @@ export const UploadZone: React.FC<{
           <PlatformHint>
             이번 업로드는 <strong>{activePlatformLabel}</strong> 태그로 저장돼요
           </PlatformHint>
+        )}
+        {activePlatformLabel === "쿠팡" && !disabled && (
+          <PlatformTip>
+            쿠팡은 <strong>주문일자</strong>가 화면에 보이게 캡쳐해 주세요. 주문 상세 위쪽의
+            <strong> "2026. 4. 22 주문"</strong> 같은 줄이 잘리면 날짜 인식이 빠질 수 있어요.
+          </PlatformTip>
         )}
         <PickButton
           type="button"

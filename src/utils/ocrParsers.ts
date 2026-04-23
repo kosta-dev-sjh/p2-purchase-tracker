@@ -74,7 +74,20 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   //   이 버튼/헤더가 단독 라인으로 떨어졌을 때 nameBuffer 에 섞이면 직후 상품명에 들러붙을
   //   위험이 있어 noise 처리합니다. 현재 파서는 statusLine 이 nameBuffer 를 clear 해 주지만
   //   마지막 상품 뒤처럼 statusLine 이 더 나오지 않는 경우까지 안전하게 방어하려는 의도.
-  const noiseLineRegex = /(^[\s·•\-*]*\d{1,2}\/\d{1,2}\s*\(?[월화수목금토일]?\)?\s*도착\s*$)|(^주문\s*상세보기\s*>?\s*$)|(^장바구니\s*담기\s*$)|(^배송\s*조회\s*$)|(^리뷰(?:\s*작성(?:하기)?|\s*쓰기)\s*$)|(^교환[,\s]*반품\s*신청\s*$)|(^판매자\s*문의\s*$)|(^주문\s*취소\s*>?\s*$)|(^더보기\s*$)|(^상세보기\s*>?\s*$)|(^배송\s*[·•\-]?\s*주문\s*관리\s*$)|(^바로\s*구매\s*$)|(^주문한\s*상품을\s*검색할\s*수\s*있어요[!！]?\s*$)|(^주문내역\s*$)/;
+  // 2026-04-23 (데스크톱 추가 캡쳐 대응):
+  //   - "반품 상세 보기": 반품완료 카드의 우측 CTA. "반품 안내" 헤더도 섹션 외에서 단독으로 오면 노이즈.
+  //   - "이전"/"다음"/"다음 >": 목록 페이지 하단 페이징 버튼. 단독 라인일 때만 컷.
+  //   - "주문 목록"/"주문목록": 목록 페이지 상단 타이틀.
+  //   - "· 도착 완료" 같은 꼬리표도 가끔 잘려서 떨어지므로 대응.
+  const noiseLineRegex = /(^[\s·•\-*]*\d{1,2}\/\d{1,2}\s*\(?[월화수목금토일]?\)?\s*도착\s*$)|(^주문\s*상세보기\s*>?\s*$)|(^장바구니\s*담기\s*$)|(^배송\s*조회\s*$)|(^리뷰(?:\s*작성(?:하기)?|\s*쓰기)\s*$)|(^교환[,\s]*반품\s*신청\s*$)|(^판매자\s*문의\s*$)|(^주문\s*취소\s*>?\s*$)|(^더보기\s*$)|(^상세보기\s*>?\s*$)|(^배송\s*[·•\-]?\s*주문\s*관리\s*$)|(^바로\s*구매\s*$)|(^주문한\s*상품을\s*검색할\s*수\s*있어요[!！]?\s*$)|(^주문\s*목록\s*$)|(^주문내역\s*$)|(^반품\s*상세\s*보기\s*$)|(^반품\s*안내\s*$)|(^[\s<>«»]*\s*이전\s*$)|(^다음\s*>?\s*$)|(^쿠팡\s*only\s*$)/i;
+
+  // 분리배송 마커: 동일 주문의 같은 상품이 창고 분리 발송으로 여러 카드로 쪼개져 표시되는 경우를 탐지.
+  //   - "일부 상품이 분리되어 배송됩니다" (원본 카드 상단 안내)
+  //   - "분리배송된 상품입니다" (복사 카드 상단 안내)
+  //   - 단독 "• 분리 배송" 서브섹션 헤더
+  // 이 마커가 활성화된 상태에서 flush 된 상품은 `_splitDelivery` 플래그가 붙고, 루프 종료 후
+  // (date, itemName, price) 가 같은 그룹은 첫 항목에 quantity 를 합산해 병합합니다.
+  const splitMarkerRegex = /(^일부\s*상품이\s*분리되어\s*배송됩니다[.…]?\s*$)|(^분리배송된\s*상품입니다[.…]?\s*$)|(^[\s•·\-*]*분리\s*배송\s*$)/;
 
   // 가격 라인: `6,900 원 · 1개` / `17,270 원 · 1개` / `0 원 · 1개` (무료/포인트 결제).
   // OCR로 · 가 ./-/* 로 변형돼도 수량이 잡히게 관대한 구분자를 씁니다.
@@ -121,7 +134,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // "할인 쿠폰" 이라는 이름의 상품을 팔더라도 꼬리 이름이 2자 이상 남기 때문에 placeholder
   // 정책(상품명 null → OcrEdit에서 사용자 직접 입력) 으로 안전하게 회복 가능합니다.
   const leadingTagRegex =
-    /^(?:[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-\|ㅣ=_*©!?~@#&]+\s*|[a-zA-Zㄱ-ㅎㅏ-ㅣ0-9]{1,4}\s*[>»‹<]+\s*|[A-Za-z0-9]{1,4}(?=\s+(?:로켓|판매자|새벽|내일|대일|오늘|당일|와우|무료|해외))\s+|[A-Za-z]{1,3}\s+[ㄱ-ㅎㅏ-ㅣ]\s+|[ㄱ-ㅎㅏ-ㅣ]\s+|[가-힣]{1,2}\s*[|│ㅣ]\s*|\+\s*\d{1,2}\s*%\s*\d{0,3}\s*[.,]?\s*|판매자\s*로켓|로켓\s*(?:그로스|직구|프레시|프레쉬|배송|설치|와우|\+\s*2|플러스)|내일\s*(?:도착|배송)|오늘\s*(?:도착|배송)|새벽\s*(?:도착|배송)|당일\s*(?:도착|배송)|무료\s*배송|해외\s*직구|와우\s*(?:멤버십|할인가|할인)|쿠팡\s*(?:추천|카드|캐시)|쿠폰\s*할인|쿠팡\s*캐시\s*적립|\d{1,2}\s*%\s*(?:추가)?\s*적립|로켓|판매자|새벽|내일|대일|오늘|당일|도착|배송|와우|광고|쿠폰|추천|적립|할인|BEST|NEW|HOT|SALE)\s*/i;
+    // 2026-04-23 (데스크톱 추가 캡쳐 회귀 수정):
+    //   bare badge 단어들(마지막 alternation)은 단어 경계가 없으면 "당일발송" 에서 "당일" 만 먹고
+    //   "발송" 이 상품명으로 남는 버그가 있었습니다. bare 단어 뒤에 공백 또는 라인 종료가 와야만
+    //   매치되도록 lookahead 를 추가합니다. compound 배지(`내일 도착`, `판매자 로켓` 등)는 이미
+    //   공백+다음 단어 구조라 영향 없음.
+    /^(?:[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-\|ㅣ=_*©!?~@#&]+\s*|[a-zA-Zㄱ-ㅎㅏ-ㅣ0-9]{1,4}\s*[>»‹<]+\s*|[A-Za-z0-9]{1,4}(?=\s+(?:로켓|판매자|새벽|내일|대일|오늘|당일|와우|무료|해외))\s+|[A-Za-z]{1,3}\s+[ㄱ-ㅎㅏ-ㅣ]\s+|[ㄱ-ㅎㅏ-ㅣ]\s+|[가-힣]{1,2}\s*[|│ㅣ]\s*|\+\s*\d{1,2}\s*%\s*\d{0,3}\s*[.,]?\s*|판매자\s*로켓|로켓\s*(?:그로스|직구|프레시|프레쉬|배송|설치|와우|\+\s*2|플러스)|내일\s*(?:도착|배송)|오늘\s*(?:도착|배송)|새벽\s*(?:도착|배송)|당일\s*(?:도착|배송)|무료\s*배송|해외\s*직구|와우\s*(?:멤버십|할인가|할인)|쿠팡\s*(?:추천|카드|캐시)|쿠폰\s*할인|쿠팡\s*캐시\s*적립|\d{1,2}\s*%\s*(?:추가)?\s*적립|(?:로켓|판매자|새벽|내일|대일|오늘|당일|도착|배송|와우|광고|쿠폰|추천|적립|할인|BEST|NEW|HOT|SALE)(?=\s|$))\s*/i;
 
   // ───────── 1차 라인 분리 ─────────
   const allLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -133,11 +151,15 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 나머지 헤더를 단순 스킵해 **모든 상품이 첫 헤더 날짜로 찍히는** 회귀가 있었습니다. 이제는 헤더 라인을
   // 만날 때마다 orderDate를 새 값으로 바꾸고, 남아 있던 nameBuffer는 섹션 경계 관점에서 버려
   // 이전 주문의 "이름만 남은 상품"이 새 주문의 첫 가격과 합쳐지지 않도록 합니다.
-  const results: PurchaseOCRResult[] = [];
+  // 내부 플래그: 파서가 자체적으로 분리배송 병합 시 사용. 최종 결과에는 노출되지 않음.
+  type InternalResult = PurchaseOCRResult & { _splitDelivery?: boolean };
+  const results: InternalResult[] = [];
   let orderDate: string | null = null;
   let currentStatus: string | undefined;
   let nameBuffer: string[] = [];
   let inPaymentSection = false;
+  // 분리배송 마커가 직전에 활성화됐는지. 다음 flush 한 번만 플래그를 전파하고 리셋합니다.
+  let pendingSplit = false;
 
   // 맨 앞의 "2026. 4. 16" 처럼 "주문" 단어 없이 날짜만 뜨는 최후의 폴백 용도로 스캔해 둡니다.
   // 메인 루프가 진짜 주문 헤더("주문" 단어 포함)를 만나면 이 값은 덮어씌워집니다.
@@ -196,17 +218,56 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     //   false-positive 가 발견됐습니다. 가격 태그 배지 OCR 가비지 ("로 #로켓 4 ", "48S 4/25...",
     //   "AED 는 프") 에서는 2글자 한글 덩어리가 거의 안 나타나는 반면 합법 상품명은
     //   "샤넬 루쥬 코코", "아이폰 맥세이프 스탠드" 처럼 2+ 글자 덩어리가 **2개 이상** 줄줄이
-    //   등장하는 경향이 강합니다. 따라서 prefix 안에 2글자 이상 연속 한글 덩어리가 2개 이상이면
-    //   합법 상품명으로 보고 컷하지 않습니다.
+    //   등장하는 경향이 강합니다.
     //
     //   단, 쿠팡 배지 키워드("로켓", "내일", "새벽", ...) 는 prefix 에 그대로 남아 있어도
     //   합법 브랜드 신호로 봐선 안 됩니다. 실제로 "Hess GE = | 08개 로켓 내일 삼성전자 ..."
     //   같은 데스크톱 OCR 가비지가 "로켓" + "내일" 두 덩어리로 카운트되며 보호돼 회귀(삼성전자
     //   충전기가 Hess 가비지 포함 이름으로 남음)가 발생했습니다. 먼저 배지 어휘를 지운 뒤
-    //   덩어리를 세도록 순서를 조정합니다.
+    //   남은 **residual** 로 판정합니다.
+    //
+    // 2026-04-23 (4차 보정, 데스크톱 추가 캡쳐):
+    //   배지만 붙는 정상 상품명 ("🚀 판매자로켓 내일 BFL 빅사이즈 ...", "🚀 로켓 내일 뷰센 28
+    //   어드밴스드 ...", "🚀 판매자로켓 내일 HANYO 여성용 ...", "1+1 천연 유기농 아로마오일 ...",
+    //   "R312 슬라이드 지퍼백 ...", "[최신형] 차이슨 무선 청소기 ...") 이 prefix 에서 전부 컷되는
+    //   회귀 발견. 기존 "Korean chunk 2 개 이상" 규칙은 "뷰센"(1 chunk) 같은 2자 한글 브랜드나
+    //   "BFL"(0 chunk) 같은 영문 브랜드를 걸러내지 못함.
+    //
+    //   추가 규칙:
+    //     (a) 배지 제거 후 residual 이 "짧은 영문+숫자 브랜드" (≤8자, [A-Za-z0-9+] 만) 이면 보존.
+    //         → "BFL", "HANYO", "R312", "1+1" 등.
+    //     (b) residual 에 **분명한 가비지 마커**(=, |, #, ^, ~, {, }) 가 없고 한글 덩어리가 1 개
+    //         이상이면 보존. 대괄호 [ ] 는 "[최신형]" 같은 정상 프로모 태그에 쓰이므로 가비지 마커
+    //         목록에서 제외.
     const BADGE_WORDS = /로켓|판매자|새벽|내일|대일|오늘|당일|와우|무료|해외|쿠팡|쿠폰|도착|배송|광고|추천|적립|할인|프레시|프레쉬|그로스|직구|설치|플러스|멤버십|캐시|카드/g;
+    const residual = prefix
+      .replace(BADGE_WORDS, ' ')
+      .replace(/🚀/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    // Rule (a): "BFL", "HANYO", "R312", "1+1" 같은 짧은 영문/숫자(+) 브랜드는 보존.
+    if (residual.length > 0 && residual.length <= 8 && /^[A-Za-z0-9+\s]+$/.test(residual)) {
+      return line;
+    }
+    // Rule (b): 가비지 마커 없고 Korean chunk 1 개 이상 → 보존.
+    const hardGarbageMarkers = /[=|#^~{}]/.test(residual);
+    const residualChunks = residual.match(/[가-힣]{2,}/g);
+    if (!hardGarbageMarkers && residualChunks && residualChunks.length >= 1) {
+      return line;
+    }
+    // Rule (c, 기존): prefix 전체에서 2+ chunks → 합법 상품명.
     const koreanChunks = prefix.replace(BADGE_WORDS, ' ').match(/[가-힣]{2,}/g);
     if (koreanChunks && koreanChunks.length >= 2) return line;
+    // Rule (d): "[최신형]", "[NEW]", "[공식정품]", "[쇼핑백 샘플1종]" 같은 대괄호 프로모 태그가
+    // prefix 안에 있으면 대괄호부터는 상품명의 일부로 보존. "🚀 판매자로켓 내일 [최신형] 차이슨"
+    // 처럼 배지 + 프로모 태그가 prefix 에 뭉쳐있는 케이스에서 `[` 이후를 살려줍니다.
+    //
+    // 단, residual 에 하드 가비지 마커(=, |, #, ^, ~, {, }) 가 있으면 OCR 가비지
+    // ("Hess we) = [waza |A Me" 등) 안에 우연히 포함된 `[` 이므로 보존하지 않습니다.
+    if (!hardGarbageMarkers) {
+      const bracketIdx = prefix.lastIndexOf('[');
+      if (bracketIdx >= 0) return line.slice(bracketIdx);
+    }
     return line.slice(prefix.length);
   };
 
@@ -265,7 +326,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // 한편 상태 라인 바로 뒤에 nameBuffer가 비어 있는 상태로 가격이 오는 경우도 있어서
     // (상태 라인을 처리할 때 nameBuffer를 초기화함), itemName이 null이어도 statusText는
     // currentStatus를 그대로 물려 주어 구매/환불 구분이 유지되도록 합니다.
-    results.push({
+    const entry: InternalResult = {
       mall,
       itemName,
       price: priceNum,
@@ -273,7 +334,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       rawText,
       statusText: currentStatus ?? undefined,
       quantity,
-    });
+    };
+    if (pendingSplit) {
+      entry._splitDelivery = true;
+      pendingSplit = false;
+    }
+    results.push(entry);
     nameBuffer = [];
   };
 
@@ -347,6 +413,18 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     if (statusLineRegex.test(line)) {
       currentStatus = line;
       nameBuffer = [];
+      // 새 카드가 시작됐으니 직전 카드에서 못 소비한 pendingSplit 플래그는 폐기합니다.
+      // (정상 플로우에서는 flush 시점에 이미 소비됐을 것이지만, name 라인이 누락된 경우
+      // 다음 무관한 카드까지 split 으로 오염되는 걸 막기 위한 안전장치.)
+      pendingSplit = false;
+      continue;
+    }
+
+    // 분리배송 마커: status 검사 뒤, noise 검사 앞.
+    // 같은 라인이 noiseLineRegex 에는 없지만, "분리 배송" 단독 라인이 nameBuffer 에 들어가면
+    // 다음 상품 이름 앞에 "분리 배송" 이 붙어 나올 수 있으니 반드시 continue 로 흘려버립니다.
+    if (splitMarkerRegex.test(line)) {
+      pendingSplit = true;
       continue;
     }
 
@@ -367,7 +445,37 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     return [{ mall, itemName: null, price: null, date: orderDate, rawText, statusText: rawText }];
   }
 
-  return results;
+  // ───────── 분리배송 후처리 병합 ─────────
+  //
+  // `_splitDelivery` 가 붙은 항목 중 (date, itemName, price) 가 같은 그룹은 **첫 항목에**
+  // quantity 를 합산해 하나로 줄입니다. 쿠팡 데스크톱/모바일 모두에서 동일 상품이 창고 분리
+  // 발송으로 카드 3장으로 찍히는 경우, 사용자가 실제로 주문한 수량(예: 3박스)은 카드별 1개의
+  // **합**입니다. 만약 capture 가 일부만 잡아서 같은 그룹이 1장만 보이면 병합 없이 그대로 둡니다.
+  //
+  // 주의: "원본"(일부 상품이 분리되어 배송됩니다) / "복사"(분리배송된 상품입니다) 구분 없이
+  // 모두 `_splitDelivery=true` 로 들어오므로, 둘 중 아무거나 먼저 나온 항목이 대표 항목이 됩니다.
+  // 이는 파서 입력 순서(capture 순서) = 사용자가 화면에서 본 순서에 가까우므로 자연스럽습니다.
+  const merged: PurchaseOCRResult[] = [];
+  const groupIndex = new Map<string, number>(); // key → merged[] 의 인덱스
+  for (const r of results) {
+    if (r._splitDelivery) {
+      const key = `${r.date ?? ''}|${r.itemName ?? ''}|${r.price ?? ''}`;
+      const existingIdx = groupIndex.get(key);
+      if (existingIdx !== undefined) {
+        // 같은 (date, name, price) 가 이미 들어가 있음 → 수량만 합쳐서 버림
+        const prev = merged[existingIdx];
+        prev.quantity = (prev.quantity ?? 1) + (r.quantity ?? 1);
+        continue;
+      }
+      groupIndex.set(key, merged.length);
+    }
+    // 내부 플래그 제거 후 공개 결과로 push
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { _splitDelivery, ...clean } = r;
+    merged.push(clean);
+  }
+
+  return merged;
 }
 
 export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
