@@ -85,17 +85,75 @@ function trimLineEnds(input: string): string {
 }
 
 /**
+ * 한글 자모 합성(NFC) 정규화.
+ * Tesseract가 가끔 `ㄱ + ㅏ + ㅇ` 처럼 조합형 자모로 쪼개 주는 경우가 있는데,
+ * 화면 상 글자는 같아 보여도 문자열 비교/regex 매칭에서 한 글자로 안 잡힙니다.
+ * NFC는 이걸 `강` 같은 완성형 한 글자로 합성해 주므로, 이후 파서 regex의 [가-힣] 같은
+ * 범위 매칭이 의도대로 동작합니다. 부작용: 이미 NFC 인 텍스트에는 no-op.
+ */
+function toNfc(input: string): string {
+  return input.normalize("NFC");
+}
+
+/**
+ * 라인 내부의 연속 공백(스페이스/탭) 축약.
+ * 쿠팡/네이버 캡쳐는 UI 상 인위적인 간격을 많이 쓰고, Tesseract가 그 간격을 2~6개의
+ * 스페이스로 뱉을 때가 있어 파서 regex 들이 `\s+`로 대비해야 하는 부담이 커집니다.
+ * 여기서 한 번 1칸으로 모아 두면 파서 regex가 단순해집니다.
+ * 줄바꿈은 건드리지 않고(상태머신 파서가 줄 단위로 동작), 탭은 스페이스로 바꿉니다.
+ */
+function collapseInlineSpaces(input: string): string {
+  return input
+    .split("\n")
+    .map((line) => line.replace(/[\t ]{2,}/g, " "))
+    .join("\n");
+}
+
+/**
+ * 하이픈·대시 계열을 ASCII 하이픈(`-`) 하나로 통일합니다.
+ * 유니코드에는 `-` 모양 글자가 10개 가까이 있고(전각 하이픈 포함), Tesseract 는 폰트에 따라
+ * `‐`(U+2010), `–`(en-dash), `—`(em-dash), `−`(minus) 등을 섞어 뱉습니다. 파서가 가격 구분자나
+ * 상품명 내부 하이픈을 단일 문자로 비교하려면 여기서 한 글자로 맞춰 두는 게 안전합니다.
+ */
+function normalizeHyphens(input: string): string {
+  return input.replace(/[\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "-");
+}
+
+/**
+ * 스마트 인용부호(곡선형 따옴표)를 일반 ASCII 따옴표로 통일합니다.
+ * `""`, `""`, `「」`, `『』` 같은 짝맞춤 따옴표가 상품명에 섞이면 정규식이
+ * 여러 케이스로 분기해야 해서 성가십니다. 상품명 시각 표현에는 영향이 거의 없고,
+ * 추후 검색/중복 판정에서 같은 상품으로 묶이는 데에도 이득입니다.
+ */
+function normalizeQuotes(input: string): string {
+  return input
+    .replace(/[\u201C\u201D\u201E\u201F\u2033\u301D\u301E]/g, '"')
+    .replace(/[\u2018\u2019\u201A\u201B\u2032]/g, "'");
+}
+
+/**
  * 쇼핑몰 OCR 텍스트에 공통으로 걸만한 "안전한" 치환을 모두 적용합니다.
  * 호출부는 파서에 넘기기 직전에 한 번만 태우면 됩니다.
+ *
+ * 순서 주의:
+ *   1. NFC → 이후 모든 regex 가 완성형 글자로 매칭되도록 **가장 먼저**.
+ *   2. 보이지 않는 문자 → regex에서 짜증나는 zero-width 류 제거.
+ *   3. 전각→반각 / 가운데점 / 하이픈 / 따옴표 → 글자 모양 통일.
+ *   4. 숫자 / 원 관련 → 형식 정규화.
+ *   5. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
  */
 export function applyOcrCorrections(rawText: string): string {
   if (!rawText) return rawText;
   let text = rawText;
+  text = toNfc(text);
   text = text.replace(INVISIBLE_CHARS, "");
   text = toHalfWidth(text);
   text = normalizeMiddleDot(text);
+  text = normalizeHyphens(text);
+  text = normalizeQuotes(text);
   text = mergeThousandSeparator(text);
   text = spaceBeforeWon(text);
+  text = collapseInlineSpaces(text);
   text = trimLineEnds(text);
   return text;
 }
