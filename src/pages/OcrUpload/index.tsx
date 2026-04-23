@@ -34,6 +34,7 @@ import {
 } from "../../utils/ocrParsers";
 import { detectStatusFromOcrText } from "../../utils/ocrParse";
 import { preprocessImageForOcr } from "../../utils/ocrPreprocess";
+import { applyOcrCorrections } from "../../utils/ocrCorrection";
 import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
 
 const Wrap = styled.div`
@@ -236,7 +237,10 @@ export const OcrUploadPage: React.FC = () => {
         // 전처리를 한 번 태운 뒤 OCR로 넘깁니다. 실패 시 원본 파일을 그대로 받는 방어적 경로.
         const preprocessed = await preprocessImageForOcr(image.file);
         const result = await worker.recognize(preprocessed);
-        const rawText = result.data.text;
+        // Tesseract 출력에 공통으로 끼는 전각 문자·보이지 않는 문자·콤마 사이 공백 등을
+        // 전역 후처리 유틸에서 정리한 뒤 각 플랫폼 파서로 넘깁니다. 쿠팡/네이버/테무 모두가
+        // 같은 정규화된 입력을 받으므로 파서의 regex를 점진적으로 단순화할 수 있습니다.
+        const rawText = applyOcrCorrections(result.data.text);
 
         let parsedData: PurchaseOCRResult[] = [];
         if (image.platform === 'coupang') {
