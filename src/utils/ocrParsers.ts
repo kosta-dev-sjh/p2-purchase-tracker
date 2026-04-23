@@ -153,8 +153,41 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 한 번 더 trailing pass를 돌려 **알려진 액션/네비 버튼 문구**만 꼬리에서 제거합니다.
   const trailingButtonRegex = /\s+(?:주문\s*취소|주문\s*상세보기|리뷰\s*(?:작성(?:하기)?|쓰기)|배송\s*조회|교환[,\s]*반품\s*신청|판매자\s*문의|장바구니\s*담기|더보기|상세보기)\s*>?\s*$/;
 
+  /**
+   * 🚀 배지 오인식으로 생긴 라인 선두 가비지를 한 번에 컷 합니다.
+   *
+   * leadingTagRegex 는 "판매자로켓", "로켓 내일" 같이 **정확한 키워드**가 남아 있는 배지만
+   * 인식합니다. 하지만 Tesseract 가 🚀 아이콘과 배지 텍스트를 통째로 뭉개 "AED 는 프",
+   * "Hess we) = [waza |A Me", "LL ㅋ", "48S 4/25(도 도착 ", "로 #로켓 4 " 같은 **알아볼 수
+   * 없는 가비지**로 뱉는 경우가 harness 검증에서 다수 발견됐습니다.
+   *
+   * 관찰된 공통 구조: [가비지(ASCII/숫자/특수문자/자모 포함)] + [공백] + [실제 한글 상품명].
+   * 따라서 "선두에서 첫 3+ 연속 가-힣 직전까지를 prefix 로 보고, prefix 가 ASCII/숫자/특수문자/
+   * 자모 중 하나라도 포함하면 통째로 컷" 이라는 규칙이 안전합니다.
+   *
+   * 안전성 (false-positive 방지):
+   *   - "코지엔비 곱창머리끈 5종" → 선두가 바로 4자 가-힣이라 prefix 길이 0, 규칙 미발동.
+   *   - "탐사 체리블라썸 전연펄프" → prefix "탐사 " 는 가-힣+공백뿐이라 노이즈 마커 없음 → 보존.
+   *   - "CJ 햇반 300g" → "햇반" 은 2자뿐이라 {3,} lookahead 실패 → prefix 정의 자체가 안 됨 → 보존.
+   *   - "HFS-900 체온계 사용설명서" 처럼 3+ 한글이 후속하는 영문 모델명도 컷될 위험이 있지만,
+   *     쇼핑 상품명이 영문 모델명으로 시작하는 경우가 드물고 OcrEdit 에서 복구 가능 → 수용.
+   */
+  const stripLeadingGarbagePrefix = (line: string): string => {
+    // 최소 매칭으로 첫 [가-힣]{3,} 바로 앞까지 스캔.
+    const m = line.match(/^(.*?)(?=[가-힣]{3,})/);
+    if (!m) return line; // 3+ 연속 한글이 없으면 우리가 아는 상품명 패턴이 아님 — 건드리지 않음
+    const prefix = m[0];
+    if (prefix.length === 0) return line; // 이미 선두가 깨끗한 한글
+    // 노이즈 마커: ASCII 영문/숫자, 특수 연산/괄호류, 한글 자모(ㄱ-ㅎㅏ-ㅣ)
+    const hasNoise = /[A-Za-z0-9=|\[\]#\+\^~ㄱ-ㅎㅏ-ㅣ]/.test(prefix);
+    if (!hasNoise) return line; // 순수 한글+공백 prefix 는 합법 브랜드("탐사 ", "초록 " 등)로 간주
+    return line.slice(prefix.length);
+  };
+
   const stripTags = (line: string): string => {
     let cleaned = line;
+    // 1차: 🚀 OCR 가비지 prefix 한 번에 컷 (아래 leadingTagRegex 로 못 잡는 뭉개진 배지 처리).
+    cleaned = stripLeadingGarbagePrefix(cleaned);
     // 선두 태그를 반복 제거. 예: "🚀판매자로켓 새벽 코지엔비..." → "코지엔비..."
     let prev = '';
     while (cleaned !== prev) {

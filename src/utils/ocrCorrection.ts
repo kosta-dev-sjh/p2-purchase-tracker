@@ -161,9 +161,18 @@ function recoverTrailingGaeUnit(input: string): string {
  * 예: "16,900 윤" → "16,900 원", "3850웜" → "3850 원"
  *
  * 안전성: 매칭 조건이 "숫자 직후" 로 좁아서 일반 텍스트의 "윤/웜/왠" 은 건드리지 않습니다.
+ *
+ * ⚠ `\b` 금지: 한글은 JS 정규식에서 단어 문자(\w)로 취급되지 않아
+ *   "윤" 뒤가 공백이어도 word boundary 로 성립하지 않습니다. 초기 구현에서 `\b` 를 써서
+ *   "16,900 윤 · 1개" 같이 뒤가 공백인 케이스가 전혀 매칭되지 않아 파서가 가격 라인을
+ *   놓치고 상품 1개가 통째로 드랍되는 회귀가 harness 에서 관찰됐습니다. 대신 뒤에
+ *   줄 끝/공백/구분자가 오는지 lookahead 로 명시적으로 확인합니다.
  */
 function recoverWonUnit(input: string): string {
-  return input.replace(/(\d[\d,]*)\s*[윤웜왠]\b/g, "$1 원");
+  return input.replace(
+    /(\d[\d,]*)\s*[윤웜왠](?=$|[\s·•,.\-*)])/gm,
+    "$1 원",
+  );
 }
 
 /**
