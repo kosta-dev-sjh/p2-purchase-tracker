@@ -217,7 +217,13 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 가격 라인: `6,900 원 · 1개` / `17,270 원 · 1개` / `0 원 · 1개` (무료/포인트 결제).
   // 숫자를 `\d+` 로 완화해 "0 원" 사은품 케이스도 잡으며, "원" 뒤에는 한글 `\b` 가 무효라서
   // word-boundary 대신 공백/구분자/EOL lookahead 로 경계를 잡습니다.
-  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
+  //
+  // 2026-04-24 (한글 룩어헤드 추가): rejoinSplitKoreanWords 가 한글 단일-런을 결합하며
+  // "5290 원 가 장 바 구 니 담 기..." 같이 `원` 이 뒤 버튼 한글과 한 덩어리로 뭉치는
+  // 케이스에서, 기존 lookahead 가 `원` 뒤 한글을 거부해 가격을 놓치는 회귀가 있었습니다.
+  // `\d+` 앵커가 앞에 확실해 "대원/고원" 같은 일반 명사 매칭은 일어나지 않으므로 lookahead
+  // 에 `[가-힣]` 을 추가해 `5290원가장바구니...` 같은 OCR 잔류도 흡수합니다.
+  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)가-힣])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
 
   // 주문일 (pre-scan): 라인 어디에 있든 날짜를 찾고, `주문` 단어는 optional.
   const orderDateRegex = new RegExp(COUPANG_DATE_CORE.source + /\s*(?:주\s*문)?/.source);
