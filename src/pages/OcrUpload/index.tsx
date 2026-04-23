@@ -29,7 +29,6 @@ import { ocrStore } from "../../stores/ocrStore";
 import {
   parseCoupangOrderText,
   parseNaverOrderText,
-  parseAuctionOrderText,
   parseTemuOrderText,
   type PurchaseOCRResult,
 } from "../../utils/ocrParsers";
@@ -244,8 +243,6 @@ export const OcrUploadPage: React.FC = () => {
           parsedData = parseCoupangOrderText(rawText);
         } else if (image.platform === 'naver') {
           parsedData = parseNaverOrderText(rawText);
-        } else if (image.platform === 'auction') {
-          parsedData = parseAuctionOrderText(rawText);
         } else if (image.platform === 'temu') {
           parsedData = parseTemuOrderText(rawText);
         }
@@ -317,7 +314,7 @@ export const OcrUploadPage: React.FC = () => {
             };
           });
         } else {
-          // 네이버/옥션/테무는 "이미지 1장 = 주문 N건(목록형)"이 자연스러운 플랫폼이라
+          // 네이버/테무는 "이미지 1장 = 주문 N건(목록형)"이 자연스러운 플랫폼이라
           // 기존처럼 결과 1개당 OcrOrder 1개로 매핑합니다.
           orders = parsedData.map((res, idx) => {
             const statusTag = image.platform === 'temu'

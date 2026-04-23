@@ -12,7 +12,7 @@ import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 
-type Platform = "coupang" | "naver" | "musinsa" | "auction" | "temu" | "unspecified";
+type Platform = "coupang" | "naver" | "musinsa" | "temu" | "unspecified";
 
 export interface RecentItem {
   id: string;

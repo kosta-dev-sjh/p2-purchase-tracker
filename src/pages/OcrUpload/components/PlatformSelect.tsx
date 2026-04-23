@@ -21,9 +21,9 @@ import { tokens } from "../../../styles/tokens";
  * 수동 입력의 TxPlatform과는 의도적으로 분리합니다. 수동 입력은 오프라인 결제용
  * "unspecified"까지 허용하지만, OCR은 반드시 쇼핑몰 캡쳐가 전제라서 이 세 값 중 하나를 골라야 합니다.
  */
-export type Platform = "coupang" | "naver" | "musinsa" | "auction" | "temu";
+export type Platform = "coupang" | "naver" | "musinsa" | "temu";
 
-const OCR_PLATFORMS: readonly Platform[] = ["coupang", "naver", "auction", "temu"];
+const OCR_PLATFORMS: readonly Platform[] = ["coupang", "naver", "temu"];
 
 const Hint = styled.div`
   margin-bottom: 10px;

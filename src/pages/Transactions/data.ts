@@ -171,7 +171,6 @@ const PLATFORM_SEARCH_URL: Record<TxPlatform, (q: string) => string> = {
     `https://www.coupang.com/np/search?q=${encodeURIComponent(q)}`,
   naver: (q) => `https://search.shopping.naver.com/search/all?query=${encodeURIComponent(q)}`,
   musinsa: (q) => `https://www.musinsa.com/search/musinsa/goods?q=${encodeURIComponent(q)}`,
-  auction: (q) => `https://search.auction.co.kr/search?keyword=${encodeURIComponent(q)}`,
   temu: (q) => `https://www.temu.com/search_result.html?search_key=${encodeURIComponent(q)}`,
   // 플랫폼이 미지정인 거래는 어느 플랫폼으로 열지 결정할 수 없어, 일반 구글 검색으로 떨어뜨립니다.
   // 상세 패널에서 "상품 검색" 링크를 누르면 적어도 검색은 가능하게 유지하기 위함입니다.
