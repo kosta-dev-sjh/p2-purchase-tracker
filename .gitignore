@@ -11,10 +11,9 @@ node_modules
 dist
 dist-ssr
 *.local
-# Local env files must stay out of git. Keep only the template file tracked.
+# Local env files must stay out of git.
 .env
 .env.*
-!.env.example
 firebase-debug.log*
 .firebase/
 functions/.env

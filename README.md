@@ -25,8 +25,8 @@ npm run dev
 
 ## Environment files
 
-- Commit only `.env.example`
-- Put real local values in `.env.local`
+- Do not commit any `.env*` file
+- Create `.env.local` manually on each machine when local env values are needed
 - Never commit API keys or service-account JSON files
 - Frontend code must not use `VITE_` secrets for direct third-party AI calls
 
