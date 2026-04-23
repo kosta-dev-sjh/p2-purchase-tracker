@@ -8,9 +8,9 @@
  *           보여 주는 역할이고, 실제 원문 대조는 확대 뷰에서 이뤄집니다. 그래서 썸네일
  *           영역을 통째로 클릭 가능한 버튼으로 감싸고, 확대 뷰에서는 여백을 최소화해
  *           뷰포트의 90% 가까이 쓰게 했습니다.
- *         - Modal 공통 컴포넌트는 480px 카드 기준이라 이미지 확대용으로는 폭이 좁아,
- *           별도의 오버레이를 이 파일 안에 두는 쪽을 택했습니다. (다른 화면에서 같은
- *           형태가 필요해지면 그때 components/modal 아래로 승격.)
+ *         - 확대 오버레이 자체는 OcrUpload/UploadedGrid 에서도 같은 경험이 필요해
+ *           공용 primitives 의 ImageLightbox 로 승격했습니다. 이 파일은 "카드 안
+ *           썸네일 트리거"만 담당합니다.
  *         - 접근성: ESC로 닫기, 배경 클릭으로 닫기, 포커스 트랩 없이 단일 버튼으로 단순화.
  *
  * 위치: src\pages\OcrEdit\components\ImagePreview.tsx
@@ -18,6 +18,7 @@
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
 import { Card, CardBd } from "../../../components/primitives/Card";
+import { ImageLightbox } from "../../../components/primitives/ImageLightbox";
 import { tokens } from "../../../styles/tokens";
 import type { OcrImageItem } from "../data";
 
@@ -81,48 +82,16 @@ const Img = styled.img`
   transition: opacity ${tokens.motion.fast} ease;
 `;
 
-const Overlay = styled.button`
-  position: fixed;
-  inset: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px;
-  background: rgba(11, 18, 32, 0.82);
-  border: none;
-  cursor: zoom-out;
-  z-index: 1100;
-`;
-
-const ZoomImg = styled.img`
-  display: block;
-  max-width: 92vw;
-  max-height: 92vh;
-  object-fit: contain;
-  border-radius: 8px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
-`;
-
-const CloseBtn = styled.button`
-  position: fixed;
-  top: 18px;
-  right: 18px;
-  width: 36px;
-  height: 36px;
-  display: grid;
-  place-items: center;
-  border: none;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-  cursor: pointer;
-  z-index: 1101;
-  font-size: 20px;
-  line-height: 1;
-
-  &:hover {
-    background: rgba(255, 255, 255, 0.24);
-  }
+/**
+ * "클릭 시 확대" 안내 문구. 미리보기 위 작은 보조 라벨로, 선택된 이미지가 있을 때만
+ * 노출합니다. 너무 강조하지 않으려고 ink4 톤을 사용합니다.
+ */
+const Hint = styled.div`
+  margin: 10px 0 4px;
+  color: ${tokens.color.ink4};
+  font-size: 11.5px;
+  text-align: center;
+  line-height: 1.5;
 `;
 
 const EmptyIcon: React.FC = () => (
@@ -148,28 +117,21 @@ export const ImagePreview: React.FC<{ image?: OcrImageItem }> = ({ image }) => {
     setIsZoomed(false);
   }, [image?.id]);
 
-  // ESC로 닫기 — 라이트박스가 열려 있을 때만 리스너를 붙여 다른 화면의 키 핸들링을 방해하지 않습니다.
-  useEffect(() => {
-    if (!isZoomed) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setIsZoomed(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [isZoomed]);
-
   return (
     <>
       <Wrap>
         <Body>
           {image?.thumbUrl ? (
-            <Trigger
-              type="button"
-              onClick={() => setIsZoomed(true)}
-              aria-label={`${image.fileName} 확대해서 보기`}
-            >
-              <Img src={image.thumbUrl} alt={image.fileName} />
-            </Trigger>
+            <div>
+              <Trigger
+                type="button"
+                onClick={() => setIsZoomed(true)}
+                aria-label={`${image.fileName} 확대해서 보기`}
+              >
+                <Img src={image.thumbUrl} alt={image.fileName} />
+              </Trigger>
+              <Hint>클릭 시 이미지가 확대됩니다.</Hint>
+            </div>
           ) : (
             <Empty>
               <EmptyIcon />
@@ -179,28 +141,12 @@ export const ImagePreview: React.FC<{ image?: OcrImageItem }> = ({ image }) => {
         </Body>
       </Wrap>
 
-      {isZoomed && image?.thumbUrl && (
-        <>
-          <Overlay
-            type="button"
-            aria-label="확대 보기 닫기"
-            onClick={() => setIsZoomed(false)}
-          >
-            <ZoomImg
-              src={image.thumbUrl}
-              alt={image.fileName}
-              onClick={(e) => e.stopPropagation()}
-            />
-          </Overlay>
-          <CloseBtn
-            type="button"
-            aria-label="닫기"
-            onClick={() => setIsZoomed(false)}
-          >
-            ×
-          </CloseBtn>
-        </>
-      )}
+      <ImageLightbox
+        isOpen={isZoomed}
+        src={image?.thumbUrl}
+        alt={image?.fileName}
+        onClose={() => setIsZoomed(false)}
+      />
     </>
   );
 };
