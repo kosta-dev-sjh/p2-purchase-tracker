@@ -227,20 +227,50 @@ export const TransactionsPage: React.FC = () => {
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
-  const [selectedId, setSelectedId] = useState<string>(monthRows[0]?.id ?? "");
+  const [selectedId, setSelectedId] = useState<string | null>(monthRows[0]?.id ?? null);
 
-  useEffect(() => {
-    // 월이 바뀌면 선택과 가시 개수를 초기화합니다.
+  const resetVisibleCount = useCallback(() => {
     setVisibleCount(INITIAL_VISIBLE);
-    setSelectedId((current) =>
-      monthRows.some((row) => row.id === current) ? current : monthRows[0]?.id ?? ""
-    );
-  }, [month, monthRows]);
+  }, []);
 
-  useEffect(() => {
-    // 필터가 바뀌면 "더 보기" 개수도 처음 상태로 되돌려 다시 탐색하게 합니다.
-    setVisibleCount(INITIAL_VISIBLE);
-  }, [search, platform, category, typeFilter, statusFilter]);
+  const handleMonthChange = useCallback((nextMonth: string) => {
+    setMonth(nextMonth);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
+
+  const handleSearchChange = useCallback((nextSearch: string) => {
+    setSearch(nextSearch);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
+
+  const handleTypeChange = useCallback((nextType: "all" | "expense" | "income") => {
+    setTypeFilter(nextType);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
+
+  const handlePlatformChange = useCallback(
+    (nextPlatform: "all" | "coupang" | "naver" | "musinsa" | "unspecified") => {
+      setPlatform(nextPlatform);
+      resetVisibleCount();
+    },
+    [resetVisibleCount]
+  );
+
+  const handleCategoryChange = useCallback(
+    (nextCategory: "all" | "living" | "fashion" | "digital" | "food" | "etc") => {
+      setCategory(nextCategory);
+      resetVisibleCount();
+    },
+    [resetVisibleCount]
+  );
+
+  const handleStatusChange = useCallback(
+    (nextStatus: "all" | "purchase" | "cancel" | "refund" | "sub" | "etc") => {
+      setStatusFilter(nextStatus);
+      resetVisibleCount();
+    },
+    [resetVisibleCount]
+  );
 
   const visibleRows = useMemo(
     () => filteredRows.slice(0, visibleCount),
@@ -254,15 +284,19 @@ export const TransactionsPage: React.FC = () => {
     });
   }, [filteredRows.length]);
 
-  useEffect(() => {
-    if (selectedId && !filteredRows.some((row) => row.id === selectedId)) {
-      setSelectedId(filteredRows[0]?.id ?? "");
-    }
+  const resolvedSelectedId = useMemo(() => {
+    if (selectedId === null) return null;
+    return filteredRows.some((row) => row.id === selectedId)
+      ? selectedId
+      : filteredRows[0]?.id ?? null;
   }, [filteredRows, selectedId]);
 
   const selected = useMemo(
-    () => filteredRows.find((row) => row.id === selectedId) ?? null,
-    [filteredRows, selectedId]
+    () =>
+      resolvedSelectedId
+        ? filteredRows.find((row) => row.id === resolvedSelectedId) ?? null
+        : null,
+    [filteredRows, resolvedSelectedId]
   );
 
   const [displayed, setDisplayed] = useState<typeof selected>(selected);
@@ -271,13 +305,22 @@ export const TransactionsPage: React.FC = () => {
   useEffect(() => {
     // 상세 패널은 선택 항목이 바뀔 때 부드럽게 열리고 닫히도록 표시 상태를 분리합니다.
     if (selected) {
-      setDisplayed(selected);
-      const raf = requestAnimationFrame(() => setIsOpen(true));
-      return () => cancelAnimationFrame(raf);
+      let openRaf = 0;
+      const displayRaf = requestAnimationFrame(() => {
+        setDisplayed(selected);
+        openRaf = requestAnimationFrame(() => setIsOpen(true));
+      });
+      return () => {
+        cancelAnimationFrame(displayRaf);
+        cancelAnimationFrame(openRaf);
+      };
     }
-    setIsOpen(false);
+    const closeRaf = requestAnimationFrame(() => setIsOpen(false));
     const timer = window.setTimeout(() => setDisplayed(null), 160);
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelAnimationFrame(closeRaf);
+      window.clearTimeout(timer);
+    };
   }, [selected]);
 
   /**
@@ -333,18 +376,24 @@ export const TransactionsPage: React.FC = () => {
     const targetId = state?.editTransactionId;
     if (!targetId) return;
     const target = allRows.find((row) => row.id === targetId);
-    if (target) {
-      handleEditOpen(target);
-      // 해당 거래가 현재 선택되도록 상세 하이라이트도 맞춰 둡니다.
-      setSelectedId(target.id);
-      // 선택 후에 month 기본값을 타겟 행의 월로 맞춰 두어야 editor 를 닫았을 때도
-      // 같은 거래가 표에 보이도록 보장됩니다.
-      const key = toMonthKey(target.date);
-      if (key) setMonth(key);
-    }
-    // state 를 비워 두 번째 진입에서 재오픈되지 않도록 합니다.
-    navigate(location.pathname, { replace: true, state: null });
-  }, [location.state, location.pathname, allRows, handleEditOpen, navigate]);
+    const timer = window.setTimeout(() => {
+      if (target) {
+        handleEditOpen(target);
+        // 해당 거래가 현재 선택되도록 상세 하이라이트도 맞춰 둡니다.
+        setSelectedId(target.id);
+        // 선택 후에 month 기본값을 타겟 행의 월로 맞춰 두어야 editor 를 닫았을 때도
+        // 같은 거래가 표에 보이도록 보장됩니다.
+        const key = toMonthKey(target.date);
+        if (key) {
+          setMonth(key);
+          resetVisibleCount();
+        }
+      }
+      // state 를 비워 두 번째 진입에서 재오픈되지 않도록 합니다.
+      navigate(location.pathname, { replace: true, state: null });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [location.state, location.pathname, allRows, handleEditOpen, navigate, resetVisibleCount]);
 
   // OCR 경로로 저장된 거래에서 "원본 캡쳐만 다시 보기" 흐름을 위한 모달 상태입니다.
   // 이전에는 편집 페이지로 이동했지만, 이 거래는 이미 파싱된 상태라 재방문이 낭비였고
@@ -362,7 +411,7 @@ export const TransactionsPage: React.FC = () => {
       activeNav="transactions"
       crumb={`거래 · ${monthOption.label}`}
       title="수입·지출 내역"
-      headerRight={<MonthPicker value={month} onChange={setMonth} />}
+      headerRight={<MonthPicker value={month} onChange={handleMonthChange} />}
     >
       <Grid>
         <SummaryStrip summary={buildTransactionSummary(monthRows, prevMonthRows)} />
@@ -381,11 +430,11 @@ export const TransactionsPage: React.FC = () => {
               onToggleSort={() =>
                 setSortOrder((current) => (current === "desc" ? "asc" : "desc"))
               }
-              onSearchChange={setSearch}
-              onTypeChange={setTypeFilter}
-              onPlatformChange={setPlatform}
-              onCategoryChange={setCategory}
-              onStatusChange={setStatusFilter}
+              onSearchChange={handleSearchChange}
+              onTypeChange={handleTypeChange}
+              onPlatformChange={handlePlatformChange}
+              onCategoryChange={handleCategoryChange}
+              onStatusChange={handleStatusChange}
             />
             <TransactionTable
               rows={visibleRows}
@@ -402,7 +451,7 @@ export const TransactionsPage: React.FC = () => {
               renderMobileDetail={(row) => (
                 <DetailPanel
                   row={row}
-                  onClose={() => setSelectedId("")}
+                  onClose={() => setSelectedId(null)}
                   onEdit={() => handleEditOpen(row)}
                   onDelete={() => handleDelete(row)}
                   onOpenSource={handleOpenSource}
@@ -415,7 +464,7 @@ export const TransactionsPage: React.FC = () => {
               <PanelInner $open={isOpen}>
                 <DetailPanel
                   row={displayed}
-                  onClose={() => setSelectedId("")}
+                  onClose={() => setSelectedId(null)}
                   onEdit={() => handleEditOpen(displayed)}
                   onDelete={() => handleDelete(displayed)}
                   onOpenSource={handleOpenSource}

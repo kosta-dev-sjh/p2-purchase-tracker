@@ -2,7 +2,7 @@
  * 역할: 특정 페이지 안에서만 사용하는 화면 전용 UI 블록입니다.
  * 위치: src\pages\Settings\components\ProfileSection.tsx
  */
-import React, { useEffect, useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
@@ -100,16 +100,12 @@ function initial(name: string): string {
 export const ProfileSection: React.FC = () => {
   // 저장된 프로필을 구독해 다른 섹션(계정 변경 등)의 업데이트도 즉시 반영합니다.
   const profile = useProfile();
-  const [name, setName] = useState(profile.name);
-  const [nickname, setNickname] = useState(profile.nickname);
+  const [nameDraft, setNameDraft] = useState<string | null>(null);
+  const [nicknameDraft, setNicknameDraft] = useState<string | null>(null);
   const [status, setStatus] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-
-  // 구독한 프로필이 바뀌면 입력 상태도 맞춰 줍니다(외부 변경 대응).
-  useEffect(() => {
-    setName(profile.name);
-    setNickname(profile.nickname);
-  }, [profile.name, profile.nickname]);
+  const name = nameDraft ?? profile.name;
+  const nickname = nicknameDraft ?? profile.nickname;
 
   const handleAvatarPick = () => {
     fileInputRef.current?.click();
@@ -146,6 +142,8 @@ export const ProfileSection: React.FC = () => {
       return;
     }
     profileStore.save({ name: name.trim(), nickname: nickname.trim() });
+    setNameDraft(null);
+    setNicknameDraft(null);
     setStatus({ tone: "success", text: "변경사항을 저장했어요." });
   };
 
@@ -186,10 +184,13 @@ export const ProfileSection: React.FC = () => {
       </Row>
       <FieldGrid>
         <FormField label="이름">
-          <TextInput value={name} onChange={(event) => setName(event.target.value)} />
+          <TextInput value={name} onChange={(event) => setNameDraft(event.target.value)} />
         </FormField>
         <FormField label="닉네임">
-          <TextInput value={nickname} onChange={(event) => setNickname(event.target.value)} />
+          <TextInput
+            value={nickname}
+            onChange={(event) => setNicknameDraft(event.target.value)}
+          />
         </FormField>
       </FieldGrid>
       <Actions>
