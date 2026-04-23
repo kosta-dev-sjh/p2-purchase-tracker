@@ -90,6 +90,26 @@ const RemoveButton = styled.button`
 `;
 
 /**
+ * "0원" 배지. 이벤트/사은품 등으로 합법적으로 0원인 경우도 있지만, OCR 오인식으로
+ * 가격 토큰을 놓쳐 0으로 떨어지는 경우가 더 흔합니다. 한 번 눈에 띄게 해 주면
+ * 사용자가 "진짜 0원이 맞나" 확인한 뒤 넘길 수 있습니다. 입력을 막지는 않는
+ * soft-badge 라 warn 톤(노란색 계열)을 사용해 "오류는 아니지만 확인이 필요함"을
+ * 시각적으로 표현합니다.
+ */
+const ZeroPriceHint = styled.span`
+  display: inline-block;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: ${tokens.color.warnBg};
+  color: ${tokens.color.warn};
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+`;
+
+/**
  * 링크가 입력된 row에 표시되는 "새 탭으로 열기" 아이콘 버튼.
  * 링크가 비어있으면 보이지 않도록 컨테이너에서 제어합니다.
  */
@@ -224,6 +244,17 @@ export const ProductTable: React.FC<{
                 patch(row.id, { priceRaw: digits });
               }}
             />
+            {/*
+              priceRaw 가 빈 값이거나 "0" 으로만 떨어지는 경우에만 배지를 띄웁니다.
+              사용자가 의도적으로 0을 입력한 경우에도 노출되지만, "이벤트/사은품?" 이라는
+              문구가 "이게 맞다면 그냥 두시면 됩니다" 쪽으로 읽혀 부담을 주지 않습니다.
+              저장을 막지는 않기 때문에 블로킹 모달 대신 가벼운 라벨로 끝냅니다.
+            */}
+            {(row.priceRaw === "" || Number(row.priceRaw) === 0) && (
+              <ZeroPriceHint title="OCR 이 가격을 놓쳤을 수 있어요. 이벤트/사은품으로 실제 0원이라면 그대로 두세요.">
+                0원 · 확인 필요
+              </ZeroPriceHint>
+            )}
           </div>
           <div>
             <Input
