@@ -25,7 +25,10 @@ import { TransactionEditModal } from "../../components/modal/TransactionEditModa
 import { Modal } from "../../components/modal/Modal";
 import { Button } from "../../components/primitives/Button";
 import { formatKRW } from "../../utils/format";
-import type { TxRow } from "./components/TransactionTable";
+import type {
+  TxRow,
+  TxPlatform,
+} from "./components/TransactionTable";
 
 const Body = styled.div<{ $hasPanel: boolean }>`
   display: grid;
@@ -160,7 +163,7 @@ export const TransactionsPage: React.FC = () => {
   const [month, setMonth] = useState("2026-04");
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "income">("all");
-  const [platform, setPlatform] = useState<"all" | "coupang" | "naver" | "musinsa" | "unspecified">("all");
+  const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
   const [category, setCategory] = useState<"all" | "living" | "fashion" | "digital" | "food" | "etc">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
@@ -253,7 +256,7 @@ export const TransactionsPage: React.FC = () => {
   }, [resetVisibleCount]);
 
   const handlePlatformChange = useCallback(
-    (nextPlatform: "all" | "coupang" | "naver" | "musinsa" | "unspecified") => {
+    (nextPlatform: "all" | TxPlatform) => {
       setPlatform(nextPlatform);
       resetVisibleCount();
     },

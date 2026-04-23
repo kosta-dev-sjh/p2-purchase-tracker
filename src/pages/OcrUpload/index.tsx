@@ -30,6 +30,7 @@ import {
   parseNaverOrderText,
   parseAuctionOrderText,
   parseTemuOrderText,
+  type PurchaseOCRResult,
 } from "../../utils/ocrParsers";
 import { detectStatusFromOcrText } from "../../utils/ocrParse";
 import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
@@ -182,8 +183,8 @@ export const OcrUploadPage: React.FC = () => {
 
         const result = await worker.recognize(image.file);
         const rawText = result.data.text;
-        
-        let parsedData = [];
+
+        let parsedData: PurchaseOCRResult[] = [];
         if (image.platform === 'coupang') {
           parsedData = parseCoupangOrderText(rawText);
         } else if (image.platform === 'naver') {
@@ -193,9 +194,13 @@ export const OcrUploadPage: React.FC = () => {
         } else if (image.platform === 'temu') {
           parsedData = parseTemuOrderText(rawText);
         }
-        
+
         const orders: OcrOrder[] = parsedData.map((res, idx) => {
-          const statusTag = detectStatusFromOcrText(res.rawText) ?? "purchase";
+          // 테무는 안내 문구가 많아 rawText 사용 시 오인식이 심하므로 statusText만 사용
+          // 다른 플랫폼(네이버/쿠팡/옥션)은 기존처럼 rawText를 fallback으로 사용
+          const statusTag = image.platform === 'temu'
+            ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
+            : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
           return {
             id: `${image.id}-order-${idx}`,
             orderDate: res.date ?? "",

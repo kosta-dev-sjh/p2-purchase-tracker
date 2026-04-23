@@ -644,7 +644,10 @@ export const OcrEditPage: React.FC = () => {
           images={images}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onAdd={() => navigate("/ocr-upload", { state: { append: true } })}
+          onAdd={() => {
+            ocrStore.setImages(images);
+            navigate("/ocr-upload", { state: { append: true } });
+          }}
           onDelete={handleDeleteImage}
         />
         <ImagePreview image={selected} />

@@ -602,14 +602,19 @@ export const OrderCard: React.FC<OrderCardProps> = ({
             <div className="value">{order.products.length}개</div>
           </MetaCell>
           <MetaSeparator />
-          {onOrderPatch ? (
-            <EditableStatusTag
-              value={order.statusTag}
-              onChange={(next) => onOrderPatch({ statusTag: next })}
-            />
-          ) : (
-            <Tag kind={order.statusTag}>{STATUS_LABELS[order.statusTag]}</Tag>
-          )}
+          <MetaCell>
+            <div className="label">상태</div>
+            <div className="value" style={{ marginTop: 4 }}>
+              {onOrderPatch ? (
+                <EditableStatusTag
+                  value={order.statusTag}
+                  onChange={(next) => onOrderPatch({ statusTag: next })}
+                />
+              ) : (
+                <Tag kind={order.statusTag}>{STATUS_LABELS[order.statusTag]}</Tag>
+              )}
+            </div>
+          </MetaCell>
         </MetaRow>
 
         <Total>

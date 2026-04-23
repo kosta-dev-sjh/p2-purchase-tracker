@@ -61,6 +61,8 @@ function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count
     coupang: { value: 0, count: 0 },
     naver: { value: 0, count: 0 },
     musinsa: { value: 0, count: 0 },
+    auction: { value: 0, count: 0 },
+    temu: { value: 0, count: 0 },
     unspecified: { value: 0, count: 0 },
   };
   for (const row of rows) {

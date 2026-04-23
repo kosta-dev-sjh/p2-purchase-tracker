@@ -9,9 +9,35 @@ export interface PurchaseOCRResult {
   price: number | null;
   date: string | null;
   rawText: string;
+  /**
+   * 상태 감지용 텍스트 조각. 이 주문과 관련된 상태 키워드(취소완료, 배송완료, 환불완료 등)가
+   * 포함된 텍스트로, detectStatusFromOcrText가 정확한 상태를 추출할 수 있게 합니다.
+   * 전체 이미지 rawText가 아닌 주문별 텍스트 조각을 담아야 합니다.
+   */
+  statusText?: string;
 }
 
 export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
+  // 상태 감지용 키워드 (원본 텍스트에서 추출)
+  const statusKeywords = ['취소완료', '취소 완료', '주문취소완료',
+                          '환불완료', '환불처리', '환불 완료', '반품완료', '반품 완료',
+                          '결제완료', '주문완료', '배송완료', '배송 완료', '배송중',
+                          '구매확정완료', '구매확정', '구매 확정', '정기결제', '구독'];
+
+  // 제외할 안내 문구
+  const excludePatterns = ['환불 가능', '환불가능', '반품 가능', '반품가능', '취소 가능', '취소가능',
+                           '환불 정책', '반품 정책', '환불/반품', '환불·반품'];
+
+  // 원본 텍스트에서 상태 키워드가 포함된 라인 추출 (안내 문구 제외)
+  const originalLines = rawText.split('\n');
+  const statusTexts: string[] = [];
+  for (const line of originalLines) {
+    const isExcluded = excludePatterns.some(pattern => line.includes(pattern));
+    if (!isExcluded && statusKeywords.some(kw => line.includes(kw))) {
+      statusTexts.push(line.trim());
+    }
+  }
+
   const ignoredKeywords = [
     '쿠팡', '마이쿠팡', '주문완료', '결제', '무료배송', '배송중', '상세보기', '리뷰쓰기',
     '주문목록', '주문한상품', '검색할수', '자주산상품', '더보기', '배송완료', '도착',
@@ -30,7 +56,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   }).filter(line => line.length > 0);
 
   const mall = rawText.includes('쿠팡') ? '쿠팡' : '쿠팡(추정)';
-  const priceRegex = /([0-9][\d\s,A-Za-z]{0,10})\s*원/; 
+  const priceRegex = /([0-9][\d\s,A-Za-z]{0,10})\s*원/;
   const dateRegex = /(\d{4})[.\s-]+(\d{1,2})[.\s-]+(\d{1,2})/;
 
   const results: PurchaseOCRResult[] = [];
@@ -46,12 +72,14 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     const dateMatch = line.match(dateRegex);
     if (dateMatch) {
       if (currentItem.names.length > 0 || currentItem.price !== null) {
+        const statusIdx = Math.min(results.length, statusTexts.length - 1);
         results.push({
           mall,
           itemName: currentItem.names.join(' ').trim() || null,
           price: currentItem.price,
           date: currentItem.date,
-          rawText
+          rawText,
+          statusText: statusTexts[statusIdx] || rawText
         });
         currentItem = { date: null, names: [], price: null };
       }
@@ -67,12 +95,14 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       if (numStr) {
         currentItem.price = Number(numStr);
       }
+      const statusIdx = Math.min(results.length, statusTexts.length - 1);
       results.push({
         mall,
         itemName: currentItem.names.join(' ').trim() || null,
         price: currentItem.price,
         date: currentItem.date,
-        rawText
+        rawText,
+        statusText: statusTexts[statusIdx] || rawText
       });
       const lastDate = currentItem.date;
       currentItem = { date: lastDate, names: [], price: null };
@@ -86,23 +116,45 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   }
 
   if (currentItem.names.length > 0 || currentItem.price !== null) {
+    const statusIdx = Math.min(results.length, statusTexts.length - 1);
     results.push({
       mall,
       itemName: currentItem.names.join(' ').trim() || null,
       price: currentItem.price,
       date: currentItem.date,
-      rawText
+      rawText,
+      statusText: statusTexts[statusIdx] || rawText
     });
   }
 
   if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: null, rawText }];
+    return [{ mall, itemName: null, price: null, date: null, rawText, statusText: rawText }];
   }
 
   return results;
 }
 
 export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
+  // 상태 감지용 키워드
+  const statusKeywords = ['취소완료', '취소 완료', '주문취소완료',
+                          '환불완료', '환불처리', '환불 완료', '반품완료', '반품 완료',
+                          '결제완료', '결제 확인 완료', '결제 확인', '주문완료', '배송완료', '배송 완료', '배송중',
+                          '구매확정완료', '구매확정', '구매 확정', '정기결제', '구독'];
+
+  // 제외할 안내 문구
+  const excludePatterns = ['환불 가능', '환불가능', '반품 가능', '반품가능', '취소 가능', '취소가능',
+                           '환불 정책', '반품 정책', '환불/반품', '환불·반품'];
+
+  // 원본 텍스트에서 상태 키워드가 포함된 라인 추출 (안내 문구 제외)
+  const originalLines = rawText.split('\n');
+  const statusTexts: string[] = [];
+  for (const line of originalLines) {
+    const isExcluded = excludePatterns.some(pattern => line.includes(pattern));
+    if (!isExcluded && statusKeywords.some(kw => line.includes(kw))) {
+      statusTexts.push(line.trim());
+    }
+  }
+
   let lines = rawText
     .split('\n')
     .map(line => line.replace(/^[\s\|ㅣ<\-—©]+/, '').trim())
@@ -131,34 +183,56 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
 
       let priceStr = targetLine.split(/202\d/)[0];
       priceStr = priceStr.replace(/[^\d,]/g, '');
-      priceStr = priceStr.replace(/81$/, '').replace(/8$/, ''); 
-      
+      priceStr = priceStr.replace(/81$/, '').replace(/8$/, '');
+
       if (priceStr) {
         price = Number(priceStr.replace(/,/g, ''));
       }
     }
 
+    const statusIdx = Math.min(i, statusTexts.length - 1);
     results.push({
       mall,
       itemName,
       price,
       date,
-      rawText
+      rawText,
+      statusText: statusTexts[statusIdx] || rawText
     });
   }
 
   if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: null, rawText }];
+    return [{ mall, itemName: null, price: null, date: null, rawText, statusText: rawText }];
   }
 
   return results;
 }
 
 export function parseAuctionOrderText(rawText: string): PurchaseOCRResult[] {
+  // 상태 감지용 키워드
+  const statusKeywords = ['취소완료', '취소 완료', '주문취소완료',
+                          '환불완료', '환불처리', '환불 완료', '반품완료', '반품 완료',
+                          '결제완료', '주문완료', '배송완료', '배송 완료', '배송중',
+                          '구매확정완료', '구매확정', '정기결제', '구독'];
+
+  // 제외할 안내 문구
+  const excludePatterns = ['환불 가능', '환불가능', '반품 가능', '반품가능', '취소 가능', '취소가능',
+                           '환불 정책', '반품 정책', '환불/반품', '환불·반품'];
+
+  // 원본 텍스트에서 상태 키워드가 포함된 라인 추출 (안내 문구 제외)
+  const originalLines = rawText.split('\n');
+  const statusTexts: string[] = [];
+  for (const line of originalLines) {
+    const isExcluded = excludePatterns.some(pattern => line.includes(pattern));
+    if (!isExcluded && statusKeywords.some(kw => line.includes(kw))) {
+      statusTexts.push(line.trim());
+    }
+  }
+
   const lines = rawText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   const mall = '옥션';
   const results: PurchaseOCRResult[] = [];
-  
+
   let currentItem: { date: string | null, names: string[], price: number | null } = {
     date: null,
     names: [],
@@ -174,18 +248,20 @@ export function parseAuctionOrderText(rawText: string): PurchaseOCRResult[] {
     if (dateMatch) {
       if (currentItem.date || currentItem.names.length > 0 || currentItem.price !== null) {
         if (currentItem.names.length > 0 || currentItem.price !== null) {
+          const statusIdx = Math.min(results.length, statusTexts.length - 1);
           results.push({
             mall,
             itemName: currentItem.names.join(' ').trim() || null,
             price: currentItem.price,
             date: currentItem.date,
-            rawText
+            rawText,
+            statusText: statusTexts[statusIdx] || rawText
           });
         }
         currentItem = { date: null, names: [], price: null };
       }
       currentItem.date = dateMatch[1];
-      
+
       const restOfLine = line.replace(dateMatch[0], '').trim();
       let cleanedName = restOfLine.replace(/['`]*com/g, '').replace(/환불완료|배송완료|주문취소/g, '').trim();
       if (cleanedName.length > 0) {
@@ -205,19 +281,21 @@ export function parseAuctionOrderText(rawText: string): PurchaseOCRResult[] {
              numStr = validNumStr;
          }
       } else {
-         numStr = numStr.replace(/8$/, '').replace(/1$/, ''); 
+         numStr = numStr.replace(/8$/, '').replace(/1$/, '');
       }
-      
+
       if (numStr) {
         currentItem.price = Number(numStr);
       }
 
+      const statusIdx = Math.min(results.length, statusTexts.length - 1);
       results.push({
         mall,
         itemName: currentItem.names.join(' ').trim() || null,
         price: currentItem.price,
         date: currentItem.date,
-        rawText
+        rawText,
+        statusText: statusTexts[statusIdx] || rawText
       });
       currentItem = { date: null, names: [], price: null };
       continue;
@@ -235,23 +313,49 @@ export function parseAuctionOrderText(rawText: string): PurchaseOCRResult[] {
   }
 
   if (currentItem.names.length > 0 || currentItem.price !== null) {
+    const statusIdx = Math.min(results.length, statusTexts.length - 1);
     results.push({
       mall,
       itemName: currentItem.names.join(' ').trim() || null,
       price: currentItem.price,
       date: currentItem.date,
-      rawText
+      rawText,
+      statusText: statusTexts[statusIdx] || rawText
     });
   }
 
   if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: null, rawText }];
+    return [{ mall, itemName: null, price: null, date: null, rawText, statusText: rawText }];
   }
 
   return results;
 }
 
 export function parseTemuOrderText(rawText: string): PurchaseOCRResult[] {
+  // 상태 감지용 키워드 - 완료 상태만 정확하게 매칭
+  const statusKeywords = ['취소완료', '취소 완료', '주문취소완료',
+                          '환불완료', '환불 완료', '환불처리완료',
+                          '반품완료', '반품 완료', '반품처리완료',
+                          '결제완료', '결제 완료', '주문완료', '주문 완료',
+                          '배송완료', '배송 완료', '배송중',
+                          '구매확정완료', '구매확정', '구매 확정',
+                          '정기결제', '구독'];
+
+  // 제외할 안내 문구 (실제 상태가 아닌 것들)
+  const excludePatterns = ['환불 가능', '환불가능', '반품 가능', '반품가능', '취소 가능', '취소가능',
+                           '환불 정책', '반품 정책', '환불/반품', '환불·반품'];
+
+  // 원본 텍스트에서 상태 키워드가 포함된 라인 추출 (안내 문구 제외)
+  const originalLines = rawText.split('\n');
+  const statusTexts: string[] = [];
+  for (const line of originalLines) {
+    // 안내 문구가 포함된 라인은 제외
+    const isExcluded = excludePatterns.some(pattern => line.includes(pattern));
+    if (!isExcluded && statusKeywords.some(kw => line.includes(kw))) {
+      statusTexts.push(line.trim());
+    }
+  }
+
   const lines = rawText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
   const mall = '테무';
   const results: PurchaseOCRResult[] = [];
@@ -303,20 +407,22 @@ export function parseTemuOrderText(rawText: string): PurchaseOCRResult[] {
             itemName,
             price: priceStr ? Number(priceStr) : null,
             date: orderDate,
-            rawText
+            rawText,
+            // 테무는 안내 문구가 많아 상태 자동 인식이 부정확하므로 기본값(purchase) 사용
+            statusText: undefined
           });
         }
       } else {
         const excludeKeywords = ['합계', '할인', '소계', '배송', 'Temu', '판매자', '프로모션', '환불', '적용'];
         const isExcluded = excludeKeywords.some(kw => line.includes(kw));
-        
+
         if (!isExcluded) {
            const directPriceRegex = /(.*)\s+([\d,]+)[원¥89]*$/i;
            const match2 = line.match(directPriceRegex);
            if (match2) {
              let itemName = match2[1].replace(/^[^가-힣a-zA-Z0-9]+/, '').trim();
              let priceStr = match2[2].replace(/[^\d]/g, '');
-             
+
              if (priceStr.length >= 5 && (priceStr.endsWith('9') || priceStr.endsWith('8'))) {
                if (!match2[2].includes(',')) {
                  priceStr = priceStr.slice(0, -1);
@@ -329,7 +435,9 @@ export function parseTemuOrderText(rawText: string): PurchaseOCRResult[] {
                  itemName,
                  price: priceStr ? Number(priceStr) : null,
                  date: orderDate,
-                 rawText
+                 rawText,
+                 // 테무는 안내 문구가 많아 상태 자동 인식이 부정확하므로 기본값(purchase) 사용
+                 statusText: undefined
                });
              }
            }
@@ -339,7 +447,7 @@ export function parseTemuOrderText(rawText: string): PurchaseOCRResult[] {
   }
 
   if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: orderDate, rawText }];
+    return [{ mall, itemName: null, price: null, date: orderDate, rawText, statusText: undefined }];
   }
 
   return results;
