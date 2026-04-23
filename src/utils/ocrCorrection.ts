@@ -132,6 +132,54 @@ function normalizeQuotes(input: string): string {
 }
 
 /**
+ * "N개" 오인식 복구.
+ *
+ * Tesseract 가 한글 "개" 의 받침(ㅐ+ㅣ+ㅇ)이 만드는 닫힌 곡선을 괄호/파이프로 오인식해
+ * "1개" → "1}", "2개" → "2)", "10개" → "10|" 같이 뱉는 케이스가 자주 나옵니다.
+ * 가격 뒤 수량 토큰은 모든 쇼핑 파서가 보는 값이라 여기서 일관되게 복구합니다.
+ *
+ * 매칭 조건(false-positive 방지):
+ *   - 숫자(1~3자리) 바로 뒤에 `}` `)` `|` 중 하나가 오고
+ *   - 뒤가 줄 끝이거나 공백/콤마/점/· 이어야 함(연속 숫자 중간에는 붙이지 않음)
+ *
+ * 예: "200g, 1}" → "200g, 1개", "x 2)" → "x 2개"
+ *
+ * 안전성: 이 규칙은 이미 인식된 텍스트에만 동작하므로 Tesseract 자체의 인식 정확도엔
+ * 영향을 주지 않습니다. 멱등 — 두 번 태워도 "1개" → "1개" 로 유지됩니다.
+ */
+function recoverTrailingGaeUnit(input: string): string {
+  return input.replace(/(\d{1,3})\s*[}\)\|]\s*(?=$|[\s,.·])/gm, "$1개");
+}
+
+/**
+ * "원" 오인식 복구.
+ *
+ * 가격 라벨 "원" 이 Tesseract 에서 "윤"(받침 ㄴ 이 ㅇ 으로 오독) · "웜" · "왠" 으로 튀는
+ * 사례가 관찰됐습니다. 이 글자들은 쇼핑 문맥에선 가격 단위 외 쓰임이 사실상 없어, 가격
+ * 숫자(콤마 포함) 직후에 올 때만 "원" 으로 돌려도 부작용이 낮습니다.
+ *
+ * 예: "16,900 윤" → "16,900 원", "3850웜" → "3850 원"
+ *
+ * 안전성: 매칭 조건이 "숫자 직후" 로 좁아서 일반 텍스트의 "윤/웜/왠" 은 건드리지 않습니다.
+ */
+function recoverWonUnit(input: string): string {
+  return input.replace(/(\d[\d,]*)\s*[윤웜왠]\b/g, "$1 원");
+}
+
+/**
+ * 한글 사이에 외톨이로 끼어 있는 자모 "ㅣ" 를 제거합니다.
+ *
+ * Tesseract 가 한글 받침의 세로획을 독립된 자모 ㅣ 로 분리해 뱉는 경우가 있습니다.
+ * 양옆이 공백인 상태로 한글 완성형 사이에 끼었을 때만 가비지로 판단하고 지웁니다.
+ * 실제 단어 내부의 자모는 공백 없이 붙어 있어 이 규칙에 걸리지 않습니다.
+ *
+ * 예: "원더풀 ㅣ 피스타치오" → "원더풀 피스타치오"
+ */
+function removeOrphanJamoI(input: string): string {
+  return input.replace(/([가-힣])\s+ㅣ\s+([가-힣])/g, "$1 $2");
+}
+
+/**
  * 쇼핑몰 OCR 텍스트에 공통으로 걸만한 "안전한" 치환을 모두 적용합니다.
  * 호출부는 파서에 넘기기 직전에 한 번만 태우면 됩니다.
  *
@@ -139,8 +187,10 @@ function normalizeQuotes(input: string): string {
  *   1. NFC → 이후 모든 regex 가 완성형 글자로 매칭되도록 **가장 먼저**.
  *   2. 보이지 않는 문자 → regex에서 짜증나는 zero-width 류 제거.
  *   3. 전각→반각 / 가운데점 / 하이픈 / 따옴표 → 글자 모양 통일.
- *   4. 숫자 / 원 관련 → 형식 정규화.
- *   5. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
+ *   4. 자모 복구 → "ㅣ" 외톨이 제거 등 낱글자 수준 교정. 원/개 복구 전에 돌려야
+ *      "16,900 윤" 같은 패턴이 공백 축약에 먼저 먹히지 않습니다.
+ *   5. 숫자 / 원 / 개 복구 → 형식 정규화.
+ *   6. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
  */
 export function applyOcrCorrections(rawText: string): string {
   if (!rawText) return rawText;
@@ -151,7 +201,10 @@ export function applyOcrCorrections(rawText: string): string {
   text = normalizeMiddleDot(text);
   text = normalizeHyphens(text);
   text = normalizeQuotes(text);
+  text = removeOrphanJamoI(text);
   text = mergeThousandSeparator(text);
+  text = recoverWonUnit(text);
+  text = recoverTrailingGaeUnit(text);
   text = spaceBeforeWon(text);
   text = collapseInlineSpaces(text);
   text = trimLineEnds(text);
