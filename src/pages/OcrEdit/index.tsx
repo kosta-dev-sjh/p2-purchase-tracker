@@ -23,6 +23,7 @@ import {
   type OcrImageItem,
   type OcrOrder,
 } from "./data";
+import { useOcrStore } from "../../stores/ocrStore";
 import {
   transactionsStore,
   useTransactionsStore,
@@ -173,12 +174,13 @@ interface ConfirmState {
 export const OcrEditPage: React.FC = () => {
   const navigate = useNavigate();
   const allRows = useTransactionsStore();
+  const storeImages = useOcrStore();
 
-  // 초기 시드는 mock 데이터지만 주문일자·상태 태그는 페이지 내부 상태로 두어
-  // 사용자가 바로 고칠 수 있습니다. 주문 레벨로 보관해야 같은 캡쳐 안의 여러 주문을
-  // 독립적으로 수정할 수 있습니다.
-  const [images, setImages] = useState<OcrImageItem[]>(ocrEditMockData.images);
-  const [selectedId, setSelectedId] = useState<string>(images[0].id);
+  // 초기 시드는 ocrStore에서 가져오고, 없으면 mock 데이터를 사용해 개발/테스트 시 화면이 깨지지 않게 합니다.
+  const [images, setImages] = useState<OcrImageItem[]>(
+    storeImages.length > 0 ? storeImages : ocrEditMockData.images
+  );
+  const [selectedId, setSelectedId] = useState<string>(images[0]?.id ?? "");
   const selected = images.find((image) => image.id === selectedId);
 
   // 매칭 후보가 있는 주문을 순차적으로 처리하기 위한 큐. 0번 인덱스가 현재 모달에 뜨는 건.

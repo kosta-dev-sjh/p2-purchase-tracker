@@ -15,7 +15,7 @@
  */
 import { detectStatusFromOcrText } from "../../utils/ocrParse";
 
-export type Platform = "coupang" | "naver" | "musinsa";
+export type Platform = "coupang" | "naver" | "musinsa" | "auction" | "temu";
 export type Status = "purchase" | "sub" | "cancel" | "refund";
 
 export interface OcrProduct {

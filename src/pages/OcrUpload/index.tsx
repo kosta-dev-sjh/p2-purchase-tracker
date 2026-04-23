@@ -13,6 +13,7 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
+import { createWorker } from "tesseract.js";
 import { AppShell } from "../../components/layout/AppShell";
 import { Button } from "../../components/primitives/Button";
 import { PLATFORM_LABELS } from "../../constants/labels";
@@ -23,6 +24,15 @@ import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
 import { ocrUploadMockData, type UploadedImage } from "./data";
+import { ocrStore } from "../../stores/ocrStore";
+import {
+  parseCoupangOrderText,
+  parseNaverOrderText,
+  parseAuctionOrderText,
+  parseTemuOrderText,
+} from "../../utils/ocrParsers";
+import { detectStatusFromOcrText } from "../../utils/ocrParse";
+import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
 
 const Wrap = styled.div`
   display: grid;
@@ -133,6 +143,93 @@ export const OcrUploadPage: React.FC = () => {
     });
   };
 
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const handleAnalyze = async () => {
+    if (images.length === 0) return;
+    setIsAnalyzing(true);
+    
+    try {
+      const worker = await createWorker('kor+eng');
+      const processedImages: OcrImageItem[] = [];
+
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        if (!image.file) {
+          // v1 목업 이미지 대응 폴백
+          processedImages.push({
+            id: image.id,
+            fileName: image.fileName,
+            thumbUrl: image.thumbUrl,
+            status: "analyzed" as const,
+            platform: image.platform,
+            orders: []
+          });
+          continue;
+        }
+
+        const result = await worker.recognize(image.file);
+        const rawText = result.data.text;
+        
+        let parsedData = [];
+        if (image.platform === 'coupang') {
+          parsedData = parseCoupangOrderText(rawText);
+        } else if (image.platform === 'naver') {
+          parsedData = parseNaverOrderText(rawText);
+        } else if (image.platform === 'auction') {
+          parsedData = parseAuctionOrderText(rawText);
+        } else if (image.platform === 'temu') {
+          parsedData = parseTemuOrderText(rawText);
+        }
+        
+        const orders: OcrOrder[] = parsedData.map((res, idx) => {
+          const statusTag = detectStatusFromOcrText(res.rawText) ?? "purchase";
+          return {
+            id: `${image.id}-order-${idx}`,
+            orderDate: res.date ?? "",
+            statusTag,
+            statusLabel: "자동 추출됨",
+            totalAmount: res.price ?? 0,
+            rawText: res.rawText,
+            products: res.itemName ? [{
+              id: `${image.id}-product-${idx}`,
+              name: res.itemName,
+              price: res.price ?? 0,
+              quantity: 1,
+            }] : []
+          };
+        });
+
+        processedImages.push({
+          id: image.id,
+          fileName: image.fileName,
+          thumbUrl: image.thumbUrl,
+          status: "analyzed" as const,
+          platform: image.platform,
+          rawText: rawText,
+          orders: orders.length > 0 ? orders : [{
+             id: `${image.id}-empty`,
+             orderDate: "",
+             statusTag: "purchase",
+             totalAmount: 0,
+             rawText,
+             products: []
+          }]
+        });
+      }
+
+      await worker.terminate();
+      
+      ocrStore.setImages(processedImages);
+      navigate("/ocr-edit");
+    } catch (error) {
+      console.error('OCR 파싱 실패:', error);
+      alert('이미지 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
   /**
    * 플랫폼 뱃지별로 현재 몇 장이 올라가 있는지 요약합니다.
    * 사용자가 "내가 쿠팡 3장, 네이버 2장 올렸구나"를 한 눈에 확인할 수 있게 Footer에 노출합니다.
@@ -189,10 +286,10 @@ export const OcrUploadPage: React.FC = () => {
             <Button
               variant="primary"
               size="lg"
-              disabled={images.length === 0}
-              onClick={() => navigate("/ocr-edit")}
+              disabled={images.length === 0 || isAnalyzing}
+              onClick={handleAnalyze}
             >
-              분석 시작하기
+              {isAnalyzing ? "분석 중..." : "분석 시작하기"}
             </Button>
           </Actions>
         </Footer>
