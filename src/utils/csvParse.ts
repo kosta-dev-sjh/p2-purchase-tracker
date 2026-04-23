@@ -7,7 +7,10 @@ import { findHeaderRowIndex } from "./importHeaders";
 
 export type CsvRow = Record<string, string>;
 
-function splitCsvLine(line: string): string[] {
+/**
+ * 줄 단위로 텍스트를 쪼개되, 따옴표로 감싸진 구분자는 무시합니다.
+ */
+function splitCsvLine(line: string, separator = ","): string[] {
   const cells: string[] = [];
   let current = "";
   let inQuotes = false;
@@ -20,7 +23,7 @@ function splitCsvLine(line: string): string[] {
       } else {
         inQuotes = !inQuotes;
       }
-    } else if (ch === "," && !inQuotes) {
+    } else if (ch === separator && !inQuotes) {
       cells.push(current);
       current = "";
     } else {
@@ -33,6 +36,7 @@ function splitCsvLine(line: string): string[] {
 
 export function decodeCsvBuffer(buffer: ArrayBuffer): string {
   const utf8 = new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+  // UTF-8로 읽었을 때 깨진 문자가 발견되면 EUC-KR로 재시도합니다.
   if (!utf8.includes("\uFFFD")) return utf8;
 
   try {
@@ -42,12 +46,31 @@ export function decodeCsvBuffer(buffer: ArrayBuffer): string {
   }
 }
 
+/**
+ * 텍스트를 분석해 가장 적절한 구분자(쉼표 또는 탭)를 선택합니다.
+ * 국내 금융사 CSV는 실제로는 탭으로 구분된(TSV) 경우가 매우 많습니다.
+ */
+function detectSeparator(text: string): string {
+  const lines = text.split(/\r?\n/).slice(0, 5);
+  let commaCount = 0;
+  let tabCount = 0;
+
+  lines.forEach((line) => {
+    commaCount += (line.match(/,/g) || []).length;
+    tabCount += (line.match(/\t/g) || []).length;
+  });
+
+  return tabCount > commaCount ? "\t" : ",";
+}
+
 export function parseCsvMatrix(text: string): string[][] {
   const cleaned = text.replace(/^\uFEFF/, "");
+  const separator = detectSeparator(cleaned);
+  
   return cleaned
     .split(/\r?\n/)
     .filter((line) => line.trim() !== "")
-    .map((line) => splitCsvLine(line).map((cell) => cell.trim()));
+    .map((line) => splitCsvLine(line, separator).map((cell) => cell.trim()));
 }
 
 export function rowsToCsvRows(rows: string[][], headerIndex = 0): CsvRow[] {
