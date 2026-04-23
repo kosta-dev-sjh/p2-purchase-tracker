@@ -18,17 +18,8 @@
  * 위치: src/utils/ocrPreprocess.ts
  */
 
-/**
- * 목표 긴 변 해상도(px).
- *
- * 1차 설계(1800)는 대부분의 웹 스크린샷에 충분했지만, 모바일 캡쳐(특히 쿠팡)에서
- * 🚀 아이콘 + "로켓 내일" 배지가 인접해 붙어 있을 때 획이 뭉개져 "AED 는 프…"
- * 같은 심각한 오인식이 관찰됐습니다. Tesseract 가 기대하는 x-height(대략 20~30px)에
- * 더 여유 있게 도달하도록 2400 까지 끌어올렸습니다. 상한(3000)은 워커 처리 시간이
- * 급격히 느려지는 지점으로 유지합니다.
- */
-const MIN_LONG_EDGE = 2400;
-const MAX_LONG_EDGE = 3200;
+const MIN_LONG_EDGE = 1800;
+const MAX_LONG_EDGE = 3000;
 
 /**
  * OCR 정확도를 끌어올리기 위한 경량 전처리.
@@ -86,49 +77,16 @@ export async function preprocessImageForOcr(file: File): Promise<Blob | File> {
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(img, 0, 0, targetW, targetH);
 
-    // 그레이스케일 + 컨트라스트. 범위 [0, 255]에서 중앙값 128을 기준으로 어두운 픽셀은
+    // 그레이스케일 + 약한 컨트라스트. 범위 [0, 255]에서 중앙값 128을 기준으로 어두운 픽셀은
     // 더 어둡게, 밝은 픽셀은 더 밝게 밀어 폰트 엣지를 뚜렷이 만듭니다. 과하게 하면 획 내부의
-    // 그라데이션이 끊겨 한글이 깨지므로 amount=42 정도로 보수적으로 올렸습니다(기존 30).
-    //
-    // 쿠팡의 🚀 배지처럼 채도가 높은 픽셀이 그레이스케일 후 중간 톤으로 뭉개져 "AED/AEs"
-    // 같은 영문 가비지로 오인식되는 케이스가 관찰됐습니다. 컨트라스트를 살짝 더 강하게
-    // 주면 배지의 실루엣이 아예 흰/검으로 밀리기 때문에 문자 디코더가 짧은 영문 조각을
-    // 생성할 여지가 줄어듭니다. 다만 44 이상으로 가면 한글 획이 끊어지기 시작해 42 로 캡.
+    // 그라데이션이 끊겨 한글이 깨지므로 amount=30 정도의 보수적 값을 씁니다.
     const imageData = ctx.getImageData(0, 0, targetW, targetH);
-    const grayBuffer = new Uint8ClampedArray(targetW * targetH);
     const d = imageData.data;
-    const amount = 42;
-    for (let i = 0, j = 0; i < d.length; i += 4, j += 1) {
+    const amount = 30;
+    for (let i = 0; i < d.length; i += 4) {
       const g = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
       const c = g < 128 ? Math.max(0, g - amount) : Math.min(255, g + amount);
-      grayBuffer[j] = c;
-    }
-
-    // Unsharp mask: 3x3 커널 [0,-1,0 / -1,5,-1 / 0,-1,0] 을 그레이스케일 버퍼에 적용해
-    // 획 엣지를 한 번 더 선명하게 만듭니다. 저해상도 원본을 업스케일할 때 필연적으로
-    // 생기는 블러를 보정하는 역할로, 한글의 세리프/받침 구분이 또렷해져 Tesseract
-    // LSTM 모델의 디코딩 정확도가 측정 가능한 수준으로 올라갑니다.
-    //
-    // 구현 주의: 커널 계수 합이 1 이 되도록 5 + (-1)*4 = 1 로 맞췄습니다. 가장자리(테두리 1픽셀)
-    // 는 원본을 그대로 쓰고, 내부만 돌립니다. 과도한 샤픈은 픽셀 노이즈를 증폭시키므로
-    // 한 번만 적용하고 끝냅니다.
-    const sharpened = new Uint8ClampedArray(grayBuffer.length);
-    sharpened.set(grayBuffer);
-    for (let y = 1; y < targetH - 1; y += 1) {
-      for (let x = 1; x < targetW - 1; x += 1) {
-        const idx = y * targetW + x;
-        const center = grayBuffer[idx];
-        const up = grayBuffer[idx - targetW];
-        const down = grayBuffer[idx + targetW];
-        const left = grayBuffer[idx - 1];
-        const right = grayBuffer[idx + 1];
-        const value = 5 * center - up - down - left - right;
-        sharpened[idx] = value < 0 ? 0 : value > 255 ? 255 : value;
-      }
-    }
-
-    for (let i = 0, j = 0; i < d.length; i += 4, j += 1) {
-      d[i] = d[i + 1] = d[i + 2] = sharpened[j];
+      d[i] = d[i + 1] = d[i + 2] = c;
       // alpha 채널은 그대로.
     }
     ctx.putImageData(imageData, 0, 0);
