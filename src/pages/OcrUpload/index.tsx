@@ -261,21 +261,25 @@ export const OcrUploadPage: React.FC = () => {
           const unitPrice = res.price ?? 0;
           const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
 
-          // totalAmount는 상품 합계의 파생값. OCR에서 itemName을 못 뽑은 주문은 products=[] 이므로
-          // totalAmount도 0으로 둬야 "상품 없는데 금액만 찍혀 있는" 불일치 상태가 안 생깁니다.
-          // (OcrEdit의 validateBeforeSave가 상품/금액 누락을 한 번 더 걸러 주므로, 이 0 값은
-          // 사용자에게 "상품을 추가해 달라"는 신호로 자연스럽게 이어집니다.)
+          // totalAmount는 상품 합계의 파생값(OcrEdit에서 상품 목록의 price*qty 합으로 자동 재계산).
+          // 기존에는 itemName이 null이면 products=[]로 통째로 버렸는데, 그러면 "피스타치오 47,650원"처럼
+          // 파서가 가격은 건졌지만 이름 줄을 놓친 상품이 조용히 사라져 사용자가 "왜 하나만 추적되지?" 로
+          // 혼란을 겪었습니다. 대신 가격이 잡혀 있으면 "상품명 입력 필요" 플레이스홀더 상품으로 남겨 주고,
+          // OcrEdit에서 사용자가 이름만 채우면 그대로 저장되도록 합니다(금액/수량은 보존).
           const hasItem = Boolean(res.itemName);
+          const hasPrice = unitPrice > 0;
+          const productName = hasItem ? (res.itemName as string) : "상품명 입력 필요";
+          const keepProduct = hasItem || hasPrice;
           return {
             id: `${image.id}-order-${idx}`,
             orderDate: res.date ?? "",
             statusTag,
             statusLabel: "자동 추출됨",
-            totalAmount: hasItem ? unitPrice * qty : 0,
+            totalAmount: keepProduct ? unitPrice * qty : 0,
             rawText: res.rawText,
-            products: hasItem ? [{
+            products: keepProduct ? [{
               id: `${image.id}-product-${idx}`,
-              name: res.itemName as string,
+              name: productName,
               price: unitPrice,
               quantity: qty,
             }] : []

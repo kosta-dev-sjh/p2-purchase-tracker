@@ -48,7 +48,9 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 
   // 상태 라인 감지(한 줄에 상태 키워드가 하나라도 들어 있으면 상태 라인으로 취급).
   // OCR 특성상 "배송완료 · 4/17(금) 도착"처럼 날짜/요일이 뒤따르는 경우가 많아 키워드 포함 여부만 확인.
-  const statusLineRegex = /(배송완료|배송 완료|배송중|상품준비중|상품 준비중|결제완료|결제 완료|주문완료|주문 완료|주문취소|취소완료|취소 완료|환불완료|환불 완료|반품완료|반품 완료|구매확정|구매 확정|정기결제|구독)/;
+  // Tesseract는 한글 사이 공백을 종종 삽입/삭제하므로 "배송 완료", "상품 준비 중" 같은 변형을
+  // \s*로 한꺼번에 흡수해 regex를 하나로 단순화했습니다.
+  const statusLineRegex = /(배송\s*완료|배송\s*중|상품\s*준비\s*중|결제\s*완료|주문\s*완료|주문\s*취소|취소\s*완료|환불\s*완료|환불\s*처리|반품\s*완료|구매\s*확정|정기\s*결제|구독)/;
 
   // 섹션 경계 — 이 라인 이후는 주문 집계 영역이라 상품으로 보지 않음.
   const sectionBoundaryRegex = /(결제\s*정보|결제영수증\s*정보|받는사람\s*정보|배송(?:상품)?\s*주문상태\s*안내|배송지\s*정보)/;
@@ -71,7 +73,13 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   const orderDateRegex = /(20\d{2})\s*[.\s]\s*(\d{1,2})\s*[.\s]\s*(\d{1,2})\s*(?:주\s*문)?/;
 
   // 상품명 앞에 붙는 쿠팡 전용 태그/아이콘. 여러 개가 겹쳐 붙을 수 있어 while로 반복 제거.
-  const leadingTagRegex = /^(?:[🚀↑↓▲▼★☆·•\-\|ㅣ<=_*©]+\s*|판매자로켓|로켓직구|로켓프레시|로켓배송|로켓|새벽|내일|오늘|무료배송)\s*/;
+  //
+  // 실제 Tesseract는 🚀 아이콘을 `»`, `>>`, `>`, `‹›`, 따옴표 등으로 오인식하는 경우가 흔합니다.
+  // 예: "🚀로켓 내일 루디크..." → "» 로켓 내일 루디크..." 같이 찍히면 이전 정규식은 » 때문에
+  //      `^로켓`에 매치되지 않아 "» 로켓 내일"이 상품명 앞에 그대로 남습니다.
+  // 그래서 리딩 기호 char class를 확장하고, 로켓/판매자로켓/로켓 프레시 등도 공백을 허용해
+  // 띄어쓰기 variation에 관대하게 만듭니다.
+  const leadingTagRegex = /^(?:[🚀↑↓▲▼★☆·•»«‹›<>"'”“‘’\-\|ㅣ=_*©]+\s*|판매자\s*로켓|로켓\s*직구|로켓\s*프레시|로켓\s*배송|로켓|새벽|내일|오늘|무료\s*배송)\s*/;
 
   // ───────── 1차 라인 분리 ─────────
   const allLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -129,11 +137,21 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   const flushNameAndPrice = (priceNum: number, quantity: number | undefined) => {
     const joined = nameBuffer.join(' ').replace(/\s+/g, ' ').trim();
     const itemName = joined.length > 0 ? joined : null;
-    // 이름 없이 가격만 뜬 라인(총계 잔존 등)은 조용히 버림.
-    if (!itemName) {
-      nameBuffer = [];
-      return;
-    }
+    // 정책 변경(2026-04-23): 이름 없이 가격만 잡힌 주문도 더 이상 조용히 버리지 않습니다.
+    //
+    // 이전에는 "총계 잔존 등"의 오검출을 우려해 null이면 drop했는데, 섹션 경계
+    // (결제 정보/받는사람 정보 등)를 만나면 이미 inPaymentSection으로 전체가 차단되기 때문에
+    // 이 지점까지 도달한 가격은 "상품 블록 내부의 가격"이 사실상 확정된 상태입니다.
+    //
+    // 실제로 Tesseract가 저해상도 캡쳐에서 상품명 라인을 놓치는 케이스가 관찰됐고
+    // (예: "원더풀피스타치오..." 라인 누락으로 47,650원 주문 카드가 통째로 사라짐),
+    // 그 경우 사용자는 OCR 결과 화면에서 "이 주문이 어디 갔지?"라고 헤매게 됩니다.
+    // itemName을 null로 그대로 보내면 OcrUpload에서 placeholder 이름을 붙여 주문 카드를
+    // 살려주고, 사용자는 OcrEdit의 상품명 칸을 채우기만 하면 정상 저장할 수 있습니다.
+    //
+    // 한편 상태 라인 바로 뒤에 nameBuffer가 비어 있는 상태로 가격이 오는 경우도 있어서
+    // (상태 라인을 처리할 때 nameBuffer를 초기화함), itemName이 null이어도 statusText는
+    // currentStatus를 그대로 물려 주어 구매/환불 구분이 유지되도록 합니다.
     results.push({
       mall,
       itemName,
