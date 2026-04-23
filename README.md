@@ -58,16 +58,23 @@ See also: `CONTRIBUTING.md`
 - TypeScript
 - Vite 8
 - React Router DOM
+- Zustand
 - styled-components
 - Recharts
 - SheetJS `xlsx`
 - ESLint
+- rollup-plugin-visualizer
 
 ## State management
 
-- Global state: lightweight localStorage-backed store modules in `src/stores/`
+- Global state: Zustand + localStorage-backed store modules in `src/stores/`
 - Common hooks in use: `useState`, `useMemo`, `useEffect`
 - Redux is not currently used
+
+## Optimization tools
+
+- `zustand`: lightweight global state management for transactions, categories, and profile
+- `rollup-plugin-visualizer`: bundle analysis tool. Run `npm run analyze` and open `dist/bundle-stats.html`
 
 ## When to run `npm install` again
 
