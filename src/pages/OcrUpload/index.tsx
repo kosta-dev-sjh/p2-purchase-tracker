@@ -23,6 +23,7 @@ import { PlatformSelect, type Platform } from "./components/PlatformSelect";
 import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
+import { PlatformConfirmModal } from "./components/PlatformConfirmModal";
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
 import {
@@ -33,6 +34,7 @@ import {
   type PurchaseOCRResult,
 } from "../../utils/ocrParsers";
 import { detectStatusFromOcrText } from "../../utils/ocrParse";
+import { preprocessImageForOcr } from "../../utils/ocrPreprocess";
 import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
 
 const Wrap = styled.div`
@@ -121,6 +123,12 @@ export const OcrUploadPage: React.FC = () => {
   // append 모드(기존 결과에 이어 붙이기)든 새 세션이든 초기 상태는 항상 빈 배열로 시작합니다.
   const [images, setImages] = useState<UploadedImage[]>([]);
 
+  /**
+   * "분석 시작하기" → 플랫폼 확인 모달(PlatformConfirmModal)의 개폐 상태.
+   * 모달에서 확인을 누르면 수정된 이미지 배열이 내려와 실제 OCR 파이프(runAnalysis)가 돕니다.
+   */
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
+
   React.useEffect(() => {
     // 새로운 세션 시작일 경우에만 스토어를 초기화합니다.
     if (!isAppendMode) {
@@ -159,16 +167,57 @@ export const OcrUploadPage: React.FC = () => {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const handleAnalyze = async () => {
+  /**
+   * "분석 시작하기" 진입점.
+   * 분석 자체는 이미지 장수만큼 Tesseract를 돌리는 무거운 작업이라, 실행 전
+   * PlatformConfirmModal을 먼저 띄워 사용자에게 태그를 재확인할 기회를 줍니다.
+   * 모달에서 "확인하고 분석 시작"을 누르면 handleConfirmAnalyze가 실제 파이프를 돌립니다.
+   */
+  const handleAnalyze = () => {
     if (images.length === 0) return;
+    if (isAnalyzing) return;
+    setIsConfirmOpen(true);
+  };
+
+  /**
+   * 모달에서 확정된 최종 이미지 배열로 OCR 파이프를 실행합니다.
+   * 여기서 받은 updatedImages는 사용자가 모달에서 플랫폼 태그를 수정한 결과이므로,
+   * 상위 images state에도 그대로 반영해 UploadedGrid의 뱃지가 같이 바뀌도록 합니다.
+   */
+  const handleConfirmAnalyze = async (updatedImages: UploadedImage[]) => {
+    setIsConfirmOpen(false);
+    setImages(updatedImages);
+    await runAnalysis(updatedImages);
+  };
+
+  const runAnalysis = async (targetImages: UploadedImage[]) => {
+    if (targetImages.length === 0) return;
     setIsAnalyzing(true);
-    
+
     try {
       const worker = await createWorker('kor+eng');
+
+      // Tesseract 파라미터 튜닝:
+      //  - tessedit_pageseg_mode=6(Single uniform block of text)로 두면 쇼핑 캡쳐처럼
+      //    "하나의 수직 블록"을 가진 이미지에서 라인 분할이 안정적으로 이뤄집니다.
+      //    기본값(3=Auto)은 한글 쇼핑 UI에서 아이콘/뱃지를 별도 블록으로 잘못 잡아
+      //    라인 경계가 흐트러지는 경우가 많았습니다.
+      //  - preserve_interword_spaces=1: 공백을 보존해 파서의 토큰 분리가 쉬워집니다.
+      // setParameters는 문자열 키-값만 받으므로 그대로 전달합니다.
+      try {
+        await worker.setParameters({
+          tessedit_pageseg_mode: "6",
+          preserve_interword_spaces: "1",
+        } as unknown as never);
+      } catch {
+        // 파라미터 설정 실패는 치명적이지 않으니 로그만 남기고 기본값으로 진행.
+        console.warn("[OcrUpload] tesseract.setParameters 실패 — 기본값으로 진행");
+      }
+
       const processedImages: OcrImageItem[] = [];
 
-      for (let i = 0; i < images.length; i++) {
-        const image = images[i];
+      for (let i = 0; i < targetImages.length; i++) {
+        const image = targetImages[i];
         if (!image.file) {
           // 방어적 폴백. 정상 업로드 흐름에서는 File 객체가 반드시 있지만,
           // 예외적으로 file 참조가 비어 있는 케이스(예: 테스트 주입)에서도
@@ -184,7 +233,10 @@ export const OcrUploadPage: React.FC = () => {
           continue;
         }
 
-        const result = await worker.recognize(image.file);
+        // 저해상도·저대비 캡쳐에서 Tesseract 인식률이 크게 갈리므로 업스케일 + 그레이스케일
+        // 전처리를 한 번 태운 뒤 OCR로 넘깁니다. 실패 시 원본 파일을 그대로 받는 방어적 경로.
+        const preprocessed = await preprocessImageForOcr(image.file);
+        const result = await worker.recognize(preprocessed);
         const rawText = result.data.text;
 
         let parsedData: PurchaseOCRResult[] = [];
@@ -204,18 +256,28 @@ export const OcrUploadPage: React.FC = () => {
           const statusTag = image.platform === 'temu'
             ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
             : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
+
+          // 파서가 "· N개" 수량까지 뽑았으면 그대로 쓰고, 없으면 1개로 폴백.
+          const unitPrice = res.price ?? 0;
+          const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
+
+          // totalAmount는 상품 합계의 파생값. OCR에서 itemName을 못 뽑은 주문은 products=[] 이므로
+          // totalAmount도 0으로 둬야 "상품 없는데 금액만 찍혀 있는" 불일치 상태가 안 생깁니다.
+          // (OcrEdit의 validateBeforeSave가 상품/금액 누락을 한 번 더 걸러 주므로, 이 0 값은
+          // 사용자에게 "상품을 추가해 달라"는 신호로 자연스럽게 이어집니다.)
+          const hasItem = Boolean(res.itemName);
           return {
             id: `${image.id}-order-${idx}`,
             orderDate: res.date ?? "",
             statusTag,
             statusLabel: "자동 추출됨",
-            totalAmount: res.price ?? 0,
+            totalAmount: hasItem ? unitPrice * qty : 0,
             rawText: res.rawText,
-            products: res.itemName ? [{
+            products: hasItem ? [{
               id: `${image.id}-product-${idx}`,
-              name: res.itemName,
-              price: res.price ?? 0,
-              quantity: 1,
+              name: res.itemName as string,
+              price: unitPrice,
+              quantity: qty,
             }] : []
           };
         });
@@ -315,6 +377,12 @@ export const OcrUploadPage: React.FC = () => {
           </Actions>
         </Footer>
       </Wrap>
+      <PlatformConfirmModal
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        images={images}
+        onConfirm={handleConfirmAnalyze}
+      />
     </AppShell>
   );
 };

@@ -13,7 +13,6 @@ import styled from "styled-components";
 import { Card, CardBd } from "../../../components/primitives/Card";
 import { DatePicker } from "../../../components/primitives/DatePicker";
 import { Tag } from "../../../components/primitives/Tag";
-import { AmountInput } from "../../../components/form/AmountInput";
 import { tokens } from "../../../styles/tokens";
 import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import type { OcrOrder, Platform, Status } from "../data";
@@ -314,13 +313,21 @@ const Total = styled.div`
     text-transform: uppercase;
   }
 
-  /* 읽기 전용 표시용 (onOrderPatch 없을 때) */
   .value {
     color: ${tokens.color.ink1};
     font-family: ${tokens.font.mono};
     font-size: 20px;
     font-weight: 700;
     font-variant-numeric: tabular-nums;
+  }
+
+  /* 아래 상품 목록에서 자동 계산된 값임을 사용자에게 알려 주는 작은 보조 문구.
+   * "왜 이 칸이 비활성화되어 있지?"라는 혼란을 막기 위한 안전장치입니다. */
+  .hint {
+    margin-top: 4px;
+    color: ${tokens.color.ink4};
+    font-size: 11px;
+    line-height: 1.45;
   }
 `;
 
@@ -512,10 +519,10 @@ export interface OrderCardProps {
   platform: Platform;
   order: OcrOrder;
   /**
-   * 주문일자·상태 태그·전체 거래금액 변경. 상위(OcrEditPage)에서 해당 주문만 patch합니다.
-   * orderId는 상위가 알고 있으므로 이 컴포넌트는 자기 주문만 신경 씁니다.
+   * 주문일자·상태 태그 변경. 상위(OcrEditPage)에서 해당 주문만 patch합니다.
+   * totalAmount는 상품 목록의 파생값으로 자동 동기화되므로 여기서는 받지 않습니다.
    */
-  onOrderPatch?: (patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag" | "totalAmount">>) => void;
+  onOrderPatch?: (patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>) => void;
   /**
    * 상품 목록 변경. ProductTable에서 상품을 추가·수정·삭제할 때마다 올라옵니다.
    */
@@ -619,19 +626,27 @@ export const OrderCard: React.FC<OrderCardProps> = ({
 
         <Total>
           <div className="label">전체 거래금액 *</div>
-          {onOrderPatch ? (
-            <AmountInput
-              id={`ocr-order-amount-${order.id}`}
-              value={String(order.totalAmount)}
-              onChange={(rawDigits) =>
-                onOrderPatch({ totalAmount: rawDigits ? Number(rawDigits) : 0 })
-              }
-              placeholder="0"
-              aria-label="전체 거래금액"
-            />
-          ) : (
-            <div className="value">₩{order.totalAmount.toLocaleString("ko-KR")}</div>
-          )}
+          {/*
+            totalAmount는 아래 상품 목록의 (가격 × 수량) 합계로 자동 계산됩니다.
+            과거에는 이 필드가 개별 입력 칸이었고, 상품합계와 값이 다르면 저장 시점에
+            경고 모달이 떴습니다. 쿠팡 파서가 결제 섹션을 섹션 경계로 걸러내면서
+            "총 결제금액"이 상품으로 오인식될 일이 없어져, totalAmount를 파생값으로
+            두는 쪽이 일관성 면에서 명확해졌습니다. id는 validateBeforeSave에서
+            focusOrderField가 참조하므로 유지합니다.
+          */}
+          <div
+            id={`ocr-order-amount-${order.id}`}
+            className="value"
+            role="status"
+            aria-live="polite"
+            aria-label="전체 거래금액 (자동 계산)"
+            tabIndex={-1}
+          >
+            ₩{order.totalAmount.toLocaleString("ko-KR")}
+          </div>
+          <div className="hint">
+            아래 상품 목록의 (가격 × 수량) 합계로 자동 계산돼요. 상품을 추가·수정·삭제하면 즉시 반영됩니다.
+          </div>
         </Total>
 
         <SectionLabel>상품 목록 *</SectionLabel>

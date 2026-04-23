@@ -49,8 +49,9 @@ interface EditFormProps {
   image?: OcrImageItem;
   /**
    * 주문 블록 내부 필드(주문일자·상태 태그)를 수정했을 때 상위(OcrEditPage)로 patch를 올립니다.
+   * totalAmount는 상품 목록 변경 시 상위에서 자동 동기화되므로 이 patch에는 포함하지 않습니다.
    */
-  onOrderPatch?: (orderId: string, patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag" | "totalAmount">>) => void;
+  onOrderPatch?: (orderId: string, patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>) => void;
   /**
    * 상품 목록 변경. ProductTable에서 추가·수정·삭제 시 orderId + 최신 목록으로 올라옵니다.
    */

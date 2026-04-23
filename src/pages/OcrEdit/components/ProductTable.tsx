@@ -140,13 +140,21 @@ function toRow(p: OcrProduct): ProductRow {
   return { ...p, priceRaw: String(p.price) };
 }
 
-/** ProductRow → OcrProduct 역변환 (저장 시 부모에 올려줄 때 사용) */
+/**
+ * ProductRow → OcrProduct 역변환 (저장 시 부모에 올려줄 때 사용).
+ *
+ * quantity는 현재 표에서 직접 편집하지 않지만, OCR 파서가 "· N개"로 잡아낸 값을
+ * 사용자가 다른 필드를 고칠 때도 보존해야 합니다(안 그러면 OcrEdit 상위에서 돌리는
+ * sumProductTotal이 qty=1로 오해해 전체 거래금액이 줄어듭니다). 그래서 quantity를
+ * 항상 그대로 넘겨 줍니다.
+ */
 function toProduct(row: ProductRow): OcrProduct {
   return {
     id: row.id,
     name: row.name,
     price: row.priceRaw ? Number(row.priceRaw) : 0,
     link: row.link || undefined,
+    ...(row.quantity !== undefined ? { quantity: row.quantity } : {}),
   };
 }
 
