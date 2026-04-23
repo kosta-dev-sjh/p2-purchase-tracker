@@ -218,13 +218,27 @@ export async function analyzeUploadedImages(
   });
 
   try {
-    // Tesseract 파라미터 튜닝은 OcrUpload 원본과 동일한 값으로 맞춥니다.
+    // Tesseract 파라미터 튜닝.
+    //
     //  - PSM=6 (Single uniform block of text): 쇼핑 캡쳐의 수직 블록에 안정적.
+    //    PSM=4 (Single column variable sizes) 로도 테스트해 봤지만, 쿠팡 주문 카드처럼
+    //    상태 배지 · 상품명 · 가격 각각 크기가 다른 라인들이 섞인 경우 PSM=6 이 오히려
+    //    "한 덩어리로 보고 순서대로 뽑아내는" 쪽이 결과가 안정적이었습니다.
     //  - preserve_interword_spaces=1: 공백 보존으로 파서 토큰 분리 용이.
+    //  - user_defined_dpi=300: 전처리에서 2400px 로 업스케일 한 이미지를 기준으로 DPI 힌트를
+    //    명시. Tesseract 가 내부적으로 글자 크기 → x-height 추정을 DPI 에 의존하는데,
+    //    힌트가 없으면 70 이하로 추정해 작은 글씨를 자주 놓칩니다.
+    //  - textord_heavy_nr=1: 얇은 노이즈(1~2픽셀 점/선) 제거를 강하게. 업스케일 + 샤픈 후
+    //    남아 있을 수 있는 하프톤 잔여물을 한 번 더 훑어 줍니다.
+    //  - tessedit_do_invert=0: 이미 흑백/그레이로 전처리 한 입력에 인버스 후보를 따로
+    //    시도하지 않게 막아 처리 시간도 약간 단축됩니다.
     try {
       await worker.setParameters({
         tessedit_pageseg_mode: "6",
         preserve_interword_spaces: "1",
+        user_defined_dpi: "300",
+        textord_heavy_nr: "1",
+        tessedit_do_invert: "0",
       } as unknown as never);
     } catch {
       console.warn("[ocrAnalyzeImages] tesseract.setParameters 실패 — 기본값으로 진행");
