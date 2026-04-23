@@ -250,41 +250,86 @@ export const OcrUploadPage: React.FC = () => {
           parsedData = parseTemuOrderText(rawText);
         }
 
-        const orders: OcrOrder[] = parsedData.map((res, idx) => {
-          // 테무는 안내 문구가 많아 rawText 사용 시 오인식이 심하므로 statusText만 사용
-          // 다른 플랫폼(네이버/쿠팡/옥션)은 기존처럼 rawText를 fallback으로 사용
-          const statusTag = image.platform === 'temu'
-            ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
-            : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
-
-          // 파서가 "· N개" 수량까지 뽑았으면 그대로 쓰고, 없으면 1개로 폴백.
+        /**
+         * 한 개의 PurchaseOCRResult를 OcrOrder.products 항목으로 변환합니다.
+         * 가격만 잡히고 이름을 못 뽑은 경우엔 "상품명 입력 필요" 플레이스홀더로 남겨 사용자가
+         * OcrEdit에서 이름만 채워 저장할 수 있게 합니다.
+         */
+        const toProduct = (res: PurchaseOCRResult, idx: number) => {
           const unitPrice = res.price ?? 0;
           const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
-
-          // totalAmount는 상품 합계의 파생값(OcrEdit에서 상품 목록의 price*qty 합으로 자동 재계산).
-          // 기존에는 itemName이 null이면 products=[]로 통째로 버렸는데, 그러면 "피스타치오 47,650원"처럼
-          // 파서가 가격은 건졌지만 이름 줄을 놓친 상품이 조용히 사라져 사용자가 "왜 하나만 추적되지?" 로
-          // 혼란을 겪었습니다. 대신 가격이 잡혀 있으면 "상품명 입력 필요" 플레이스홀더 상품으로 남겨 주고,
-          // OcrEdit에서 사용자가 이름만 채우면 그대로 저장되도록 합니다(금액/수량은 보존).
           const hasItem = Boolean(res.itemName);
           const hasPrice = unitPrice > 0;
-          const productName = hasItem ? (res.itemName as string) : "상품명 입력 필요";
-          const keepProduct = hasItem || hasPrice;
+          if (!hasItem && !hasPrice) return null;
           return {
-            id: `${image.id}-order-${idx}`,
-            orderDate: res.date ?? "",
-            statusTag,
-            statusLabel: "자동 추출됨",
-            totalAmount: keepProduct ? unitPrice * qty : 0,
-            rawText: res.rawText,
-            products: keepProduct ? [{
-              id: `${image.id}-product-${idx}`,
-              name: productName,
-              price: unitPrice,
-              quantity: qty,
-            }] : []
+            id: `${image.id}-product-${idx}`,
+            name: hasItem ? (res.itemName as string) : "상품명 입력 필요",
+            price: unitPrice,
+            quantity: qty,
           };
-        });
+        };
+
+        let orders: OcrOrder[];
+
+        if (image.platform === 'coupang' && parsedData.length > 0) {
+          // 쿠팡의 주문상세/주문목록 캡쳐는 "2026. 4. 22 주문" 같은 **하나의 주문 헤더** 아래에
+          // 여러 배송/상품 블록(예: 상품준비중 피스타치오 + 배송완료 캐리어)이 섞여 있습니다.
+          // 파서는 블록마다 PurchaseOCRResult를 찍지만, 이걸 그대로 N개의 OcrOrder로 펼치면
+          // 사용자가 "한 주문인데 왜 카드가 두 개·세 개지?" 라고 혼란을 겪고, 주문 총액도
+          // 상품별로 쪼개져 실제 결제금액(= 상품 합계)을 한 눈에 볼 수 없습니다.
+          // → 쿠팡은 **이미지 1장 = 주문 1건**으로 묶어 단일 OcrOrder를 만듭니다.
+          //
+          // 주문 레벨 statusTag:
+          //   모든 상품 블록이 cancel이면 cancel, 모두 refund면 refund, 그 외에는 purchase로 승격.
+          //   (한 주문 안에 준비중 + 완료가 섞여 있으면 "이 주문은 돈이 나간 건" 이라는 가계부
+          //    관점에서 purchase가 자연스러움.)
+          const resultStatuses = parsedData.map((res) =>
+            detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
+          );
+          const allCanceled = resultStatuses.every((s) => s === "cancel");
+          const allRefunded = resultStatuses.every((s) => s === "refund");
+          const orderStatusTag = allCanceled ? "cancel" : allRefunded ? "refund" : "purchase";
+
+          const products = parsedData
+            .map((res, idx) => toProduct(res, idx))
+            .filter((p): p is NonNullable<typeof p> => p !== null);
+
+          const totalAmount = products.reduce(
+            (sum, p) => sum + p.price * (p.quantity ?? 1),
+            0,
+          );
+
+          const firstRes = parsedData[0];
+          orders = [{
+            id: `${image.id}-order-0`,
+            orderDate: firstRes.date ?? "",
+            statusTag: orderStatusTag,
+            statusLabel: "자동 추출됨",
+            totalAmount,
+            rawText: firstRes.rawText,
+            products,
+          }];
+        } else {
+          // 네이버/옥션/테무는 "이미지 1장 = 주문 N건(목록형)"이 자연스러운 플랫폼이라
+          // 기존처럼 결과 1개당 OcrOrder 1개로 매핑합니다.
+          orders = parsedData.map((res, idx) => {
+            const statusTag = image.platform === 'temu'
+              ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
+              : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
+            const product = toProduct(res, idx);
+            const unitPrice = res.price ?? 0;
+            const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
+            return {
+              id: `${image.id}-order-${idx}`,
+              orderDate: res.date ?? "",
+              statusTag,
+              statusLabel: "자동 추출됨",
+              totalAmount: product ? unitPrice * qty : 0,
+              rawText: res.rawText,
+              products: product ? [product] : [],
+            };
+          });
+        }
 
         processedImages.push({
           id: image.id,

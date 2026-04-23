@@ -46,11 +46,16 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // ───────── 사전 정의 ─────────
   const mall = rawText.includes('쿠팡') || rawText.toLowerCase().includes('coupang') ? '쿠팡' : '쿠팡(추정)';
 
-  // 상태 라인 감지(한 줄에 상태 키워드가 하나라도 들어 있으면 상태 라인으로 취급).
-  // OCR 특성상 "배송완료 · 4/17(금) 도착"처럼 날짜/요일이 뒤따르는 경우가 많아 키워드 포함 여부만 확인.
-  // Tesseract는 한글 사이 공백을 종종 삽입/삭제하므로 "배송 완료", "상품 준비 중" 같은 변형을
-  // \s*로 한꺼번에 흡수해 regex를 하나로 단순화했습니다.
-  const statusLineRegex = /(배송\s*완료|배송\s*중|상품\s*준비\s*중|결제\s*완료|주문\s*완료|주문\s*취소|취소\s*완료|환불\s*완료|환불\s*처리|반품\s*완료|구매\s*확정|정기\s*결제|구독)/;
+  // 상태 라인 감지. 키워드를 **라인 맨 앞**(가벼운 leading bullet/whitespace 정도만 허용)에서만
+  // 매칭합니다. 앵커 없이 전역 매칭을 쓰면 쿠팡 우측 컬럼 버튼("주문취소", "리뷰 작성하기" 등)이
+  // Tesseract에서 상품명 라인 꼬리에 붙어 나왔을 때 —
+  //   예) "원더풀피스타치오 껍질없는 무염 ... 주문취소"
+  // — 라인 끝의 "주문취소" 하나가 statusLineRegex를 먹여서 상품명 전체가 상태 라인으로 오인되고
+  // 상품이 통째로 증발하는 회귀가 발견됐습니다. 앵커로 막으면 버튼 꼬리는 이름 처리 경로로 넘어가
+  // leadingTagRegex/이름 수집에서 자연스럽게 정리됩니다.
+  //
+  // 한편 한글 사이 공백 변형("배송 완료", "상품 준비 중")은 \s*로 흡수해 한 줄 regex를 유지합니다.
+  const statusLineRegex = /^[\s·•▪\-\*\|ㅣ]*(배송\s*완료|배송\s*중|상품\s*준비\s*중|결제\s*완료|주문\s*완료|주문\s*취소|취소\s*완료|환불\s*완료|환불\s*처리|반품\s*완료|구매\s*확정|정기\s*결제|구독)/;
 
   // 섹션 경계 — 이 라인 이후는 주문 집계 영역이라 상품으로 보지 않음.
   const sectionBoundaryRegex = /(결제\s*정보|결제영수증\s*정보|받는사람\s*정보|배송(?:상품)?\s*주문상태\s*안내|배송지\s*정보)/;
@@ -74,12 +79,16 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 
   // 상품명 앞에 붙는 쿠팡 전용 태그/아이콘. 여러 개가 겹쳐 붙을 수 있어 while로 반복 제거.
   //
-  // 실제 Tesseract는 🚀 아이콘을 `»`, `>>`, `>`, `‹›`, 따옴표 등으로 오인식하는 경우가 흔합니다.
-  // 예: "🚀로켓 내일 루디크..." → "» 로켓 내일 루디크..." 같이 찍히면 이전 정규식은 » 때문에
-  //      `^로켓`에 매치되지 않아 "» 로켓 내일"이 상품명 앞에 그대로 남습니다.
-  // 그래서 리딩 기호 char class를 확장하고, 로켓/판매자로켓/로켓 프레시 등도 공백을 허용해
-  // 띄어쓰기 variation에 관대하게 만듭니다.
-  const leadingTagRegex = /^(?:[🚀↑↓▲▼★☆·•»«‹›<>"'”“‘’\-\|ㅣ=_*©]+\s*|판매자\s*로켓|로켓\s*직구|로켓\s*프레시|로켓\s*배송|로켓|새벽|내일|오늘|무료\s*배송)\s*/;
+  // Tesseract는 🚀 아이콘을 `»`, `>>`, `>`, `‹›`, `;`, `,`, `mn`, `TD` 같은 짧은 영문 2글자
+  // 등으로 자주 오인식합니다(실제 캡쳐에서 관찰). "내일" 역시 "대일"로 자주 바뀝니다.
+  //   예) "🚀판매자로켓 새벽 ..." → "; > 로켓 내일 ..."
+  //        "🚀로켓 내일 ..."     → "mn > 로켓 내일 ..."
+  //        "🚀로켓 새벽 ..."     → "대일 ..." (로켓이 통째로 소실)
+  // 이 모든 변형을 상품명 선두에서 반복 제거할 수 있도록 (a) 리딩 기호 char class에 `;`, `,`, `:`,
+  // `.`, `!`, `?`를 추가하고, (b) "영문 1~2자 + `>`/`»`/`‹`" 조합을 별도 분기로 흡수하고,
+  // (c) 태그 키워드로 `판매자`(단독)·`대일`을 추가해 로켓이 OCR에서 탈락해도 깔끔히 제거되게 합니다.
+  // 쿠팡 상품명이 짧은 소문자 2글자 + `>`로 시작하는 경우는 사실상 없어 false-positive 위험이 낮습니다.
+  const leadingTagRegex = /^(?:[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-\|ㅣ=_*©!?]+\s*|[a-zA-Z]{1,2}\s*[>»‹<]+\s*|판매자\s*로켓|로켓\s*직구|로켓\s*프레시|로켓\s*배송|로켓|판매자|새벽|내일|대일|오늘|무료\s*배송)\s*/;
 
   // ───────── 1차 라인 분리 ─────────
   const allLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
@@ -121,6 +130,14 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   let nameBuffer: string[] = [];
   let inPaymentSection = false;
 
+  // Tesseract가 쿠팡 우측 컬럼 버튼("주문취소", "리뷰 작성하기", "교환, 반품 신청" 등)을
+  // 같은 시각적 행으로 합쳐 주면 상품명 라인 끝에 붙어 나오는 경우가 있습니다.
+  //   예) "원더풀피스타치오 ... 200g, 3개 주문취소"
+  //        "코지엔비 곱창머리끈 5종, 1세트 장바구니 담기"
+  // 선두 태그만 정리하고 끝나면 사용자가 저장한 상품명에 영원히 버튼 텍스트가 남으니,
+  // 한 번 더 trailing pass를 돌려 **알려진 액션/네비 버튼 문구**만 꼬리에서 제거합니다.
+  const trailingButtonRegex = /\s+(?:주문\s*취소|주문\s*상세보기|리뷰\s*(?:작성(?:하기)?|쓰기)|배송\s*조회|교환[,\s]*반품\s*신청|판매자\s*문의|장바구니\s*담기|더보기|상세보기)\s*>?\s*$/;
+
   const stripTags = (line: string): string => {
     let cleaned = line;
     // 선두 태그를 반복 제거. 예: "🚀판매자로켓 새벽 코지엔비..." → "코지엔비..."
@@ -129,7 +146,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       prev = cleaned;
       cleaned = cleaned.replace(leadingTagRegex, '');
     }
-    // 꼬리 구분자 정리
+    // 꼬리 버튼/구분자 정리. 버튼 키워드도 여러 개가 연속 붙을 수 있어 반복합니다.
+    prev = '';
+    while (cleaned !== prev) {
+      prev = cleaned;
+      cleaned = cleaned.replace(trailingButtonRegex, '');
+    }
     cleaned = cleaned.replace(/[>:]\s*$/, '').trim();
     return cleaned;
   };
@@ -180,24 +202,21 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       continue;
     }
 
-    // 상태 라인: 노이즈 검사보다 먼저 처리.
-    //   "상품준비중 · 4/25(토) 도착 예정", "배송완료 · 오늘(목) 도착 (무인 택배함)"처럼
-    //   noise에 포함될 법한 꼬리표가 함께 붙는 라인을 상태로 올바로 잡기 위해서입니다.
-    if (statusLineRegex.test(line)) {
-      currentStatus = line;
-      nameBuffer = [];
+    // "주문취소" 단독 버튼은 상태 라인과 글자가 겹치므로, 상태 검사보다 먼저 걸러냅니다.
+    // (단독 "주문취소"/"주문취소 >"는 우측 컬럼의 액션 버튼이지 상태 변경이 아닙니다.
+    //  상태로 간주되면 바로 뒤에 오는 가격이 실제로 상품준비중/배송완료인 상품인데도 cancel 태그가
+    //  잘못 찍히는 회귀가 관찰됐습니다.)
+    if (/^주문\s*취소\s*>?\s*$/.test(line)) {
       continue;
     }
 
-    // 액션/노이즈 라인 스킵 (UI 버튼 단독 라인, 꼬리에 떨어진 날짜 조각)
-    if (noiseLineRegex.test(line)) continue;
-
     // 가격 라인: "원" 뒤에 optional "N개"
+    // 상태 라인 검사보다 **먼저** 수행해, "47,650 원 · 1개 주문취소"처럼 가격과 버튼 텍스트가 한 줄에
+    // 합쳐져 나온 경우에도 가격이 우선 처리되도록 합니다(뒤의 "주문취소" 꼬리는 상태로 오인되지 않음).
     const pm = line.match(priceLineRegex);
     if (pm) {
       const priceStr = pm[1].replace(/,/g, '');
       const price = Number(priceStr);
-      // 너무 작거나(쿠폰 "300원" 등은 통과 OK), 너무 큰 값은 방어적으로 버리지 않음 — 사용자가 OcrEdit에서 바로잡을 수 있음.
       if (Number.isFinite(price) && price > 0) {
         const quantity = pm[2] ? Number(pm[2]) : undefined;
         flushNameAndPrice(price, quantity);
@@ -206,6 +225,19 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       // 가격 매치되었지만 숫자 파싱 실패 → 아래 이름 후보 처리로 폴백하지 말고 그냥 스킵.
       continue;
     }
+
+    // 상태 라인: 노이즈 검사보다 먼저 처리.
+    //   "상품준비중 · 4/25(토) 도착 예정", "배송완료 · 오늘(목) 도착 (무인 택배함)"처럼
+    //   noise에 포함될 법한 꼬리표가 함께 붙는 라인을 상태로 올바로 잡기 위해서입니다.
+    //   statusLineRegex는 이제 ^ 앵커를 사용하므로 버튼 꼬리는 자연스럽게 제외됩니다.
+    if (statusLineRegex.test(line)) {
+      currentStatus = line;
+      nameBuffer = [];
+      continue;
+    }
+
+    // 액션/노이즈 라인 스킵 (UI 버튼 단독 라인, 꼬리에 떨어진 날짜 조각)
+    if (noiseLineRegex.test(line)) continue;
 
     // 이름 후보: 한글/영문 글자가 하나라도 있고, 너무 짧지 않은 라인
     const stripped = stripTags(line);
