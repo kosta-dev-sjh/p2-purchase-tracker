@@ -69,10 +69,17 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   //   - "· 4/17(금) 도착" 식 날짜 조각이 상태 라인에서 줄바꿈돼 단독으로 떨어진 경우만 제거합니다.
   const noiseLineRegex = /(^[\s·•\-*]*\d{1,2}\/\d{1,2}\s*\(?[월화수목금토일]?\)?\s*도착\s*$)|(^주문\s*상세보기\s*>?\s*$)|(^장바구니\s*담기\s*$)|(^배송\s*조회\s*$)|(^리뷰(?:\s*작성(?:하기)?|\s*쓰기)\s*$)|(^교환[,\s]*반품\s*신청\s*$)|(^판매자\s*문의\s*$)|(^주문\s*취소\s*>?\s*$)|(^더보기\s*$)|(^상세보기\s*>?\s*$)/;
 
-  // 가격 라인: `6,900 원 · 1개` / `17,270 원 · 1개` / OCR로 · 가 ./-/* 로 변형돼도 수량이 잡히게 관대한 구분자.
+  // 가격 라인: `6,900 원 · 1개` / `17,270 원 · 1개` / `0 원 · 1개` (무료/포인트 결제).
+  // OCR로 · 가 ./-/* 로 변형돼도 수량이 잡히게 관대한 구분자를 씁니다.
   // NOTE: "원" 뒤에 \b 를 쓰지 않는 이유 — 한글은 JS 정규식의 단어문자에 포함되지 않아
   //       "원 " 경계가 word-boundary로 성립하지 않습니다. 대신 "원" 뒤 공백/구분자/EOL 을 직접 허용합니다.
-  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d{3,})\s*원(?=$|[\s·•.\-*,)])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
+  //
+  // 숫자 부분을 `\d+`로 완화한 이유: 쿠팡에서 사은품/쿠폰/포인트 결제 시 `0 원 · 1개`로 표시되는데,
+  // 이전 `\d{3,}` 조건이 이걸 가격 라인으로 인식하지 못해 → 상품명이 nameBuffer에 남아 다음 주문의
+  // 첫 가격과 함께 flush되며 이름 오염 + 0원 주문 카드 소실이 발생했습니다. (실제 사용자 캡쳐에서
+  // "4/7 텐티본조르노 0원" 주문이 통째로 사라지고 "4/1 템포 28,990원" 이름에 치약 텍스트가 섞여
+  // 올라오는 회귀가 있었음.) 콤마 없는 한 자리 숫자라도 "원" + 구분자 lookahead가 충분한 앵커 역할을 합니다.
+  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
 
   // 주문일(YYYY. M. DD 주문)
   const orderDateRegex = /(20\d{2})\s*[.\s]\s*(\d{1,2})\s*[.\s]\s*(\d{1,2})\s*(?:주\s*문)?/;
@@ -93,42 +100,31 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // ───────── 1차 라인 분리 ─────────
   const allLines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
 
-  // ───────── 주문일자 캡쳐 ─────────
-  // 파일 상단에서 한 번 찾아두면 모든 상품에 공통 적용.
-  let orderDate: string | null = null;
-  for (const line of allLines) {
-    // 섹션 경계 지나면 멈춤(결제영수증 날짜 등 오인식 방지)
-    if (sectionBoundaryRegex.test(line)) break;
-    const m = line.match(orderDateRegex);
-    if (m) {
-      // "2026. 4. 16 주문" 같은 헤더 근처에서만 잡히도록, "주문" 단어가 동일 라인에 있는지 한 번 더 확인
-      if (/주\s*문/.test(line)) {
-        const mm = m[2].padStart(2, '0');
-        const dd = m[3].padStart(2, '0');
-        orderDate = `${m[1]}-${mm}-${dd}`;
-        break;
-      }
-    }
-  }
-  // 폴백: "주문" 단어가 없어도 파일 맨 위쪽 날짜를 쓰겠다는 최후의 시도
-  if (!orderDate) {
-    for (const line of allLines.slice(0, 10)) {
-      if (sectionBoundaryRegex.test(line)) break;
-      const m = line.match(orderDateRegex);
-      if (m) {
-        const mm = m[2].padStart(2, '0');
-        const dd = m[3].padStart(2, '0');
-        orderDate = `${m[1]}-${mm}-${dd}`;
-        break;
-      }
-    }
-  }
-
   // ───────── 상태머신 주행 ─────────
+  //
+  // orderDate는 이제 **루프 안에서** 실시간 갱신됩니다. 한 이미지에 `2026. 4. 7 주문` + `2026. 4. 1 주문`처럼
+  // 여러 주문 헤더가 섞여 있는 목록형 캡쳐에서, 이전에는 pre-scan이 첫 헤더 하나만 잡고 메인 루프가
+  // 나머지 헤더를 단순 스킵해 **모든 상품이 첫 헤더 날짜로 찍히는** 회귀가 있었습니다. 이제는 헤더 라인을
+  // 만날 때마다 orderDate를 새 값으로 바꾸고, 남아 있던 nameBuffer는 섹션 경계 관점에서 버려
+  // 이전 주문의 "이름만 남은 상품"이 새 주문의 첫 가격과 합쳐지지 않도록 합니다.
   const results: PurchaseOCRResult[] = [];
+  let orderDate: string | null = null;
   let currentStatus: string | undefined;
   let nameBuffer: string[] = [];
   let inPaymentSection = false;
+
+  // 맨 앞의 "2026. 4. 16" 처럼 "주문" 단어 없이 날짜만 뜨는 최후의 폴백 용도로 스캔해 둡니다.
+  // 메인 루프가 진짜 주문 헤더("주문" 단어 포함)를 만나면 이 값은 덮어씌워집니다.
+  for (const line of allLines.slice(0, 10)) {
+    if (sectionBoundaryRegex.test(line)) break;
+    const m = line.match(orderDateRegex);
+    if (m) {
+      const mm = m[2].padStart(2, '0');
+      const dd = m[3].padStart(2, '0');
+      orderDate = `${m[1]}-${mm}-${dd}`;
+      break;
+    }
+  }
 
   // Tesseract가 쿠팡 우측 컬럼 버튼("주문취소", "리뷰 작성하기", "교환, 반품 신청" 등)을
   // 같은 시각적 행으로 합쳐 주면 상품명 라인 끝에 붙어 나오는 경우가 있습니다.
@@ -197,8 +193,22 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       continue;
     }
 
-    // 헤더(주문일·주문번호) 라인은 이미 orderDate로 캡쳐했으니 이름 버퍼에 넣지 않도록 스킵.
-    if (/주문번호\s*[\d]+/.test(line) || /^20\d{2}\s*[.\s]\s*\d{1,2}\s*[.\s]\s*\d{1,2}/.test(line)) {
+    // 주문번호 라인은 장식이니 스킵.
+    if (/주문번호\s*[\d]+/.test(line)) continue;
+
+    // 주문 헤더 라인(YYYY. M. DD (주문)?) — 이 시점부터 flush되는 상품들의 주문일자를 갱신합니다.
+    // "주문" 단어가 동일 라인에 있으면 확실한 주문 헤더라 orderDate를 덮어쓰고, 남아 있던 nameBuffer는
+    // 섹션 경계로 간주해 버립니다(이전 주문의 "가격 없이 이름만 남은 조각"이 새 주문 첫 가격에 들러붙지 않도록).
+    // "주문" 단어가 없이 날짜만 있는 라인(결제영수증 날짜 등)은 상품 데이터 취급에서 빠지도록 스킵만 합니다.
+    const headerMatch = line.match(/^(20\d{2})\s*[.\s]\s*(\d{1,2})\s*[.\s]\s*(\d{1,2})/);
+    if (headerMatch) {
+      if (/주\s*문/.test(line)) {
+        const mm = headerMatch[2].padStart(2, '0');
+        const dd = headerMatch[3].padStart(2, '0');
+        orderDate = `${headerMatch[1]}-${mm}-${dd}`;
+        nameBuffer = [];
+        currentStatus = undefined;
+      }
       continue;
     }
 
@@ -217,7 +227,9 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     if (pm) {
       const priceStr = pm[1].replace(/,/g, '');
       const price = Number(priceStr);
-      if (Number.isFinite(price) && price > 0) {
+      // 0원도 유효 가격으로 받습니다 — 쿠팡 사은품/쿠폰/포인트 결제 케이스. 필터링하면 상품 이름이
+      // nameBuffer에 남아 다음 주문 첫 가격과 함께 flush되는 오염이 발생합니다.
+      if (Number.isFinite(price) && price >= 0) {
         const quantity = pm[2] ? Number(pm[2]) : undefined;
         flushNameAndPrice(price, quantity);
         continue;

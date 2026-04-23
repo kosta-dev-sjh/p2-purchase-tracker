@@ -272,43 +272,50 @@ export const OcrUploadPage: React.FC = () => {
         let orders: OcrOrder[];
 
         if (image.platform === 'coupang' && parsedData.length > 0) {
-          // 쿠팡의 주문상세/주문목록 캡쳐는 "2026. 4. 22 주문" 같은 **하나의 주문 헤더** 아래에
-          // 여러 배송/상품 블록(예: 상품준비중 피스타치오 + 배송완료 캐리어)이 섞여 있습니다.
-          // 파서는 블록마다 PurchaseOCRResult를 찍지만, 이걸 그대로 N개의 OcrOrder로 펼치면
-          // 사용자가 "한 주문인데 왜 카드가 두 개·세 개지?" 라고 혼란을 겪고, 주문 총액도
-          // 상품별로 쪼개져 실제 결제금액(= 상품 합계)을 한 눈에 볼 수 없습니다.
-          // → 쿠팡은 **이미지 1장 = 주문 1건**으로 묶어 단일 OcrOrder를 만듭니다.
+          // 쿠팡 캡쳐는 **주문 헤더(YYYY. M. DD 주문) 한 개 = 주문 하나** 입니다. 실제 UI에서
+          // 주문상세 페이지는 헤더 하나 + 여러 배송 블록 구조이고(예: 피스타치오 + 캐리어),
+          // 주문목록/내역 페이지는 한 캡쳐에 헤더 여러 개(예: 4/7 주문 + 4/1 주문)가 쌓여 있습니다.
+          // 따라서 파싱 결과를 **헤더 날짜로 그룹화**해 각 날짜마다 OcrOrder를 하나씩 만들어야 합니다.
+          //   - 헤더 1개 이미지: 결과 전부가 같은 date → 카드 1장 (상품 N개 묶음)
+          //   - 헤더 N개 이미지: date별로 N장 → 사용자가 "4/7이 왜 4/1로 둔갑?" 같은 혼란 없음
           //
-          // 주문 레벨 statusTag:
-          //   모든 상품 블록이 cancel이면 cancel, 모두 refund면 refund, 그 외에는 purchase로 승격.
-          //   (한 주문 안에 준비중 + 완료가 섞여 있으면 "이 주문은 돈이 나간 건" 이라는 가계부
-          //    관점에서 purchase가 자연스러움.)
-          const resultStatuses = parsedData.map((res) =>
-            detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
-          );
-          const allCanceled = resultStatuses.every((s) => s === "cancel");
-          const allRefunded = resultStatuses.every((s) => s === "refund");
-          const orderStatusTag = allCanceled ? "cancel" : allRefunded ? "refund" : "purchase";
+          // 주문 레벨 statusTag: 묶음 안 상품들이 전부 cancel이면 cancel, 전부 refund면 refund, 그 외에는
+          // purchase로 승격. 한 주문 안에 준비중 + 완료가 섞여 있어도 가계부 관점에서는 돈이 나간 건이므로.
+          const groupsByDate = new Map<string, PurchaseOCRResult[]>();
+          for (const res of parsedData) {
+            const key = res.date ?? "";
+            const arr = groupsByDate.get(key) ?? [];
+            arr.push(res);
+            groupsByDate.set(key, arr);
+          }
 
-          const products = parsedData
-            .map((res, idx) => toProduct(res, idx))
-            .filter((p): p is NonNullable<typeof p> => p !== null);
+          orders = Array.from(groupsByDate.entries()).map(([date, group], orderIdx) => {
+            const resultStatuses = group.map((res) =>
+              detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
+            );
+            const allCanceled = resultStatuses.every((s) => s === "cancel");
+            const allRefunded = resultStatuses.every((s) => s === "refund");
+            const orderStatusTag = allCanceled ? "cancel" : allRefunded ? "refund" : "purchase";
 
-          const totalAmount = products.reduce(
-            (sum, p) => sum + p.price * (p.quantity ?? 1),
-            0,
-          );
+            const products = group
+              .map((res, productIdx) => toProduct(res, orderIdx * 100 + productIdx))
+              .filter((p): p is NonNullable<typeof p> => p !== null);
 
-          const firstRes = parsedData[0];
-          orders = [{
-            id: `${image.id}-order-0`,
-            orderDate: firstRes.date ?? "",
-            statusTag: orderStatusTag,
-            statusLabel: "자동 추출됨",
-            totalAmount,
-            rawText: firstRes.rawText,
-            products,
-          }];
+            const totalAmount = products.reduce(
+              (sum, p) => sum + p.price * (p.quantity ?? 1),
+              0,
+            );
+
+            return {
+              id: `${image.id}-order-${orderIdx}`,
+              orderDate: date,
+              statusTag: orderStatusTag,
+              statusLabel: "자동 추출됨",
+              totalAmount,
+              rawText: group[0].rawText,
+              products,
+            };
+          });
         } else {
           // 네이버/옥션/테무는 "이미지 1장 = 주문 N건(목록형)"이 자연스러운 플랫폼이라
           // 기존처럼 결과 1개당 OcrOrder 1개로 매핑합니다.
