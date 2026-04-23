@@ -250,6 +250,24 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 에 `[가-힣]` 을 추가해 `5290원가장바구니...` 같은 OCR 잔류도 흡수합니다.
   const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)가-힣])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
 
+  // 가격 라인 (보조): `원` 키워드가 OCR 에서 완전히 증발했을 때 사용하는 fallback.
+  //
+  // 실측 예 (222018.png, 2026-04-24):
+  //   "SS 5208 :가 장바구니 담기 판매자 문의"  ← 실제 상품가 5,290원인데 "원" 이 통째로 깨짐
+  //   → priceLineRegex 는 `원` 을 요구해 실패 → 가격 미인식 → 해당 상품 카드 통째로 누락.
+  //
+  // 쿠팡 PC/모바일 UI 는 상품 우측 하단에 "장바구니 담기" 버튼이 늘 붙어 있어, **가격 바로 뒤에
+  // 장바구니 담기 버튼 문구** 가 오는 구조가 매우 강한 신호입니다. 이 구조를 앵커로 삼으면
+  // `원` 글자가 OCR 에서 깨져도 가격 숫자를 회수할 수 있습니다.
+  //
+  // 안전성:
+  //   - `\d{3,6}` (또는 콤마 표기) 로 최소 3자리를 요구 → 수량 표기 "1개", "2개" 가 trigger 되지 않음.
+  //   - 숫자와 "장바구니 담기" 사이 최대 10자 허용 → ": 가 ", ": 개 " 같은 잔여 OCR 토큰 흡수.
+  //   - 숫자 앞은 공백/라인 시작 또는 non-digit (\D) 요구 → 긴 숫자 열 일부가 매치되지 않도록 막음.
+  //   - priceLineRegex 가 먼저 시도되고 match 하면 `continue` — 정상적인 "원" 가격 라인은
+  //     여기 도달하지 않아 기존 경로와 충돌이 없습니다.
+  const priceLineFallbackRegex = /(?:^|\D)(\d{1,3}(?:,\d{3})+|\d{3,6})[^\d\n]{0,10}장바구니\s*담기/;
+
   // 주문일 (pre-scan): 라인 어디에 있든 날짜를 찾고, `주문` 단어는 optional.
   const orderDateRegex = new RegExp(COUPANG_DATE_CORE.source + /\s*(?:주\s*문)?/.source);
 
@@ -298,6 +316,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   let inPaymentSection = false;
   // 분리배송 마커가 직전에 활성화됐는지. 다음 flush 한 번만 플래그를 전파하고 리셋합니다.
   let pendingSplit = false;
+  // 지금까지 본 status 라인 개수. "status 카드" 가 한 번이라도 열렸는지 여부를 판단해
+  // 가격이 OCR 에서 통째로 깨진 카드 (예: "oo 장바구니 담기" 처럼 숫자조차 안 잡히는 케이스)
+  // 의 nameBuffer 를 placeholder 가격 (0원) 으로 살릴지 결정하는 용도로 씁니다.
+  // 파서가 아직 첫 status 를 만나기 전이라면 pre-amble 잔존물이 nameBuffer 에 들어 있을 수
+  // 있어 soft-commit 하지 않습니다.
+  let statusCardsStarted = 0;
 
   // 맨 앞의 "2026. 4. 16" 처럼 "주문" 단어 없이 날짜만 뜨는 최후의 폴백 용도로 스캔해 둡니다.
   // 메인 루프가 진짜 주문 헤더("주문" 단어 포함)를 만나면 이 값은 덮어씌워집니다.
@@ -559,13 +583,39 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       continue;
     }
 
+    // 가격 라인 (보조): priceLineRegex 가 "원" 을 요구해 실패한 뒤, "숫자 + 장바구니 담기" 앵커로
+    // 한 번 더 시도합니다. priceLineFallbackRegex 설명 참조. OCR 이 "원" 글자 자체를 통째로
+    // 깨먹은 카드가 이 단계에서 회수됩니다. 예: "SS 5208 :가 장바구니 담기 판매자 문의" → 5208원.
+    const pfm = line.match(priceLineFallbackRegex);
+    if (pfm) {
+      const priceStr = pfm[1].replace(/,/g, '');
+      const price = Number(priceStr);
+      if (Number.isFinite(price) && price > 0) {
+        flushNameAndPrice(price, undefined);
+        continue;
+      }
+      continue;
+    }
+
     // 상태 라인: 노이즈 검사보다 먼저 처리.
     //   "상품준비중 · 4/25(토) 도착 예정", "배송완료 · 오늘(목) 도착 (무인 택배함)"처럼
     //   noise에 포함될 법한 꼬리표가 함께 붙는 라인을 상태로 올바로 잡기 위해서입니다.
     //   statusLineRegex는 이제 ^ 앵커를 사용하므로 버튼 꼬리는 자연스럽게 제외됩니다.
     if (statusLineRegex.test(line)) {
+      // Soft-commit 정책 (2026-04-24): 새 status 카드가 시작되는데 직전 카드의 nameBuffer 가
+      // 비어있지 않으면, 해당 카드는 "이름은 잡혔지만 가격이 OCR 에서 증발한 카드" 일 가능성이
+      // 높습니다. 예: 222018.png 의 "코코도르 스톤 디퓨저" 는 "11,900원" 가격 라인이
+      // "oo 장바구니 담기" 로 깨져 가격 trigger 가 한 번도 발생하지 않습니다. 이전 정책은
+      // nameBuffer 를 통째로 버렸지만(= 카드 통째로 누락), 이제는 price=0 placeholder 로
+      // emit 해 OcrEdit 화면에서 사용자가 가격만 채워 넣으면 복구할 수 있게 합니다.
+      // (statusCardsStarted===0 이면 pre-amble 잔존물 — 주문 헤더 위의 화면 제목 등 — 이라
+      //  soft-commit 하지 않습니다.)
+      if (statusCardsStarted > 0 && nameBuffer.length > 0) {
+        flushNameAndPrice(0, undefined);
+      }
       currentStatus = line;
       nameBuffer = [];
+      statusCardsStarted += 1;
       // 새 카드가 시작됐으니 직전 카드에서 못 소비한 pendingSplit 플래그는 폐기합니다.
       // (정상 플로우에서는 flush 시점에 이미 소비됐을 것이지만, name 라인이 누락된 경우
       // 다음 무관한 카드까지 split 으로 오염되는 걸 막기 위한 안전장치.)
@@ -584,15 +634,36 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // 액션/노이즈 라인 스킵 (UI 버튼 단독 라인, 꼬리에 떨어진 날짜 조각)
     if (noiseLineRegex.test(line)) continue;
 
-    // 이름 후보: 한글/영문 글자가 하나라도 있고, 너무 짧지 않은 라인
+    // 이름 후보: 한글이 있거나 영문 알파벳이 3자 이상 있는 라인.
+    //
+    // 2026-04-24 (필터 강화): 기존 조건 `길이 ≥ 2 && 한글/영문 1자 이상` 은
+    //   "oo 장바구니 담기" → trailingButton 제거 후 "oo" (영문 2자) → nameBuffer 에 오염 투입
+    //   "a8 202"         → 그대로 통과 → nameBuffer 에 가비지 투입
+    // 같은 OCR 부스러기까지 상품명 조각으로 받아들이는 문제가 있었습니다. 쿠팡 실제 상품명은
+    // 거의 항상 한글이 포함되거나, 순수 영문 브랜드라면 3자 이상("BFL", "HANYO", "PUMA")
+    // 이기 때문에 `한글이 있거나 || 영문 3자+` 로 좁혀도 정상 상품명은 모두 보존됩니다.
     const stripped = stripTags(line);
-    if (stripped.length >= 2 && /[가-힣a-zA-Z]/.test(stripped)) {
-      nameBuffer.push(stripped);
+    if (stripped.length >= 2) {
+      const hasKorean = /[가-힣]/.test(stripped);
+      const letterCount = (stripped.match(/[A-Za-z]/g) || []).length;
+      if (hasKorean || letterCount >= 3) {
+        nameBuffer.push(stripped);
+      }
     }
   }
 
-  // 끝까지 가격을 못 만났지만 이름만 남은 케이스는 상품가 0으로 흘려보내지 않고 버립니다.
-  // (가격 없이 상품을 만들면 가계부에서 0원 상품이 생겨 더 혼란스러움)
+  // 끝까지 가격을 못 만났지만 이름만 남은 케이스: 이전에는 "가격 없이 상품을 만들면 가계부에
+  // 0원 상품이 생겨 더 혼란스러움" 이라는 이유로 버렸는데, 실제-이미지 검증에서 이 drop 정책이
+  // **가격이 OCR 에서 증발한 카드를 통째로 잃어버리는 가장 큰 원인** 으로 확인됐습니다.
+  // (예: 222018.png 의 마지막 카드 "천연 유기농 아로마오일" → OCR 이 "5290원" 을 "5208" 로
+  // 인식하고 "원" 을 빠뜨려 priceLineRegex 실패 → nameBuffer 만 남은 채 루프 종료 → 통째 drop).
+  //
+  // 루프 안의 status 라인 soft-commit 정책 (위 참조) 과 동일한 근거로 마지막 카드도 동일하게
+  // price=0 placeholder 로 살려 냅니다. statusCardsStarted 가드로 pre-amble (아직 첫 status
+  // 가 나오기 전 단계) 의 잔존 nameBuffer 까지 부풀리지 않도록 방어합니다.
+  if (statusCardsStarted > 0 && nameBuffer.length > 0) {
+    flushNameAndPrice(0, undefined);
+  }
 
   if (results.length === 0) {
     return [{ mall, itemName: null, price: null, date: orderDate, rawText, statusText: rawText }];
