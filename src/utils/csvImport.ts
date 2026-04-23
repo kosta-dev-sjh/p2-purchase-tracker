@@ -35,33 +35,61 @@ const CATEGORY_MAP: Record<string, TxCategory> = {
 };
 
 function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
+  // 1차: 헤더 이름이 정확히 일치하는 경우.
   for (const header of headers) {
     const value = row[header];
     if (value) return value;
   }
+  // 2차: 키에 헤더 힌트가 포함된 경우 (예: "승인금액(원)", "이용일자(승인기준)").
+  //       카드사마다 단위·부가 설명이 괄호로 붙어 오는 케이스가 많아 접미사 허용이 필요합니다.
+  const keys = Object.keys(row);
+  for (const header of headers) {
+    const matchedKey = keys.find((key) => key.includes(header));
+    if (matchedKey) {
+      const value = row[matchedKey];
+      if (value) return value;
+    }
+  }
   return "";
 }
 
-function parseAmount(raw: string): number | null {
-  const cleaned = raw.replace(/,/g, "").replace(/원|KRW/gi, "").trim();
+function parseAmount(raw: any): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  const cleaned = String(raw || "").replace(/,/g, "").replace(/원|KRW/gi, "").trim();
   if (!cleaned) return null;
 
   const value = Number(cleaned);
   return Number.isFinite(value) ? value : null;
 }
 
-function normalizeDate(raw: string): string | null {
-  const match = raw.trim().match(/(\d{4})[-./]?(\d{1,2})[-./]?(\d{1,2})/);
-  if (!match) return null;
-  const [, year, month, day] = match;
+function normalizeDate(raw: any): string | null {
+  const rawStr = String(raw || "").trim();
+  // 숫자만 추출 (예: "2026년 4월 20일" -> ["2026", "4", "20"])
+  let digits = rawStr.match(/\d+/g);
+  if (!digits) return null;
+
+  // YYYYMMDD 포맷(예: "20260526")은 숫자 그룹이 한 덩어리로 잡혀 구분자 없는 8자리가 됩니다.
+  // 이 경우 앞 4/2/2로 쪼개 3조각 형태로 맞춰 줍니다.
+  if (digits.length === 1 && digits[0].length === 8) {
+    const d8 = digits[0];
+    digits = [d8.slice(0, 4), d8.slice(4, 6), d8.slice(6, 8)];
+  }
+  if (digits.length < 3) return null;
+
+  const year = digits[0];
+  const month = digits[1];
+  const day = digits[2];
+
   const y = Number(year);
   const m = Number(month);
   const d = Number(day);
+
   // Excel 일련번호(예: "46131.375")가 들어오면 regex가 연도 4613 같은 값을 뽑아낼 수 있어
   // 현실 날짜 범위를 벗어나는 값은 모두 거부해 방어선을 하나 더 둡니다.
   if (y < 1900 || y > 2100) return null;
   if (m < 1 || m > 12) return null;
   if (d < 1 || d > 31) return null;
+
   return `${year}.${month.padStart(2, "0")}.${day.padStart(2, "0")}`;
 }
 
@@ -120,12 +148,12 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
 
     const date = normalizeDate(dateRaw);
     const amount = parseAmount(amountRaw);
-    const { platform, cleaned } = normalizeMerchant(merchantRaw);
+    // 가맹점명이 비면 행을 버리지 않고 "알 수 없음"으로 대체해 import합니다.
+    // 카드사 특정 행(합계/광고 행)의 가맹점이 의도적으로 비어 있지만 날짜·금액은 유효한 경우가 있고,
+    // 실제 거래인데 가맹점 컬럼만 빈 행을 놓치지 않기 위함입니다.
+    const effectiveMerchantRaw = merchantRaw || "알 수 없음";
+    const { platform, cleaned } = normalizeMerchant(effectiveMerchantRaw);
 
-    if (!merchantRaw) {
-      skipped.push({ index, reason: "가맹점명이 없습니다.", raw });
-      return;
-    }
     if (!date) {
       skipped.push({ index, reason: "날짜 형식을 읽을 수 없습니다.", raw });
       return;
@@ -151,7 +179,7 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       date,
       platform: resolvedPlatform,
       categories: [category],
-      title: cleaned || merchantRaw,
+      title: cleaned || effectiveMerchantRaw,
       amount: txShape.amount,
       status: txShape.status,
       source: "csv",
