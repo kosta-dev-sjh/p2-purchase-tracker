@@ -42,26 +42,35 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
   return "";
 }
 
-function parseAmount(raw: string): number | null {
-  const cleaned = raw.replace(/,/g, "").replace(/원|KRW/gi, "").trim();
+function parseAmount(raw: any): number | null {
+  if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
+  const cleaned = String(raw || "").replace(/,/g, "").replace(/원|KRW/gi, "").trim();
   if (!cleaned) return null;
 
   const value = Number(cleaned);
   return Number.isFinite(value) ? value : null;
 }
 
-function normalizeDate(raw: string): string | null {
-  const match = raw.trim().match(/(\d{4})[-./]?(\d{1,2})[-./]?(\d{1,2})/);
-  if (!match) return null;
-  const [, year, month, day] = match;
+function normalizeDate(raw: any): string | null {
+  const rawStr = String(raw || "").trim();
+  // 숫자만 추출 (예: "2026년 4월 20일" -> ["2026", "4", "20"])
+  const digits = rawStr.match(/\d+/g);
+  if (!digits || digits.length < 3) return null;
+
+  const year = digits[0];
+  const month = digits[1];
+  const day = digits[2];
+
   const y = Number(year);
   const m = Number(month);
   const d = Number(day);
+  
   // Excel 일련번호(예: "46131.375")가 들어오면 regex가 연도 4613 같은 값을 뽑아낼 수 있어
   // 현실 날짜 범위를 벗어나는 값은 모두 거부해 방어선을 하나 더 둡니다.
   if (y < 1900 || y > 2100) return null;
   if (m < 1 || m > 12) return null;
   if (d < 1 || d > 31) return null;
+  
   return `${year}.${month.padStart(2, "0")}.${day.padStart(2, "0")}`;
 }
 

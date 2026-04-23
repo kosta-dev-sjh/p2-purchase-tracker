@@ -11,7 +11,7 @@ export type SupportedFileKind = "csv" | "xlsx";
 
 export class UnsupportedFileTypeError extends Error {
   constructor(fileName: string) {
-    super(`지원하지 않는 파일 형식입니다 (${fileName}). CSV 또는 XLSX 파일을 올려주세요.`);
+    super(`지원하지 않는 파일 형식입니다 (${fileName}). CSV, XLSX 또는 XLS 파일을 올려주세요.`);
     this.name = "UnsupportedFileTypeError";
   }
 }

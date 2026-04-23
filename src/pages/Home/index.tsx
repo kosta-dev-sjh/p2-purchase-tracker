@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 역할: 해당 화면의 상태와 레이아웃을 조립하는 페이지 진입 파일입니다.
  * 위치: src\pages\Home\index.tsx
  */
@@ -17,6 +17,8 @@ import { InsightCards } from "./components/InsightCards";
 import { buildHomeData } from "./data";
 import { getMonthOption } from "../../constants/months";
 import { useTransactionsStore } from "../../stores/transactionsStore";
+import { useAiInsightsStore } from "../../stores/aiInsightsStore";
+import { generateInsight } from "../../utils/aiService";
 // TODO(auth): 목업 로그인 분기를 걷어낼 때, 이 오버레이의 표시 조건도 실제 신규 가입 이벤트로 옮겨야 합니다.
 import { WelcomeTutorial } from "../../components/onboarding/WelcomeTutorial";
 
@@ -80,6 +82,31 @@ export const HomePage: React.FC = () => {
   const data = useMemo(() => buildHomeData(rows, month), [rows, month]);
   const monthOption = getMonthOption(month);
 
+  const { getInsight, setInsight } = useAiInsightsStore();
+  const [isAiLoading, setIsAiLoading] = useState(false);
+
+  useEffect(() => {
+    const monthRows = rows.filter(r => r.date.startsWith(month));
+    if (monthRows.length === 0) return;
+
+    // 데이터 변동 감지를 위한 지문(Hash) 생성: 건수 + 총액
+    const hash = `${monthRows.length}-${monthRows.reduce((sum, r) => sum + r.amount, 0)}`;
+    const cached = getInsight(month);
+
+    if (!cached || cached.hash !== hash) {
+      setIsAiLoading(true);
+      const rulesText = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
+      
+      generateInsight(rulesText).then(insightText => {
+        setInsight(month, hash, insightText);
+      }).finally(() => {
+        setIsAiLoading(false);
+      });
+    }
+  }, [rows, month, data.insights, getInsight, setInsight]);
+
+  const currentInsight = getInsight(month);
+
   // 로그인 분기에서 navigation state로 "튜토리얼 무조건 표시"를 요청받습니다.
   // 이 값을 한 번 캡처해 내부 state로 옮기고 즉시 history를 정리해서,
   // 뒤로가기/새로고침 시 같은 state가 반복 소비되어 튜토리얼이 재트리거되지 않게 합니다.
@@ -121,7 +148,11 @@ export const HomePage: React.FC = () => {
           <TrendChart points={data.trend.points} />
         </Row2>
         <RecentTransactions items={data.recent} />
-        <InsightCards items={data.insights} />
+        <InsightCards 
+          items={data.insights} 
+          aiInsightText={currentInsight?.insightText}
+          isAiLoading={isAiLoading}
+        />
       </Grid>
       {/*
         WelcomeTutorial 표시 우선순위:

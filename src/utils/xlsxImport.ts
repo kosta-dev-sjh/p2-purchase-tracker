@@ -5,6 +5,57 @@
 import { rowsToCsvRows, type CsvRow } from "./csvParse";
 import { findHeaderRowIndex } from "./importHeaders";
 
+/** 시트가 AI에게 보낼 가치가 있는지(= 거래 데이터가 담겼을 가능성이 있는지) 판정. */
+function looksLikeDataSheet(csv: string): boolean {
+  if (!csv) return false;
+  const nonEmptyLines = csv.split(/\r?\n/).filter((line) => line.trim() !== "");
+  // 안내/커버 시트는 보통 5행 이하. 진짜 내역은 수십~수백 행.
+  if (nonEmptyLines.length < 3) return false;
+
+  // 숫자 셀의 비중을 대략적으로 체크. 거래 내역은 금액/날짜 때문에 숫자 비중이 높음.
+  const digits = (csv.match(/\d/g) || []).length;
+  const letters = (csv.match(/[A-Za-z가-힣]/g) || []).length;
+  const totalSignal = digits + letters;
+  if (totalSignal === 0) return false;
+  const digitRatio = digits / totalSignal;
+  // "안내문만 가득한" 시트는 digitRatio가 0.05 아래로 뚝 떨어집니다.
+  return digitRatio >= 0.1;
+}
+
+export async function readXlsxAsCsvText(file: File): Promise<string> {
+  const XLSX = await import("xlsx");
+  const buffer = await file.arrayBuffer();
+  const workbook = XLSX.read(buffer, { type: "array", cellDates: true });
+  if (workbook.SheetNames.length === 0) return "";
+
+  const chunks: string[] = [];
+  const dropped: string[] = [];
+  for (const sheetName of workbook.SheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const csv = XLSX.utils.sheet_to_csv(sheet);
+    if (!looksLikeDataSheet(csv)) {
+      dropped.push(sheetName);
+      continue;
+    }
+    chunks.push(`--- Sheet: ${sheetName} ---\n${csv}`);
+  }
+
+  // 필터링 결과 모든 시트가 사라졌다면(= 판정 기준이 너무 엄격했다면) 전체를 다시 붙여 보냅니다.
+  // "AI가 볼 데이터가 아예 없는" 회귀를 막는 안전망입니다.
+  if (chunks.length === 0) {
+    return workbook.SheetNames.map(
+      (name) => `--- Sheet: ${name} ---\n${XLSX.utils.sheet_to_csv(workbook.Sheets[name])}`,
+    ).join("\n\n");
+  }
+
+  if (dropped.length > 0) {
+    // 디버깅용 로그: 어떤 시트가 제거되었는지 개발 중에 바로 보이도록.
+    console.log("[xlsxImport] AI 전달에서 제외한 시트:", dropped);
+  }
+
+  return chunks.join("\n\n");
+}
+
 export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
   // xlsx는 업로드 시점에만 동적으로 불러와 초기 번들을 가볍게 유지합니다.
   const XLSX = await import("xlsx");

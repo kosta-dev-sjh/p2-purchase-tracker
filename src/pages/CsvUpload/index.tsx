@@ -14,10 +14,15 @@ import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { transactionsStore, useTransactionsStore } from "../../stores/transactionsStore";
 import type { CsvImportResult } from "../../utils/csvImport";
-import { importFile, UnsupportedFileTypeError } from "../../utils/fileImport";
+import { importFile, detectFileKind, UnsupportedFileTypeError } from "../../utils/fileImport";
 import { checkDuplicates, autoResolveDuplicates, type TxItemDiff, type MergeAction } from "../../utils/duplicateCheck";
 import { formatKRW } from "../../utils/format";
+import { decodeCsvBuffer } from "../../utils/csvParse";
+import { readXlsxAsCsvText } from "../../utils/xlsxImport";
+import { fallbackCsv } from "../../utils/aiService";
+import { importRows } from "../../utils/csvImport";
 import { PreviewTable } from "./components/PreviewTable";
+import { AiLoadingIndicator } from "./components/AiLoadingIndicator";
 import { SaveResultModal } from "../../components/modal/SaveResultModal";
 import type { TxRow } from "../Transactions/components/TransactionTable";
 
@@ -204,6 +209,8 @@ export const CsvUploadPage: React.FC = () => {
   const [result, setResult] = useState<CsvImportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [isAiFallbackLoading, setIsAiFallbackLoading] = useState(false);
+
   /** autoResolve 실행 후 결과. 이 값이 세팅되면 결과 모달이 열립니다. */
   const [saveResult, setSaveResult] = useState<{
     savedRows: TxRow[];
@@ -225,22 +232,61 @@ export const CsvUploadPage: React.FC = () => {
     dupCheck && (dupCheck.fresh.length > 0 || dupCheck.itemDiff.length > 0)
   );
 
+  const handleAiFallback = async (file: File) => {
+    setIsAiFallbackLoading(true);
+    setError(null);
+    try {
+      console.log("[AI Fallback] 시작: ", file.name);
+      let rawText = "";
+      const kind = detectFileKind(file.name);
+      if (kind === "csv") {
+        rawText = decodeCsvBuffer(await file.arrayBuffer());
+      } else if (kind === "xlsx") {
+        rawText = await readXlsxAsCsvText(file);
+      }
+
+      if (!rawText) {
+        throw new Error("파일을 읽을 수 없습니다.");
+      }
+
+      console.log("[AI Fallback] 원문 추출 완료, 길이:", rawText.length);
+      const aiRows = await fallbackCsv(rawText);
+      console.log("[AI Fallback] Gemini 결과:", aiRows);
+      
+      const finalResult = importRows(aiRows);
+      console.log("[AI Fallback] 최종 파싱 결과:", finalResult);
+
+      if (finalResult.imported.length === 0) {
+         const debugMsg = JSON.stringify(aiRows).substring(0, 150);
+         setError(`[개발자 디버그용] AI 복구는 되었으나 시스템 인식이 실패했습니다. 반환데이터: ${debugMsg}...`);
+         setResult(null);
+      } else {
+         setResult(finalResult);
+      }
+    } catch (err) {
+       setError("AI 데이터 복구 중 문제가 발생했습니다.");
+       setResult(null);
+    } finally {
+       setIsAiFallbackLoading(false);
+    }
+  };
+
   const handleFile = async (file: File) => {
     setError(null);
     setFileName(file.name);
     try {
       const parsed = await importFile(file);
-      setResult(parsed);
+      if (parsed.imported.length === 0) {
+        await handleAiFallback(file);
+      } else {
+        setResult(parsed);
+      }
     } catch (cause) {
-      setResult(null);
       if (cause instanceof UnsupportedFileTypeError) {
         setError(cause.message);
+        setResult(null);
       } else {
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : "파일을 읽는 중 문제가 발생했어요."
-        );
+        await handleAiFallback(file);
       }
     }
   };
@@ -327,11 +373,15 @@ export const CsvUploadPage: React.FC = () => {
               <div className="title">
                 {fileName ? fileName : "카드사 이용내역 파일을 올려주세요"}
               </div>
-              <div className="hint">
-                CSV 또는 XLSX 모두 지원합니다. 클릭하거나 파일을 끌어다 놓으세요.
-                <br />
-                헤더는 이용일 / 가맹점명 / 이용금액 / (선택)카테고리 형식을 따르며, 상단 안내 행이 있어도 자동으로 건너뜁니다.
-              </div>
+              {isAiFallbackLoading ? (
+                <AiLoadingIndicator />
+              ) : (
+                <div className="hint">
+                  CSV, XLSX, XLS 모두 지원합니다. 클릭하거나 파일을 끌어다 놓으세요.
+                  <br />
+                  헤더는 이용일 / 가맹점명 / 이용금액 / (선택)카테고리 형식을 따르며, 상단 안내 행이 있어도 자동으로 건너뜁니다.
+                </div>
+              )}
               <input
                 ref={inputRef}
                 type="file"

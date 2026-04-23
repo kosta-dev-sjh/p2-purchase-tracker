@@ -16,6 +16,31 @@ export interface InsightItem {
   body: string;
 }
 
+const AiSummaryBlock = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  background: linear-gradient(145deg, #f8fafc, #f1f5f9);
+  border: 1px solid #e2e8f0;
+  border-radius: ${tokens.radius.card};
+  box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+  margin-bottom: 8px;
+`;
+
+const AiIcon = styled.div`
+  font-size: 24px;
+`;
+
+const AiContent = styled.p`
+  margin: 0;
+  color: ${tokens.color.ink1};
+  font-size: ${tokens.type.body.size};
+  font-weight: 500;
+  line-height: 1.5;
+`;
+
+
 /**
  * 레퍼런스의 `.ins-card` 패턴을 따라 kind별로 색상이 다른 28x28 아이콘을 왼쪽에 둡니다.
  * kind를 warn/info/ok 3가지 톤으로 매핑해 "경고 / 반복 알림 / 카테고리 안내" 느낌을 시각화합니다.
@@ -120,9 +145,17 @@ const Icons: Record<IconTone, React.ReactNode> = {
   ),
 };
 
-export const InsightCards: React.FC<{ items: InsightItem[] }> = ({ items }) => (
+export const InsightCards: React.FC<{ items: InsightItem[], aiInsightText?: string, isAiLoading?: boolean }> = ({ items, aiInsightText, isAiLoading }) => (
   <Wrapper>
     <SectionLabel>소비 인사이트</SectionLabel>
+    {(aiInsightText || isAiLoading) && (
+      <AiSummaryBlock>
+        <AiIcon>✨</AiIcon>
+        <AiContent>
+          {isAiLoading ? "AI가 이번 달 소비 패턴을 분석하고 있습니다..." : aiInsightText}
+        </AiContent>
+      </AiSummaryBlock>
+    )}
     <Grid>
       {items.map((item) => {
         const tone = TONE_MAP[item.kind];
