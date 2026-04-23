@@ -23,7 +23,7 @@ import { PlatformSelect, type Platform } from "./components/PlatformSelect";
 import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
-import { ocrUploadMockData, type UploadedImage } from "./data";
+import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
 import {
   parseCoupangOrderText,
@@ -116,9 +116,10 @@ export const OcrUploadPage: React.FC = () => {
   // 여기서의 platform은 "다음에 올릴 이미지에 찍힐 태그"입니다.
   // 업로드를 실행할 때마다 새 이미지의 UploadedImage.platform에 스냅샷으로 복사됩니다.
   const [platform, setPlatform] = useState<Platform>("coupang");
-  
-  // append 모드일 때는 빈 상태로 시작하여 이전에 올린 이미지와 혼동되지 않게 합니다.
-  const [images, setImages] = useState<UploadedImage[]>(isAppendMode ? [] : ocrUploadMockData.images);
+
+  // 실제 OCR 흐름에서는 사용자가 직접 업로드하기 전에는 이미지가 비어 있어야 합니다.
+  // append 모드(기존 결과에 이어 붙이기)든 새 세션이든 초기 상태는 항상 빈 배열로 시작합니다.
+  const [images, setImages] = useState<UploadedImage[]>([]);
 
   React.useEffect(() => {
     // 새로운 세션 시작일 경우에만 스토어를 초기화합니다.
@@ -169,7 +170,9 @@ export const OcrUploadPage: React.FC = () => {
       for (let i = 0; i < images.length; i++) {
         const image = images[i];
         if (!image.file) {
-          // v1 목업 이미지 대응 폴백
+          // 방어적 폴백. 정상 업로드 흐름에서는 File 객체가 반드시 있지만,
+          // 예외적으로 file 참조가 비어 있는 케이스(예: 테스트 주입)에서도
+          // 파이프라인이 터지지 않도록 빈 orders로 통과시킵니다.
           processedImages.push({
             id: image.id,
             fileName: image.fileName,
@@ -264,7 +267,7 @@ export const OcrUploadPage: React.FC = () => {
   return (
     <AppShell activeNav="upload" crumb="입력 · OCR" title="OCR 업로드">
       <Wrap>
-        <GuideCard items={ocrUploadMockData.guide} />
+        <GuideCard items={OCR_UPLOAD_GUIDE} />
 
         {/* 플랫폼 선택과 업로드 구역은 "한 번의 배치"를 구성하므로 시각적으로 붙여 보여 줍니다. */}
         <UploadStack>
@@ -277,6 +280,7 @@ export const OcrUploadPage: React.FC = () => {
               maxCount={MAX_IMAGES}
               activePlatformLabel={PLATFORM_LABELS[platform]}
               disabled={atCapacity}
+              currentCount={images.length}
               onPick={handleFileSelect}
             />
           </div>

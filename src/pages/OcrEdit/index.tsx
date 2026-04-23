@@ -19,7 +19,6 @@ import { ImageList } from "./components/ImageList";
 import { ImagePreview } from "./components/ImagePreview";
 import { EditForm } from "./components/EditForm";
 import {
-  ocrEditMockData,
   type OcrImageItem,
   type OcrOrder,
 } from "./data";
@@ -176,10 +175,10 @@ export const OcrEditPage: React.FC = () => {
   const allRows = useTransactionsStore();
   const storeImages = useOcrStore();
 
-  // 초기 시드는 ocrStore에서 가져오고, 없으면 mock 데이터를 사용해 개발/테스트 시 화면이 깨지지 않게 합니다.
-  const [images, setImages] = useState<OcrImageItem[]>(
-    storeImages.length > 0 ? storeImages : ocrEditMockData.images
-  );
+  // 초기 시드는 오직 ocrStore에서 가져옵니다. 스토어가 비어 있으면 이 페이지에
+  // 보여 줄 게 아예 없는 상태이므로, 이전의 mock 폴백을 없애고 빈 상태 UI를 유지합니다.
+  // (사용자 플로우: OcrUpload에서 분석을 돌리면 ocrStore.setImages로 시드가 채워집니다.)
+  const [images, setImages] = useState<OcrImageItem[]>(storeImages);
   const [selectedId, setSelectedId] = useState<string>(images[0]?.id ?? "");
   const selected = images.find((image) => image.id === selectedId);
 
