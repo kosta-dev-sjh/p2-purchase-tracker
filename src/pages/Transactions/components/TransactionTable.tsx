@@ -489,18 +489,16 @@ export const TransactionTable: React.FC<Props> = ({
   const categoryColorMap = useCategoryColorMap();
   const hasMore = rows.length < totalCount;
   const loadMoreRef = useRef(onLoadMore);
-  loadMoreRef.current = onLoadMore;
+  useEffect(() => {
+    loadMoreRef.current = onLoadMore;
+  }, [onLoadMore]);
 
   /**
    * 첫 마운트 시 노출된 행 ID들만 기록해 둡니다.
    * 이후 인피니트 스크롤로 추가되는 행은 이 집합에 들어있지 않으므로 애니메이션을 받지 않고,
    * 필터/월 변경으로 리셋된 경우에도 이전에 본 행은 다시 애니메이션하지 않습니다.
    */
-  const initialIdsRef = useRef<Set<string> | null>(null);
-  if (initialIdsRef.current === null) {
-    initialIdsRef.current = new Set(rows.map((row) => row.id));
-  }
-  const initialIds = initialIdsRef.current;
+  const [initialIds] = useState(() => new Set(rows.map((row) => row.id)));
 
   useEffect(() => {
     if (!hasMore) return;

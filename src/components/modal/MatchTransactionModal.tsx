@@ -3,7 +3,7 @@
  *       사용자에게 물어보는 모달입니다. 자동 병합은 하지 않고 항상 사용자 선택을 받습니다.
  * 위치: src\components\modal\MatchTransactionModal.tsx
  */
-import React, { useEffect, useState } from "react";
+import React, { useState } from "react";
 import styled from "styled-components";
 import { Modal } from "./Modal";
 import { Button } from "../primitives/Button";
@@ -152,13 +152,9 @@ export const MatchTransactionModal: React.FC<MatchTransactionModalProps> = ({
   onAttachToExisting,
   onSaveAsNew,
 }) => {
-  const [selectedId, setSelectedId] = useState<string>(matches[0]?.id ?? "");
-
-  useEffect(() => {
-    if (isOpen) {
-      setSelectedId(matches[0]?.id ?? "");
-    }
-  }, [isOpen, matches]);
+  const [manualSelectedId, setManualSelectedId] = useState<string>("");
+  const selectedId =
+    matches.some((row) => row.id === manualSelectedId) ? manualSelectedId : (matches[0]?.id ?? "");
 
   const canAttach = Boolean(selectedId);
 
@@ -189,7 +185,7 @@ export const MatchTransactionModal: React.FC<MatchTransactionModalProps> = ({
               key={row.id}
               type="button"
               $selected={isSelected}
-              onClick={() => setSelectedId(row.id)}
+              onClick={() => setManualSelectedId(row.id)}
             >
               <div className="left">
                 <div className="title">{row.title}</div>

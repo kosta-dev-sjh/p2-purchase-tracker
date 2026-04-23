@@ -272,6 +272,13 @@ export const CategoriesSection: React.FC = () => {
         </List>
       </SettingsBlock>
       <CategoryAddModal
+        key={
+          modal.kind === "edit"
+            ? `edit-${modal.id}`
+            : modal.kind === "add"
+              ? "add"
+              : "closed"
+        }
         isOpen={modal.kind !== "closed"}
         existingNames={existingNames}
         mode={

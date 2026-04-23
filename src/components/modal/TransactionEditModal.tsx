@@ -429,6 +429,11 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
       {/* 편집 중에도 '상품 추가/수정'을 쓸 수 있어야 해서 Modal을 중첩합니다. 두 모달 모두
           같은 z-index를 쓰지만 후에 렌더되는 쪽이 DOM 순서상 위에 얹혀지므로 겹침이 자연스럽습니다. */}
       <ProductAddModal
+        key={
+          productModal
+            ? `${productModal.type}-${productModal.type === "edit" ? productModal.id : "new"}`
+            : "closed"
+        }
         isOpen={productModal !== null}
         initialValues={editingProduct}
         onClose={() => setProductModal(null)}

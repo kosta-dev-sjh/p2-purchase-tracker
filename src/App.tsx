@@ -2,7 +2,7 @@
  * 역할: 애플리케이션의 전체 라우팅을 연결하는 최상위 컴포넌트입니다.
  * 위치: src\App.tsx
  */
-import { HashRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 // ProductTour는 Routes와 형제로 라우터 안쪽에 마운트되어야
 // useNavigate/useLocation 훅이 동작하고, 라우트 전환 중에도 상태가 유지됩니다.
 import { ProductTour } from "./components/onboarding/ProductTour";
@@ -20,10 +20,9 @@ import { SettingsPage } from "./pages/SettingsPage";
 
 function App() {
   return (
-    <HashRouter>
-      {/* v1에서 확정한 화면 경로를 이곳에서 한 번에 관리합니다.
-          GitHub Pages처럼 SPA fallback을 제공하지 않는 정적 호스팅에서도
-          깊은 링크가 안전하게 동작하도록 HashRouter를 사용합니다. */}
+    <BrowserRouter>
+      {/* EC2/Firebase Hosting/Docker 기준 배포를 전제로 일반 경로 라우팅을 사용합니다.
+          서버에서 SPA fallback(index.html 재서빙)만 맞춰 주면 깊은 링크도 자연스럽게 동작합니다. */}
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/register" element={<RegisterPage />} />
@@ -41,9 +40,8 @@ function App() {
       </Routes>
       {/* tourStore.start()가 호출되면 이 컴포넌트가 열려서 스포트라이트 투어를 진행합니다. */}
       <ProductTour />
-    </HashRouter>
+    </BrowserRouter>
   );
 }
 
 export default App;
-

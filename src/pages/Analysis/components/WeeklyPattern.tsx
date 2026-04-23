@@ -72,38 +72,39 @@ function renderNote(text: string): React.ReactNode[] {
   });
 }
 
+type TickProps = {
+  x?: number;
+  y?: number;
+  payload?: { value: string; index: number };
+};
+
 /**
  * 주말(`emphasize: true`) 요일은 ink2/볼드로, 평일은 ink4/기본 가중치로 출력합니다.
- * tick 함수가 payload.index만 받으므로 데이터 배열을 클로저로 주입해 emphasize 플래그를 참조합니다.
+ * 별도 컴포넌트로 분리해 렌더 중 새 컴포넌트를 생성하지 않도록 고정합니다.
  */
-function makeTickRenderer(days: WeeklyDay[]) {
-  type TickProps = {
-    x?: number;
-    y?: number;
-    payload?: { value: string; index: number };
-  };
-  const Tick = ({ x = 0, y = 0, payload }: TickProps) => {
-    const index = payload?.index ?? 0;
-    const emphasize = Boolean(days[index]?.emphasize);
-    return (
-      <text
-        x={x}
-        y={y + 12}
-        textAnchor="middle"
-        fontSize={11}
-        fontWeight={emphasize ? 600 : 500}
-        fill={emphasize ? tokens.color.ink2 : tokens.color.ink4}
-      >
-        {payload?.value}
-      </text>
-    );
-  };
-  return Tick;
-}
+const WeeklyTick: React.FC<TickProps & { days?: WeeklyDay[] }> = ({
+  x = 0,
+  y = 0,
+  payload,
+  days = [],
+}) => {
+  const index = payload?.index ?? 0;
+  const emphasize = Boolean(days[index]?.emphasize);
+  return (
+    <text
+      x={x}
+      y={y + 12}
+      textAnchor="middle"
+      fontSize={11}
+      fontWeight={emphasize ? 600 : 500}
+      fill={emphasize ? tokens.color.ink2 : tokens.color.ink4}
+    >
+      {payload?.value}
+    </text>
+  );
+};
 
 export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note }) => {
-  const TickRenderer = makeTickRenderer(days);
-
   return (
     <Card>
       <CardHd>
@@ -125,7 +126,7 @@ export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note }) => {
                 tickLine={false}
                 axisLine={false}
                 interval={0}
-                tick={<TickRenderer />}
+                tick={<WeeklyTick days={days} />}
               />
               {/* 라벨(k)이 막대 상단 밖으로 삐져나와도 잘리지 않게 도메인을 넉넉히 잡습니다. */}
               <YAxis hide domain={[0, (dataMax: number) => dataMax * 1.15]} />

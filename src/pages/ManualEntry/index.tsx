@@ -2,7 +2,7 @@
  * 역할: 해당 화면의 상태와 레이아웃을 조립하는 페이지 진입 파일입니다.
  * 위치: src\pages\ManualEntry\index.tsx
  */
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { AppShell } from "../../components/layout/AppShell";
@@ -237,12 +237,9 @@ export const ManualEntryPage: React.FC = () => {
    * 날짜·금액이 바뀌면 자동으로 초기화됩니다.
    * true일 때 performSave는 중복 감지를 우회하고 곧바로 새 거래로 저장합니다.
    */
-  const [dupDismissed, setDupDismissed] = useState(false);
-
-  // 날짜 또는 금액이 바뀌면 제안 상태를 초기화해 다시 판단할 수 있게 합니다.
-  useEffect(() => {
-    setDupDismissed(false);
-  }, [meta.date, meta.amount]);
+  const [dismissedDuplicateKey, setDismissedDuplicateKey] = useState("");
+  const duplicateKey = `${meta.date}|${meta.amount.replace(/[^0-9]/g, "")}`;
+  const dupDismissed = dismissedDuplicateKey === duplicateKey;
 
   const showSuggestion = candidateMatches.length > 0 && !dupDismissed;
 
@@ -515,7 +512,7 @@ export const ManualEntryPage: React.FC = () => {
                 <Button
                   variant="secondary"
                   size="sm"
-                  onClick={() => setDupDismissed(true)}
+                  onClick={() => setDismissedDuplicateKey(duplicateKey)}
                 >
                   아니에요, 계속 입력할게요
                 </Button>
@@ -571,6 +568,7 @@ export const ManualEntryPage: React.FC = () => {
       </Card>
 
       <ProductAddModal
+        key={modal ? `${modal.type}-${modal.type === "edit" ? modal.id : "new"}` : "closed"}
         isOpen={modal !== null}
         initialValues={editingProduct}
         onClose={() => setModal(null)}

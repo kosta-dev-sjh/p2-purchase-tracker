@@ -88,6 +88,11 @@ function renderSegments(revealed: string): React.ReactNode[] {
   );
 }
 
+function getInitialReduceMotion(): boolean {
+  if (typeof window === "undefined") return false;
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export const SummaryBanner: React.FC<SummaryBannerProps> = ({ title, text, speed = 18 }) => {
   /**
    * 타이틀과 본문을 하나의 typed-stream으로 처리하기 위해
@@ -98,22 +103,17 @@ export const SummaryBanner: React.FC<SummaryBannerProps> = ({ title, text, speed
   const plain = useMemo(() => marked.replace(/\*\*/g, ""), [marked]);
 
   const [cursor, setCursor] = useState(0);
-  const [reduceMotion, setReduceMotion] = useState(false);
+  const [reduceMotion, setReduceMotion] = useState(getInitialReduceMotion);
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
     const sync = () => setReduceMotion(mq.matches);
-    sync();
     mq.addEventListener("change", sync);
     return () => mq.removeEventListener("change", sync);
   }, []);
 
   useEffect(() => {
-    if (reduceMotion) {
-      setCursor(marked.length);
-      return;
-    }
-    setCursor(0);
+    if (reduceMotion) return;
     const timer = window.setInterval(() => {
       setCursor((c) => {
         if (c >= marked.length) {
@@ -128,8 +128,8 @@ export const SummaryBanner: React.FC<SummaryBannerProps> = ({ title, text, speed
     return () => window.clearInterval(timer);
   }, [marked, reduceMotion, speed]);
 
-  const revealed = marked.slice(0, cursor);
-  const isTyping = cursor < marked.length;
+  const revealed = reduceMotion ? marked : marked.slice(0, cursor);
+  const isTyping = !reduceMotion && cursor < marked.length;
 
   return (
     <Banner>

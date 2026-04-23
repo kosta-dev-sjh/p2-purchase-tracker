@@ -44,6 +44,31 @@ git pull origin dev
 git checkout -b feature/your-task
 ```
 
+See also: `CONTRIBUTING.md`
+
+## Routing and deployment
+
+- The app now uses `BrowserRouter`
+- Production hosting must rewrite unknown routes back to `index.html`
+- This fits EC2, Firebase Hosting, and Docker-based SPA deployment better than GitHub Pages hash routing
+
+## Current stack
+
+- React 19
+- TypeScript
+- Vite 8
+- React Router DOM
+- styled-components
+- Recharts
+- SheetJS `xlsx`
+- ESLint
+
+## State management
+
+- Global state: lightweight localStorage-backed store modules in `src/stores/`
+- Common hooks in use: `useState`, `useMemo`, `useEffect`
+- Redux is not currently used
+
 ## When to run `npm install` again
 
 You usually need to run `npm install` again when:

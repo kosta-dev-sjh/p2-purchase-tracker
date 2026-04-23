@@ -12,8 +12,8 @@
  *   4. 요소를 찾으면 scrollIntoView → 위치(rect)를 계산해 스포트라이트와 말풍선 배치
  *   5. resize/scroll 이벤트로 위치 재계산, ESC로 닫기 지원
  *
- * 마운트 위치: App.tsx 내부(HashRouter 안, Routes와 형제).
- *   - useNavigate / useLocation을 쓰므로 HashRouter 안쪽이어야 합니다.
+ * 마운트 위치: App.tsx 내부(BrowserRouter 안, Routes와 형제).
+ *   - useNavigate / useLocation을 쓰므로 BrowserRouter 안쪽이어야 합니다.
  *   - Routes와 형제로 두면 라우트 전환에도 살아남아 투어가 연속됩니다.
  */
 import React, { useCallback, useEffect, useState } from "react";

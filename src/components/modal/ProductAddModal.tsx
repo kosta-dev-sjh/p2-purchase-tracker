@@ -2,7 +2,7 @@
  * 역할: 모달 레이어를 통해 보조 입력 흐름을 처리하는 공통 컴포넌트입니다.
  * 위치: src\components\modal\ProductAddModal.tsx
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import styled from "styled-components";
 import { Button } from "../primitives/Button";
 import { FormField } from "../form/FormField";
@@ -44,17 +44,9 @@ export const ProductAddModal = ({
   onSubmit,
 }: ProductAddModalProps) => {
   const isEdit = Boolean(initialValues);
-  const [name, setName] = useState("");
-  const [price, setPrice] = useState("");
-  const [link, setLink] = useState("");
-
-  useEffect(() => {
-    // 모달이 열릴 때마다 전달된 초기값(수정 모드) 혹은 빈 값(추가 모드)으로 필드를 재설정합니다.
-    if (!isOpen) return;
-    setName(initialValues?.name ?? "");
-    setPrice(initialValues ? String(initialValues.price) : "");
-    setLink(initialValues?.link ?? "");
-  }, [isOpen, initialValues]);
+  const [name, setName] = useState(() => initialValues?.name ?? "");
+  const [price, setPrice] = useState(() => (initialValues ? String(initialValues.price) : ""));
+  const [link, setLink] = useState(() => initialValues?.link ?? "");
 
   const resetFields = () => {
     setName("");

@@ -8,7 +8,7 @@
  *             "실제 신규 가입 이벤트 직후"로 옮겨야 합니다. 현재는 LoginForm의 1111/1111 분기가
  *             onboarding 플래그를 제거하는 것으로 트리거됩니다.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
 import styled from "styled-components";
 import { Button } from "../primitives/Button";
@@ -225,21 +225,15 @@ export const WelcomeTutorial: React.FC<WelcomeTutorialProps> = ({
   forceOpen,
   onClose,
 }) => {
-  const [isOpen, setIsOpen] = useState<boolean>(false);
-  const [index, setIndex] = useState(0);
-
-  useEffect(() => {
-    if (forceOpen) {
-      setIsOpen(true);
-      return;
-    }
+  const [isOpen, setIsOpen] = useState<boolean>(() => {
+    if (forceOpen) return true;
     try {
-      const seen = localStorage.getItem(ONBOARDING_SEEN_KEY);
-      if (!seen) setIsOpen(true);
+      return !localStorage.getItem(ONBOARDING_SEEN_KEY);
     } catch {
-      // 접근 실패 시 자동 표시하지 않는 쪽이 안전
+      return false;
     }
-  }, [forceOpen]);
+  });
+  const [index, setIndex] = useState(0);
 
   const handleClose = useCallback(() => {
     markSeen();

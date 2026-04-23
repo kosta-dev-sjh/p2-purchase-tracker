@@ -4,7 +4,7 @@
  *       다른 화면과 톤을 일치시킵니다.
  * 위치: src\pages\Settings\components\CategoryAddModal.tsx
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
@@ -159,26 +159,14 @@ export const CategoryAddModal = ({
   const isEdit = mode.kind === "edit";
   const nameLocked = mode.kind === "edit" && mode.nameLocked === true;
 
-  const [name, setName] = useState("");
-  const [color, setColor] = useState<string>(PRESET_COLORS[0]);
-  const [hexDraft, setHexDraft] = useState<string>(PRESET_COLORS[0]);
+  const [name, setName] = useState(() => (mode.kind === "edit" ? mode.initialName : ""));
+  const [color, setColor] = useState<string>(() =>
+    mode.kind === "edit" ? mode.initialColor.toUpperCase() : PRESET_COLORS[0]
+  );
+  const [hexDraft, setHexDraft] = useState<string>(() =>
+    mode.kind === "edit" ? mode.initialColor.toUpperCase() : PRESET_COLORS[0]
+  );
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    // 모달이 닫혔다가 다시 열릴 때마다 모드에 맞춰 초기 상태를 다시 잡아줍니다.
-    if (!isOpen) return;
-    if (mode.kind === "edit") {
-      setName(mode.initialName);
-      setColor(mode.initialColor.toUpperCase());
-      setHexDraft(mode.initialColor.toUpperCase());
-    } else {
-      setName("");
-      setColor(PRESET_COLORS[0]);
-      setHexDraft(PRESET_COLORS[0]);
-    }
-    setError(null);
-    // mode 객체 자체가 매번 새로 만들어질 수 있어 비교 키만 의존성에 둡니다.
-  }, [isOpen, mode]);
 
   const handleSwatchClick = (preset: string) => {
     setColor(preset);
