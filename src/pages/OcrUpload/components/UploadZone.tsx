@@ -4,7 +4,7 @@
  *       최대 매수에 도달했을 때는 disabled 상태로 렌더해 상위 상태와 싱크를 맞춥니다.
  * 위치: src\pages\OcrUpload\components\UploadZone.tsx
  */
-import React from "react";
+import React, { useRef } from "react";
 import styled, { css } from "styled-components";
 import { tokens } from "../../../styles/tokens";
 
@@ -133,16 +133,36 @@ export const UploadZone: React.FC<{
   activePlatformLabel?: string;
   /** 최대 매수 도달 시 상위에서 true로 넘겨 클릭을 차단합니다. */
   disabled?: boolean;
-  onPick: () => void;
+  onPick: (files: File[]) => void;
 }> = ({ acceptedTypes, maxSize, maxCount, activePlatformLabel, disabled, onPick }) => {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   const handleClick = () => {
     if (disabled) return;
-    onPick();
+    fileInputRef.current?.click();
+  };
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      onPick(Array.from(e.target.files));
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    }
   };
 
   return (
-    <Zone $disabled={disabled} onClick={handleClick}>
-      <IconBox>
+    <>
+      <input
+        type="file"
+        ref={fileInputRef}
+        style={{ display: "none" }}
+        multiple
+        accept=".png,.jpg,.jpeg,.webp"
+        onChange={handleFileChange}
+      />
+      <Zone $disabled={disabled} onClick={handleClick}>
+        <IconBox>
         <UpIcon />
       </IconBox>
       <Title>
@@ -169,5 +189,6 @@ export const UploadZone: React.FC<{
         {disabled ? "더 올리려면 기존 이미지를 먼저 지워주세요" : "파일 선택하기"}
       </PickButton>
     </Zone>
+    </>
   );
 };

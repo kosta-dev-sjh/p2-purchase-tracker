@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 역할: 특정 페이지 안에서만 사용하는 화면 전용 UI 블록입니다.
  * 위치: src\pages\Transactions\components\TransactionTable.tsx
  */
@@ -24,7 +24,7 @@ export type TxType = "expense" | "income";
  *   발생한 거래를 의미합니다. 모든 거래에 플랫폼이 있다고 가정할 수 없기 때문에 열어둔 폴백입니다.
  * - 집계/도넛/분석에서는 "미지정" 라벨로 표시되고, 필터에서도 별도 선택지로 노출됩니다.
  */
-export type TxPlatform = "coupang" | "naver" | "musinsa" | "unspecified";
+export type TxPlatform = "coupang" | "naver" | "musinsa" | "auction" | "temu" | "unspecified";
 /**
  * 거래 상태. 유형별로 쓰이는 맥락이 다릅니다:
  * - purchase/sub/etc: 지출(expense) 쪽에서 선택 가능.

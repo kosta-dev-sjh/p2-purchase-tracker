@@ -11,8 +11,9 @@
  * 위치: src\pages\OcrUpload\index.tsx
  */
 import React, { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import styled from "styled-components";
+import { createWorker } from "tesseract.js";
 import { AppShell } from "../../components/layout/AppShell";
 import { Button } from "../../components/primitives/Button";
 import { PLATFORM_LABELS } from "../../constants/labels";
@@ -23,6 +24,16 @@ import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
 import { ocrUploadMockData, type UploadedImage } from "./data";
+import { ocrStore } from "../../stores/ocrStore";
+import {
+  parseCoupangOrderText,
+  parseNaverOrderText,
+  parseAuctionOrderText,
+  parseTemuOrderText,
+  type PurchaseOCRResult,
+} from "../../utils/ocrParsers";
+import { detectStatusFromOcrText } from "../../utils/ocrParse";
+import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
 
 const Wrap = styled.div`
   display: grid;
@@ -99,35 +110,141 @@ const MAX_IMAGES = 5;
 
 export const OcrUploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isAppendMode = location.state?.append === true;
+
   // 여기서의 platform은 "다음에 올릴 이미지에 찍힐 태그"입니다.
   // 업로드를 실행할 때마다 새 이미지의 UploadedImage.platform에 스냅샷으로 복사됩니다.
   const [platform, setPlatform] = useState<Platform>("coupang");
-  const [images, setImages] = useState<UploadedImage[]>(ocrUploadMockData.images);
+  
+  // append 모드일 때는 빈 상태로 시작하여 이전에 올린 이미지와 혼동되지 않게 합니다.
+  const [images, setImages] = useState<UploadedImage[]>(isAppendMode ? [] : ocrUploadMockData.images);
+
+  React.useEffect(() => {
+    // 새로운 세션 시작일 경우에만 스토어를 초기화합니다.
+    if (!isAppendMode) {
+      ocrStore.clear();
+    }
+  }, [isAppendMode]);
 
   const handleRemove = (id: string) => {
     setImages((current) => current.filter((image) => image.id !== id));
   };
 
-  const handleAddMock = () => {
+  const handleFileSelect = (files: File[]) => {
     setImages((current) => {
-      // v1 데모에서는 실제 파일 대신 목업 썸네일 행을 추가해 흐름만 검증합니다.
-      if (current.length >= MAX_IMAGES) {
-        return current;
-      }
-      const nextIndex = current.length + 1;
-      return [
-        ...current,
-        {
-          id: `mock-${Date.now()}`,
-          thumbUrl: "",
-          fileName: `${platform}-capture-${nextIndex}.png`,
-          sizeLabel: `${(0.8 + nextIndex * 0.2).toFixed(1)} MB`,
-          status: "ready",
-          // 현재 선택된 플랫폼을 이미지에 "찍어" 둡니다. 이 값이 OcrEdit까지 그대로 이어집니다.
+      // 남은 개수만큼만 파일 받기
+      const remainingSlots = MAX_IMAGES - current.length;
+      if (remainingSlots <= 0) return current;
+
+      const filesToAdd = files.slice(0, remainingSlots);
+      
+      const newImages = filesToAdd.map((file, index) => {
+        return {
+          id: `file-${Date.now()}-${index}`,
+          thumbUrl: URL.createObjectURL(file),
+          fileName: file.name,
+          sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+          status: "ready" as const,
+          // 현재 선택된 플랫폼을 이미지에 "찍어" 둡니다.
           platform,
-        },
-      ];
+          file, // OCR 파싱에 쓸 원본 파일
+        };
+      });
+
+      return [...current, ...newImages];
     });
+  };
+
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const handleAnalyze = async () => {
+    if (images.length === 0) return;
+    setIsAnalyzing(true);
+    
+    try {
+      const worker = await createWorker('kor+eng');
+      const processedImages: OcrImageItem[] = [];
+
+      for (let i = 0; i < images.length; i++) {
+        const image = images[i];
+        if (!image.file) {
+          // v1 목업 이미지 대응 폴백
+          processedImages.push({
+            id: image.id,
+            fileName: image.fileName,
+            thumbUrl: image.thumbUrl,
+            status: "analyzed" as const,
+            platform: image.platform,
+            orders: []
+          });
+          continue;
+        }
+
+        const result = await worker.recognize(image.file);
+        const rawText = result.data.text;
+
+        let parsedData: PurchaseOCRResult[] = [];
+        if (image.platform === 'coupang') {
+          parsedData = parseCoupangOrderText(rawText);
+        } else if (image.platform === 'naver') {
+          parsedData = parseNaverOrderText(rawText);
+        } else if (image.platform === 'auction') {
+          parsedData = parseAuctionOrderText(rawText);
+        } else if (image.platform === 'temu') {
+          parsedData = parseTemuOrderText(rawText);
+        }
+
+        const orders: OcrOrder[] = parsedData.map((res, idx) => {
+          // 테무는 안내 문구가 많아 rawText 사용 시 오인식이 심하므로 statusText만 사용
+          // 다른 플랫폼(네이버/쿠팡/옥션)은 기존처럼 rawText를 fallback으로 사용
+          const statusTag = image.platform === 'temu'
+            ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
+            : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
+          return {
+            id: `${image.id}-order-${idx}`,
+            orderDate: res.date ?? "",
+            statusTag,
+            statusLabel: "자동 추출됨",
+            totalAmount: res.price ?? 0,
+            rawText: res.rawText,
+            products: res.itemName ? [{
+              id: `${image.id}-product-${idx}`,
+              name: res.itemName,
+              price: res.price ?? 0,
+              quantity: 1,
+            }] : []
+          };
+        });
+
+        processedImages.push({
+          id: image.id,
+          fileName: image.fileName,
+          thumbUrl: image.thumbUrl,
+          status: "analyzed" as const,
+          platform: image.platform,
+          rawText: rawText,
+          orders: orders.length > 0 ? orders : [{
+             id: `${image.id}-empty`,
+             orderDate: "",
+             statusTag: "purchase",
+             totalAmount: 0,
+             rawText,
+             products: []
+          }]
+        });
+      }
+
+      await worker.terminate();
+      
+      ocrStore.setImages(isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages);
+      navigate("/ocr-edit");
+    } catch (error) {
+      console.error('OCR 파싱 실패:', error);
+      alert('이미지 분석 중 오류가 발생했습니다.');
+    } finally {
+      setIsAnalyzing(false);
+    }
   };
 
   /**
@@ -160,7 +277,7 @@ export const OcrUploadPage: React.FC = () => {
               maxCount={MAX_IMAGES}
               activePlatformLabel={PLATFORM_LABELS[platform]}
               disabled={atCapacity}
-              onPick={handleAddMock}
+              onPick={handleFileSelect}
             />
           </div>
         </UploadStack>
@@ -186,10 +303,10 @@ export const OcrUploadPage: React.FC = () => {
             <Button
               variant="primary"
               size="lg"
-              disabled={images.length === 0}
-              onClick={() => navigate("/ocr-edit")}
+              disabled={images.length === 0 || isAnalyzing}
+              onClick={handleAnalyze}
             >
-              분석 시작하기
+              {isAnalyzing ? "분석 중..." : "분석 시작하기"}
             </Button>
           </Actions>
         </Footer>

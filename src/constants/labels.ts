@@ -1,4 +1,4 @@
-﻿/**
+/**
  * 역할: 여러 화면이 함께 참조하는 상수 데이터를 정의합니다.
  * 위치: src\constants\labels.ts
  */
@@ -6,6 +6,8 @@ export const PLATFORM_LABELS = {
   coupang: "쿠팡",
   naver: "네이버쇼핑",
   musinsa: "무신사",
+  auction: "옥션",
+  temu: "테무",
   // 플랫폼을 지정하지 않았거나 오프라인 결제처럼 플랫폼이 없는 거래의 라벨입니다.
   // 입력 폼의 "미지정" 선택지와 동일한 텍스트를 써서 사용자 멘탈 모델을 일치시킵니다.
   unspecified: "미지정",
@@ -21,6 +23,8 @@ export const PLATFORM_OPTIONS = [
   { key: "coupang", label: "쿠팡" },
   { key: "naver", label: "네이버쇼핑" },
   { key: "musinsa", label: "무신사" },
+  { key: "auction", label: "옥션" },
+  { key: "temu", label: "테무" },
 ] as const;
 
 export const STATUS_LABELS = {

@@ -22,10 +22,10 @@ import type { Status } from "../pages/OcrEdit/data";
  *   일반 구매보다는 앞에 두어 우선 인식합니다.
  */
 const STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
-  { status: "refund", keywords: ["환불", "환불완료", "환불처리", "반품", "반품완료"] },
-  { status: "cancel", keywords: ["취소", "주문취소", "결제취소"] },
+  { status: "refund", keywords: ["환불완료", "환불처리", "환불", "반품완료", "반품"] },
+  { status: "cancel", keywords: ["취소완료", "취소 완료", "주문취소", "결제취소"] },
   { status: "sub", keywords: ["정기결제", "정기 결제", "구독", "자동결제"] },
-  { status: "purchase", keywords: ["구매", "주문완료", "결제완료", "배송완료", "배송중"] },
+  { status: "purchase", keywords: ["결제완료", "주문완료", "배송완료", "배송 완료", "배송중", "구매완료", "구매"] },
 ];
 
 /**

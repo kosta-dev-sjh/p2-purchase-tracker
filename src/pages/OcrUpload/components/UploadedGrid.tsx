@@ -55,6 +55,8 @@ const PLATFORM_BADGE_STYLES: Record<Platform, { bg: string; fg: string }> = {
   coupang: { bg: "#FEE2E2", fg: "#B91C1C" },
   naver: { bg: "#DCFCE7", fg: "#166534" },
   musinsa: { bg: "#1F2937", fg: "#F9FAFB" },
+  auction: { bg: "#FEF08A", fg: "#166534" }, // 옥션 느낌의 노란색
+  temu: { bg: "#FCE7F3", fg: "#15803D" }, // 테무 느낌의 색
 };
 
 const PlatformBadge = styled.span<{ $platform: Platform }>`
