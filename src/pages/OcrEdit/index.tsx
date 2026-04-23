@@ -699,6 +699,11 @@ export const OcrEditPage: React.FC = () => {
       <AddImagesModal
         isOpen={isAddModalOpen}
         onClose={() => setIsAddModalOpen(false)}
+        // 편집 화면에 이미 들어와 있는 이미지 개수를 함께 넘겨, 모달 내부의 업로드 상한이
+        // "이번 배치"가 아니라 "OCR 결과 전체 기준"으로 잡히도록 합니다. 기존에는 모달이
+        // 로컬 버퍼 5장까지 받아 버려, 이미 5장이 있는 상태에서도 5장을 더 올릴 수 있어
+        // MAX_IMAGES 상한이 실질적으로 깨지는 문제가 있었습니다.
+        existingCount={images.length}
         onComplete={(newImages) => {
           // 분석 결과를 기존 images 뒤에 append. 방금 들어온 첫 이미지로 selection 을 옮겨
           // "내가 방금 추가한 이미지가 어느 건지" 바로 보이게 합니다.

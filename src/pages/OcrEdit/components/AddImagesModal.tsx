@@ -38,9 +38,13 @@ import type { OcrImageItem } from "../data";
 import { analyzeUploadedImages } from "../../../utils/ocrAnalyzeImages";
 
 /**
- * 한 배치(=한 번의 분석)에서 올릴 수 있는 이미지 수.
+ * 한 OCR 세션(= OcrUpload 초기 배치 + OcrEdit 에서 추가한 것까지) 누적 이미지 상한.
  * OcrUpload 와 동일한 5 를 사용해, 사용자가 어느 경로로 들어가도 같은 상한을 가진다는
- * 멘탈 모델을 유지합니다. 더 추가하려면 모달을 닫고 다시 여는 방식으로 분할합니다.
+ * 멘탈 모델을 유지합니다.
+ *
+ * 2026-04-23: 이전에는 이 모달이 "한 번에 5장"을 로컬 기준으로 잡고 있어, 이미 OcrEdit 에
+ * 5장이 들어와 있는 상태에서도 5장을 더 올릴 수 있는 버그가 있었습니다. 이제 existingCount
+ * 를 받아 MAX_IMAGES - existingCount 만큼만 이번 모달에서 추가할 수 있도록 상한을 공유합니다.
  */
 const MAX_IMAGES = 5;
 
@@ -93,6 +97,11 @@ const Actions = styled.div`
 interface AddImagesModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /**
+   * 현재 OcrEdit 에 이미 들어와 있는 이미지 개수.
+   * 이 값만큼 MAX_IMAGES 상한에서 차감한 뒤 "이번 모달에서 몇 장까지 더 받을지"를 계산합니다.
+   */
+  existingCount: number;
   /** 분석이 완료된 새 OcrImageItem 배열. 상위에서 기존 images 뒤에 append 합니다. */
   onComplete: (newImages: OcrImageItem[]) => void;
 }
@@ -100,8 +109,14 @@ interface AddImagesModalProps {
 export const AddImagesModal: React.FC<AddImagesModalProps> = ({
   isOpen,
   onClose,
+  existingCount,
   onComplete,
 }) => {
+  /**
+   * 이 모달에서 추가할 수 있는 최대 장수.
+   * 기존 이미지 수가 이미 상한을 넘어 있으면 0 으로 clamp 해 업로드존을 비활성화 합니다.
+   */
+  const remainingCapacity = Math.max(0, MAX_IMAGES - existingCount);
   const [platform, setPlatform] = useState<Platform>("coupang");
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -132,7 +147,9 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
 
   const handleFileSelect = (files: File[]) => {
     setImages((current) => {
-      const remainingSlots = MAX_IMAGES - current.length;
+      // MAX_IMAGES 가 아니라 remainingCapacity 기준 — 이번 모달 버퍼가 아니라
+      // 세션 전체 상한에서 남은 슬롯만큼만 받습니다.
+      const remainingSlots = remainingCapacity - current.length;
       if (remainingSlots <= 0) return current;
 
       const filesToAdd = files.slice(0, remainingSlots);
@@ -178,7 +195,7 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
     return counts;
   }, [images]);
 
-  const atCapacity = images.length >= MAX_IMAGES;
+  const atCapacity = images.length >= remainingCapacity;
 
   return (
     <>
@@ -192,9 +209,9 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
           <UploadZone
             acceptedTypes="PNG, JPG, WEBP"
             maxSize="10MB"
-            maxCount={MAX_IMAGES}
+            maxCount={remainingCapacity}
             activePlatformLabel={PLATFORM_LABELS[platform]}
-            disabled={atCapacity}
+            disabled={atCapacity || remainingCapacity === 0}
             currentCount={images.length}
             onPick={handleFileSelect}
           />
@@ -203,13 +220,22 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
           )}
           <Footer>
             <span className="count">
-              추가할 이미지 <strong>{images.length}/{MAX_IMAGES}</strong>
-              {images.length > 0 && (
+              {remainingCapacity === 0 ? (
                 <>
-                  {" · "}
-                  {(Object.keys(platformCounts) as Platform[])
-                    .map((p) => `${PLATFORM_LABELS[p]} ${platformCounts[p]}장`)
-                    .join(", ")}
+                  이미 <strong>{existingCount}/{MAX_IMAGES}</strong>장이라 더 추가할 수 없어요. 삭제 후 다시 추가해 주세요.
+                </>
+              ) : (
+                <>
+                  추가할 이미지 <strong>{images.length}/{remainingCapacity}</strong>
+                  <span style={{ opacity: 0.7 }}> · 세션 총 {existingCount + images.length}/{MAX_IMAGES}</span>
+                  {images.length > 0 && (
+                    <>
+                      {" · "}
+                      {(Object.keys(platformCounts) as Platform[])
+                        .map((p) => `${PLATFORM_LABELS[p]} ${platformCounts[p]}장`)
+                        .join(", ")}
+                    </>
+                  )}
                 </>
               )}
             </span>
