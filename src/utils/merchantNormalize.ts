@@ -8,7 +8,7 @@ import type { TxPlatform } from "../pages/Transactions/components/TransactionTab
 const RULES: Array<{ pattern: RegExp; platform: TxPlatform }> = [
   { pattern: /쿠팡|coupang/i, platform: "coupang" },
   { pattern: /네이버|naver|npay|n[- ]?pay|스마트스토어/i, platform: "naver" },
-  { pattern: /무신사|musinsa/i, platform: "musinsa" },
+  { pattern: /테무|temu/i, platform: "temu" },
 ];
 
 export interface MerchantNormalizeResult {

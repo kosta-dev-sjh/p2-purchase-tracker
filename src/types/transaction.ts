@@ -12,7 +12,7 @@ export type StatusTag =
   | "recurring"
   | "sub";
 
-export type PlatformId = "coupang" | "naver" | "musinsa" | "other";
+export type PlatformId = "coupang" | "naver" | "temu" | "other";
 
 export type InputSource = "ocr" | "manual";
 

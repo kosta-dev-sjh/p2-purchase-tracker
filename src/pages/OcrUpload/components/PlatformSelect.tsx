@@ -6,7 +6,7 @@
  *       앞 2장에는 "쿠팡", 뒤 3장에는 "네이버" 태그가 남아야 하므로, 이 값은
  *       전역이 아니라 "다음 업로드에 적용될 라벨"로 읽히도록 문구를 짰습니다.
  *
- *       OCR은 캡쳐의 레이아웃(쿠팡/네이버/무신사)을 알아야 파싱 정확도가 올라가서,
+ *       OCR은 캡쳐의 레이아웃(쿠팡/네이버/테무)을 알아야 파싱 정확도가 올라가서,
  *       수동 입력의 "미지정"(플랫폼 없는 오프라인 결제)은 여기 선택지에서 제외합니다.
  * 위치: src\pages\OcrUpload\components\PlatformSelect.tsx
  */
@@ -21,7 +21,7 @@ import { tokens } from "../../../styles/tokens";
  * 수동 입력의 TxPlatform과는 의도적으로 분리합니다. 수동 입력은 오프라인 결제용
  * "unspecified"까지 허용하지만, OCR은 반드시 쇼핑몰 캡쳐가 전제라서 이 세 값 중 하나를 골라야 합니다.
  */
-export type Platform = "coupang" | "naver" | "musinsa" | "temu";
+export type Platform = "coupang" | "naver" | "temu";
 
 const OCR_PLATFORMS: readonly Platform[] = ["coupang", "naver", "temu"];
 

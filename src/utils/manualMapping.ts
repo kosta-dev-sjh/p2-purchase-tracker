@@ -29,8 +29,8 @@ export function mapPlatform(input: string): TxPlatform {
   if (normalized.includes("네이버") || normalized.toLowerCase().includes("naver")) {
     return "naver";
   }
-  if (normalized.includes("무신사") || normalized.toLowerCase().includes("musinsa")) {
-    return "musinsa";
+  if (normalized.includes("테무") || normalized.toLowerCase().includes("temu")) {
+    return "temu";
   }
   return "unspecified";
 }

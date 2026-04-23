@@ -2,7 +2,7 @@
  * 역할: 프로젝트에서 사용하는 데이터 형태를 타입으로 정의합니다.
  * 위치: src\types\platform.ts
  */
-export const PLATFORMS = ["쿠팡", "네이버쇼핑", "무신사", "테무"] as const;
+export const PLATFORMS = ["쿠팡", "네이버쇼핑", "테무"] as const;
 
 export type Platform = (typeof PLATFORMS)[number];
 

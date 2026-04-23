@@ -32,8 +32,7 @@ import type { Platform } from "./PlatformSelect";
 
 /**
  * 모달에서 선택할 수 있는 플랫폼 집합.
- * PlatformSelect와 동일한 OCR 파서 지원 목록만 노출합니다.
- * "무신사"는 타입에는 존재하지만 현재 파서가 없어 드롭다운에서 제외합니다.
+ * PlatformSelect와 동일한 OCR 파서 지원 목록만 노출합니다(쿠팡/네이버/테무).
  */
 const SELECTABLE_PLATFORMS: readonly Platform[] = [
   "coupang",

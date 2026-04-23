@@ -42,8 +42,9 @@ export const tokens = {
     tag: {
       coupang: { bg: "#FFF4E5", fg: "#9A3412" },
       naver: { bg: "#ECFDF5", fg: "#065F46" },
-      musinsa: { bg: "#EEF0FF", fg: "#3730A3" },
-      temu: { bg: "#FCE7F3", fg: "#15803D" },
+      // 테무의 브랜드 톤은 선명한 오렌지입니다(쿠팡 빨강과 구분되도록 옐로우-오렌지 계열).
+      // 배지/태그에서 항상 같은 톤을 쓰도록 tokens에서 단일 소스로 관리합니다.
+      temu: { bg: "#FFEDD5", fg: "#C2410C" },
       // "미지정" 플랫폼. 다른 브랜드 톤과 확실히 구분되는 중립 회색을 써서
       // "선택되지 않음"이라는 상태성을 시각적으로도 약하게 표현합니다.
       unspecified: { bg: "#F5F5F6", fg: "#6B7280" },

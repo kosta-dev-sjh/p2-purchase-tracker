@@ -60,7 +60,6 @@ function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count
   const seed: Record<TxPlatform, { value: number; count: number }> = {
     coupang: { value: 0, count: 0 },
     naver: { value: 0, count: 0 },
-    musinsa: { value: 0, count: 0 },
     temu: { value: 0, count: 0 },
     unspecified: { value: 0, count: 0 },
   };
@@ -331,7 +330,8 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
   const donutSegments: Array<{ key: TxPlatform; label: string; color: string }> = [
     { key: "coupang" as const, label: PLATFORM_LABELS.coupang, color: tokens.color.warn },
     { key: "naver" as const, label: PLATFORM_LABELS.naver, color: tokens.color.cat2 },
-    { key: "musinsa" as const, label: PLATFORM_LABELS.musinsa, color: tokens.color.cat1 },
+    // 테무 조각은 tokens.color.tag.temu.fg(오렌지 계열)로 칠해 브랜드 톤과 일치시킵니다.
+    { key: "temu" as const, label: PLATFORM_LABELS.temu, color: tokens.color.tag.temu.fg },
   ];
   if (platformTotals.unspecified.value > 0) {
     donutSegments.push({
