@@ -96,6 +96,36 @@ function toNfc(input: string): string {
 }
 
 /**
+ * Tesseract 가 한글 글자 사이에 공백을 삽입해 "배 송 완 료" 처럼 **글자 단위로 쪼갠**
+ * 아티팩트를 원상 복구합니다.
+ *
+ * 이 아티팩트는 쿠팡·네이버 등 한글 UI 캡쳐의 Tesseract 결과에서 가장 흔하게 관찰되며,
+ * 복구하지 않으면 파서의 다음 축들이 연쇄로 깨집니다:
+ *   - 상태 라벨(`배송완료`/`취소완료`/`반품완료`) 매칭 실패 → 취소·환불 분기 무너짐
+ *   - 분리배송 마커(`일부 상품이 분리되어 배송됩니다`) 매칭 실패 → 중복 카드 3→1 병합 실패
+ *   - 상품명 prefix 가비지 컷 실패 → 이름이 "배송완료 4/17 도착" 꼬리표까지 끌고 들어감
+ *
+ * 규칙: **한글 완성형 글자 `사이`의 공백/탭만** 제거합니다. 한글-숫자, 한글-영문, 한글-기호
+ * 경계는 건드리지 않아 "6,900 원", "Apple 스토어", "(월)" 같은 토큰 경계는 보존됩니다.
+ *
+ * ⚠ 줄바꿈은 **절대** 삼키지 않습니다. 파서가 라인 단위 상태머신으로 동작해 상태 라인 / 이름
+ * 라인 / 가격 라인을 **줄 단위로** 구분하기 때문입니다. 초기 구현에서 `\s+` (줄바꿈 포함) 로
+ * 매칭해 `"…로켓 내일\n벨로티손톱이…"` 가 `"…로켓내일벨로티손톱이…"` 한 줄로 뭉쳐 상태
+ * 라인이 상품명까지 먹어 버리고 모든 상품이 `itemName=null` 로 찍히는 회귀가 harness 에서
+ * 발견됐습니다. 그래서 공백 클래스를 `[\t ]+` 로 좁혔습니다 (줄바꿈/`\u2028`/`\u2029` 제외).
+ *
+ * 부작용: "배송 완료" 처럼 **원래 띄어쓰기가 있던 한글-한글 구간**도 함께 합쳐집니다.
+ * 파서 regex 들이 대부분 `\s*` 유연 매칭이고, 기존 하네스 baseline(desktop-v1/mobile/
+ * desktop-v2)으로 회귀 없음을 매 수정마다 확인합니다. 시각적 이질감도 낮은 편입니다
+ * — Tesseract 결과에는 이미 "배송완료" 형태가 자주 섞여 있습니다.
+ *
+ * 멱등: 두 번 태워도 같은 결과.
+ */
+function rejoinSplitKoreanWords(input: string): string {
+  return input.replace(/(?<=[가-힣])[\t ]+(?=[가-힣])/g, "");
+}
+
+/**
  * 라인 내부의 연속 공백(스페이스/탭) 축약.
  * 쿠팡/네이버 캡쳐는 UI 상 인위적인 간격을 많이 쓰고, Tesseract가 그 간격을 2~6개의
  * 스페이스로 뱉을 때가 있어 파서 regex 들이 `\s+`로 대비해야 하는 부담이 커집니다.
@@ -196,10 +226,13 @@ function removeOrphanJamoI(input: string): string {
  *   1. NFC → 이후 모든 regex 가 완성형 글자로 매칭되도록 **가장 먼저**.
  *   2. 보이지 않는 문자 → regex에서 짜증나는 zero-width 류 제거.
  *   3. 전각→반각 / 가운데점 / 하이픈 / 따옴표 → 글자 모양 통일.
- *   4. 자모 복구 → "ㅣ" 외톨이 제거 등 낱글자 수준 교정. 원/개 복구 전에 돌려야
+ *   4. 한글-한글 공백 rejoin → "배 송 완 료" → "배송완료". 상태 라벨·분리배송 마커·
+ *      상품명 prefix 가 연쇄로 깨지는 걸 막기 위해 낱글자/숫자 복구 전에 먼저 돌립니다.
+ *      한글-숫자/영문/기호 경계는 건드리지 않아 "6,900 원" 같은 토큰 경계는 보존.
+ *   5. 자모 복구 → "ㅣ" 외톨이 제거 등 낱글자 수준 교정. 원/개 복구 전에 돌려야
  *      "16,900 윤" 같은 패턴이 공백 축약에 먼저 먹히지 않습니다.
- *   5. 숫자 / 원 / 개 복구 → 형식 정규화.
- *   6. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
+ *   6. 숫자 / 원 / 개 복구 → 형식 정규화.
+ *   7. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
  */
 export function applyOcrCorrections(rawText: string): string {
   if (!rawText) return rawText;
@@ -210,6 +243,7 @@ export function applyOcrCorrections(rawText: string): string {
   text = normalizeMiddleDot(text);
   text = normalizeHyphens(text);
   text = normalizeQuotes(text);
+  text = rejoinSplitKoreanWords(text);
   text = removeOrphanJamoI(text);
   text = mergeThousandSeparator(text);
   text = recoverWonUnit(text);

@@ -94,6 +94,14 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   //   - 세 번째 알테르나티브(lookahead)의 배지 앵커 토큰은 의도적으로 짧은 집합입니다:
   //     "짧은 영문 뒤에 로켓/내일/새벽 같은 핵심 배지가 오는" 특수 구조를 소비하는 용도라
   //     COUPANG_BARE_BADGES 전체가 아니라 배지 시작 앵커가 될 만한 9개만 필요합니다.
+  //
+  // 마지막 알테르나티브(배지 2+ 연쇄)는 applyOcrCorrections 의 rejoinSplitKoreanWords 가
+  // 한글 글자 사이 공백을 제거한 뒤 "판매자 로켓 내일" 같은 원래 공백 분리 배지가 "판매자
+  // 로켓내일" 로 뭉치면서 bare badge lookahead `(?=\s|$)` 가 못 잡게 된 케이스를 복구합니다.
+  //   - {2,4} 로 2 개 이상 연쇄만 매치 → "배송" 하나만 있는 정상 텍스트("배송용 박스") 는 안 건드립니다.
+  //   - 단어 경계/컨텍스트가 없어도 배지 연쇄 자체가 쿠팡 선두 가비지의 충분한 신호.
+  //   - 예: "로켓내일마이싹" → "마이싹", "판매자로켓새벽코지엔비" → "코지엔비",
+  //         "판매자로켓내일BFL" → "BFL".
   const COUPANG_GARBAGE_HEAD_PATTERNS = [
     /[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-\|ㅣ=_*©!?~@#&]+\s*/,
     /[a-zA-Zㄱ-ㅎㅏ-ㅣ0-9]{1,4}\s*[>»‹<]+\s*/,
@@ -102,6 +110,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     /[ㄱ-ㅎㅏ-ㅣ]\s+/,
     /[가-힣]{1,2}\s*[|│ㅣ]\s*/,
     /\+\s*\d{1,2}\s*%\s*\d{0,3}\s*[.,]?\s*/,
+    /(?:로켓|판매자|새벽|내일|대일|오늘|당일|도착|배송|와우|광고|쿠폰|추천|적립|할인){2,4}\s*/,
   ];
 
   // stripLeadingGarbagePrefix 의 residual 계산용 원자 — prefix 안에서 **낱개 단어** 로 섞여
