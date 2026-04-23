@@ -23,6 +23,27 @@ npm install
 npm run dev
 ```
 
+## Environment files
+
+- Commit only `.env.example`
+- Put real local values in `.env.local`
+- Never commit API keys or service-account JSON files
+- Frontend code must not use `VITE_` secrets for direct third-party AI calls
+
+## Branch workflow
+
+- `main`: protected release branch
+- `dev`: protected integration branch
+- individual work: create a feature branch from `dev`, push that branch, and merge through PR
+
+Example:
+
+```bash
+git checkout dev
+git pull origin dev
+git checkout -b feature/your-task
+```
+
 ## When to run `npm install` again
 
 You usually need to run `npm install` again when:

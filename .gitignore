@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+# Local env files must stay out of git. Keep only the template file tracked.
 .env
 .env.*
 !.env.example
