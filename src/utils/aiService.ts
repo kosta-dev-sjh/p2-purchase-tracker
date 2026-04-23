@@ -176,6 +176,33 @@ ${compressed}`;
     const last = parsePipeLine(buffer);
     if (last) rows.push(last);
 
+    // 파이프 파싱이 한 건도 못 건졌다면, 모델이 포맷을 무시하고 JSON을 뱉었을 가능성을 대비해
+    // 예비로 JSON 배열 파싱을 한 번 더 시도합니다(코드펜스도 벗겨서).
+    if (rows.length === 0 && buffer.trim()) {
+      try {
+        const cleaned = buffer
+          .replace(/^```json/i, "")
+          .replace(/^```/i, "")
+          .replace(/```$/i, "")
+          .trim();
+        const parsed = JSON.parse(cleaned);
+        if (Array.isArray(parsed)) {
+          for (const obj of parsed) {
+            if (obj && typeof obj === "object") {
+              rows.push({
+                이용일: String((obj as Record<string, unknown>).이용일 ?? "").trim(),
+                가맹점명: String((obj as Record<string, unknown>).가맹점명 ?? "").trim(),
+                이용금액: String((obj as Record<string, unknown>).이용금액 ?? "").trim(),
+                카테고리: String((obj as Record<string, unknown>).카테고리 ?? "").trim(),
+              });
+            }
+          }
+        }
+      } catch {
+        // JSON도 아니면 그냥 빈 배열로 둠.
+      }
+    }
+
     return rows;
   } catch (error) {
     console.error("CSV Fallback Failed:", error);

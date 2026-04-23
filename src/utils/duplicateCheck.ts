@@ -43,11 +43,16 @@ export interface DuplicateCheckResult {
 // ─── 지문 생성 ────────────────────────────────────────────────
 
 /**
- * 트랜잭션 1단계 키. 날짜·플랫폼·|금액| 세 값으로 "같은 결제 건"을 식별합니다.
+ * 트랜잭션 1단계 키. 날짜·플랫폼·|금액|·가맹점명(title) 네 값으로 "같은 결제 건"을 식별합니다.
  * 부호(income/expense)는 포함하지 않아 환불·취소 재업로드도 잡을 수 있습니다.
+ *
+ * title을 포함하는 이유:
+ *   - 대부분의 가맹점은 normalizeMerchant에서 platform="unspecified"로 모이기 때문에,
+ *     platform+amount+date만으로는 전혀 다른 가게의 같은 금액 결제를 모두 중복으로 오탐합니다.
+ *   - title(cleaned merchant)을 지문에 넣으면 가게가 다르면 즉시 구분됩니다.
  */
 export function generateTxFingerprint(row: TxRow): string {
-  return `${row.date}|${row.platform}|${Math.abs(row.amount)}`;
+  return `${row.date}|${row.platform}|${Math.abs(row.amount)}|${row.title.trim()}`;
 }
 
 /**
@@ -212,17 +217,25 @@ export interface AutoResolveResult {
  * checkDuplicates 결과를 받아 사용자 개입 없이 자동으로 처리 방식을 결정합니다.
  *
  * - exactDup  → skipped (사유: "이미 동일한 내역이 등록되어 있어요")
+ *   단, `forceIncludeIds`에 포함된 id는 사용자가 "중복 아님"으로 오버라이드한 것으로 보고 toSave로 이동.
  * - itemDiff, changedItems 없음 → toMerge (신규 아이템만 기존 거래에 추가)
  * - itemDiff, changedItems 있음 → toSave (가격이 달라 새 거래로 저장)
  * - fresh     → toSave
  */
-export function autoResolveDuplicates(dupResult: DuplicateCheckResult): AutoResolveResult {
+export function autoResolveDuplicates(
+  dupResult: DuplicateCheckResult,
+  forceIncludeIds: ReadonlySet<string> = new Set(),
+): AutoResolveResult {
   const toSave: TxRow[] = [...dupResult.fresh];
   const toMerge: MergeAction[] = [];
   const skipped: SkippedItem[] = [];
 
-  // 완전 중복 → 건너뜀
+  // 완전 중복 → 사용자가 "그래도 저장" 체크한 건은 toSave로, 나머지는 skipped.
   for (const row of dupResult.exactDup) {
+    if (forceIncludeIds.has(row.id)) {
+      toSave.push(row);
+      continue;
+    }
     skipped.push({
       title: row.title,
       date: row.date,
