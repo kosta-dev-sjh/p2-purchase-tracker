@@ -90,23 +90,59 @@ const RemoveButton = styled.button`
 `;
 
 /**
- * "0원" 배지. 이벤트/사은품 등으로 합법적으로 0원인 경우도 있지만, OCR 오인식으로
- * 가격 토큰을 놓쳐 0으로 떨어지는 경우가 더 흔합니다. 한 번 눈에 띄게 해 주면
- * 사용자가 "진짜 0원이 맞나" 확인한 뒤 넘길 수 있습니다. 입력을 막지는 않는
- * soft-badge 라 warn 톤(노란색 계열)을 사용해 "오류는 아니지만 확인이 필요함"을
- * 시각적으로 표현합니다.
+ * "0원" 배지. 두 가지 상태를 가집니다.
+ *   - 미확인(warn 톤, 노랑): OCR 이 가격을 놓쳤을 가능성을 알림. "사은품/이벤트" 라면
+ *     이대로 저장해도 괜찮다는 걸 사용자에게 알려 주고, 한 번 확인 버튼을 눌러
+ *     의도된 0원임을 표시하게 합니다.
+ *   - 확인됨(중립 ink 톤): 사용자가 "이대로 저장" 을 찍은 뒤. 가계부가 기록용으로도
+ *     쓰이는 걸 감안해, 확인 후에는 경고 톤을 빼고 "0원으로 기록" 이라는 사실만
+ *     남깁니다. 되돌리기도 제공해 실수로 눌렀을 때 원상복귀 가능.
+ *
+ * 저장을 막지 않는 soft-badge 라, 확인 여부는 UI 표시용으로만 쓰이고 실제 저장 흐름
+ * (OcrEdit → transactionsStore) 은 처음부터 0원을 그대로 넘깁니다.
  */
-const ZeroPriceHint = styled.span`
-  display: inline-block;
+const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   margin-top: 4px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: ${tokens.color.warnBg};
-  color: ${tokens.color.warn};
+  background: ${({ $acknowledged }) =>
+    $acknowledged ? tokens.color.tint : tokens.color.warnBg};
+  color: ${({ $acknowledged }) =>
+    $acknowledged ? tokens.color.ink4 : tokens.color.warn};
   font-size: 10px;
   font-weight: 700;
   line-height: 1.4;
   white-space: nowrap;
+`;
+
+/**
+ * 배지 안에 들어가는 인라인 액션 버튼("이대로 저장" / "되돌리기").
+ * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
+ */
+const ZeroPriceAction = styled.button`
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+
+  &:hover {
+    opacity: 0.75;
+  }
+
+  &:focus-visible {
+    outline: 1px solid currentColor;
+    outline-offset: 1px;
+  }
 `;
 
 /**
@@ -186,6 +222,19 @@ export const ProductTable: React.FC<{
 }> = ({ products, onChange, fieldIdPrefix = "ocr-product" }) => {
   const [rows, setRows] = useState<ProductRow[]>(products.map(toRow));
 
+  /**
+   * "이 0원은 내가 의도한 게 맞다" 고 사용자가 확인한 row id 집합.
+   * 저장 페이로드에는 전혀 영향이 없는 순수 UI 표시 상태로, row 자체에 저장하면
+   * OcrProduct → props 사이클에서 사라져 버리기 때문에 여기서 별도로 관리합니다.
+   *
+   * 가격이 다시 0 이 아니게 바뀌면 "확인됨" 표시가 필요 없어지고, 또 다시 0 으로
+   * 돌아오는 일은 실수일 확률이 높아 재확인을 받는 쪽이 안전합니다. 그래서
+   * 가격 변경 시 해당 id 를 집합에서 빼 줍니다(priceRaw 가 변할 때의 패치 경로 참고).
+   */
+  const [acknowledgedZeroIds, setAcknowledgedZeroIds] = useState<Set<string>>(
+    new Set(),
+  );
+
   useEffect(() => {
     setRows(products.map(toRow));
   }, [products]);
@@ -203,10 +252,46 @@ export const ProductTable: React.FC<{
     setRowsAndNotify((current) =>
       current.map((row) => (row.id === id ? { ...row, ...partial } : row))
     );
+    // 가격을 건드렸다면 "확인됨" 표시를 해제합니다. 0 → 다른 값 → 0 흐름에서 이전 확인
+    // 상태를 그대로 가져가면 "왜 경고 없이 0원이 조용히 넘어갔지?" 가 될 수 있어요.
+    if (Object.prototype.hasOwnProperty.call(partial, "priceRaw")) {
+      setAcknowledgedZeroIds((current) => {
+        if (!current.has(id)) return current;
+        const next = new Set(current);
+        next.delete(id);
+        return next;
+      });
+    }
+  };
+
+  /** 사용자가 "이대로 저장" 을 눌렀을 때 호출. row 가 확인됨 집합에 들어갑니다. */
+  const acknowledgeZero = (id: string) => {
+    setAcknowledgedZeroIds((current) => {
+      const next = new Set(current);
+      next.add(id);
+      return next;
+    });
+  };
+
+  /** 확인을 되돌릴 때 호출. 경고 톤으로 다시 돌아갑니다. */
+  const revokeZero = (id: string) => {
+    setAcknowledgedZeroIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   };
 
   const handleRemove = (id: string) => {
     setRowsAndNotify((current) => current.filter((row) => row.id !== id));
+    // 삭제된 row 의 확인 상태도 함께 정리해, 같은 id 가 재사용될 때 잔상이 남지 않게 합니다.
+    setAcknowledgedZeroIds((current) => {
+      if (!current.has(id)) return current;
+      const next = new Set(current);
+      next.delete(id);
+      return next;
+    });
   };
 
   const handleAdd = () => {
@@ -245,16 +330,38 @@ export const ProductTable: React.FC<{
               }}
             />
             {/*
-              priceRaw 가 빈 값이거나 "0" 으로만 떨어지는 경우에만 배지를 띄웁니다.
-              사용자가 의도적으로 0을 입력한 경우에도 노출되지만, "이벤트/사은품?" 이라는
-              문구가 "이게 맞다면 그냥 두시면 됩니다" 쪽으로 읽혀 부담을 주지 않습니다.
-              저장을 막지는 않기 때문에 블로킹 모달 대신 가벼운 라벨로 끝냅니다.
+              priceRaw 가 빈 값이거나 "0" 으로 떨어지는 경우에만 배지를 띄웁니다.
+              저장 흐름 자체는 0원을 그대로 넘기기 때문에(사은품/이벤트 등 "기록 목적"
+              케이스를 막지 않음), 이 배지는 UI 표시용일 뿐입니다. 확인 버튼을 눌러
+              "의도한 0원" 임을 표시하면 톤이 부드러워집니다.
             */}
-            {(row.priceRaw === "" || Number(row.priceRaw) === 0) && (
-              <ZeroPriceHint title="OCR 이 가격을 놓쳤을 수 있어요. 이벤트/사은품으로 실제 0원이라면 그대로 두세요.">
-                0원 · 확인 필요
-              </ZeroPriceHint>
-            )}
+            {(row.priceRaw === "" || Number(row.priceRaw) === 0) &&
+              (acknowledgedZeroIds.has(row.id) ? (
+                <ZeroPriceHint
+                  $acknowledged
+                  title="0원으로 기록돼요. 다시 확인이 필요하면 되돌리기를 누르세요."
+                >
+                  0원으로 기록
+                  <ZeroPriceAction
+                    type="button"
+                    onClick={() => revokeZero(row.id)}
+                    aria-label="0원 확인 되돌리기"
+                  >
+                    되돌리기
+                  </ZeroPriceAction>
+                </ZeroPriceHint>
+              ) : (
+                <ZeroPriceHint title="OCR 이 가격을 놓쳤을 수 있어요. 사은품/이벤트 등으로 실제 0원이라면 '이대로 저장' 을 눌러 주세요.">
+                  0원 · 확인 필요
+                  <ZeroPriceAction
+                    type="button"
+                    onClick={() => acknowledgeZero(row.id)}
+                    aria-label="0원 상품으로 이대로 저장"
+                  >
+                    이대로 저장
+                  </ZeroPriceAction>
+                </ZeroPriceHint>
+              ))}
           </div>
           <div>
             <Input
