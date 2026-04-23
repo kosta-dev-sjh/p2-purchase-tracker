@@ -24,6 +24,10 @@ import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
 import { PlatformConfirmModal } from "./components/PlatformConfirmModal";
+import {
+  AnalysisProgressModal,
+  type AnalysisProgress,
+} from "./components/AnalysisProgressModal";
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
 import {
@@ -168,6 +172,21 @@ export const OcrUploadPage: React.FC = () => {
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   /**
+   * OCR 진행률 모달에 전달할 상태. runAnalysis가 시작될 때 전체 이미지 수와
+   * 첫 번째 이미지 정보로 초기화되고, 이후 Tesseract logger와 이미지 루프가
+   * currentIndex / currentProgress / currentStatus를 갱신합니다.
+   */
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress>({
+    currentIndex: 0,
+    totalCount: 0,
+    currentFileName: "",
+    currentThumbUrl: undefined,
+    currentPlatform: undefined,
+    currentProgress: 0,
+    currentStatus: "",
+  });
+
+  /**
    * "분석 시작하기" 진입점.
    * 분석 자체는 이미지 장수만큼 Tesseract를 돌리는 무거운 작업이라, 실행 전
    * PlatformConfirmModal을 먼저 띄워 사용자에게 태그를 재확인할 기회를 줍니다.
@@ -194,8 +213,45 @@ export const OcrUploadPage: React.FC = () => {
     if (targetImages.length === 0) return;
     setIsAnalyzing(true);
 
+    // 모달이 열리자마자 "첫 번째 이미지 준비 중"으로 보이도록 초기값을 찍어 둡니다.
+    // currentIndex=0 이면 전체 진행바는 0% 이고, 루프 진입 뒤 이미지별로 갱신됩니다.
+    setAnalysisProgress({
+      currentIndex: 0,
+      totalCount: targetImages.length,
+      currentFileName: targetImages[0]?.fileName ?? "",
+      currentThumbUrl: targetImages[0]?.thumbUrl,
+      currentPlatform: targetImages[0]?.platform,
+      currentProgress: 0,
+      currentStatus: "initializing",
+    });
+
     try {
-      const worker = await createWorker('kor+eng');
+      // Tesseract logger: 내부 단계별 진행률을 0..1 구간으로 돌려줍니다.
+      // status가 "recognizing text"일 때가 실질적인 OCR 구간이라 이 구간의 progress를
+      // 현재 이미지 진행률로 노출합니다. 그 외 단계(엔진 로드 등)는 status 문자열만
+      // 반영해 "준비 중"처럼 비결정 상태로 보이게 합니다.
+      //
+      // createWorker 시그니처는 (langs, oem, options) 순이라 options를 넘기려면
+      // OEM 인자를 명시해야 합니다. 1 = LSTM_ONLY — tesseract.js v7 기본값.
+      const worker = await createWorker('kor+eng', 1, {
+        logger: (message) => {
+          setAnalysisProgress((prev) => {
+            // 다른 이미지로 이미 넘어갔는데 이전 이미지의 로거 이벤트가 뒤늦게 들어오는 경우,
+            // progress가 다시 0으로 튀어 보이지 않도록 status만 업데이트합니다.
+            if (message.status === "recognizing text") {
+              return {
+                ...prev,
+                currentProgress: message.progress,
+                currentStatus: message.status,
+              };
+            }
+            return {
+              ...prev,
+              currentStatus: message.status,
+            };
+          });
+        },
+      });
 
       // Tesseract 파라미터 튜닝:
       //  - tessedit_pageseg_mode=6(Single uniform block of text)로 두면 쇼핑 캡쳐처럼
@@ -218,6 +274,19 @@ export const OcrUploadPage: React.FC = () => {
 
       for (let i = 0; i < targetImages.length; i++) {
         const image = targetImages[i];
+
+        // 새 이미지 진입 시 모달의 "현재 이미지" 블록을 교체합니다. progress는 0으로 리셋해
+        // 이전 이미지 마무리 때의 잔상(예: 98%)이 다음 이미지 시작 시점에 잠깐 보이지 않도록 합니다.
+        setAnalysisProgress((prev) => ({
+          ...prev,
+          currentIndex: i,
+          currentFileName: image.fileName,
+          currentThumbUrl: image.thumbUrl,
+          currentPlatform: image.platform,
+          currentProgress: 0,
+          currentStatus: "preprocessing",
+        }));
+
         if (!image.file) {
           // 방어적 폴백. 정상 업로드 흐름에서는 File 객체가 반드시 있지만,
           // 예외적으로 file 참조가 비어 있는 케이스(예: 테스트 주입)에서도
@@ -358,7 +427,17 @@ export const OcrUploadPage: React.FC = () => {
       }
 
       await worker.terminate();
-      
+
+      // 모든 이미지를 끝마쳤다는 의미로 전체 진행률을 100%로 찍고 넘어갑니다.
+      // navigate 직후 페이지가 교체돼 잠깐만 보이지만, 마지막 이미지에서 Tesseract가
+      // 100%를 안 쏜 채로 끝나는 케이스에도 "완료 직전에서 멈춘 것처럼" 보이는 찜찜함을 없앱니다.
+      setAnalysisProgress((prev) => ({
+        ...prev,
+        currentIndex: targetImages.length,
+        currentProgress: 1,
+        currentStatus: "done",
+      }));
+
       ocrStore.setImages(isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages);
       navigate("/ocr-edit");
     } catch (error) {
@@ -440,6 +519,7 @@ export const OcrUploadPage: React.FC = () => {
         images={images}
         onConfirm={handleConfirmAnalyze}
       />
+      <AnalysisProgressModal isOpen={isAnalyzing} progress={analysisProgress} />
     </AppShell>
   );
 };
