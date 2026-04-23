@@ -18,6 +18,7 @@ import { media } from "../../tokens/breakpoints";
 import { ImageList } from "./components/ImageList";
 import { ImagePreview } from "./components/ImagePreview";
 import { EditForm } from "./components/EditForm";
+import { AddImagesModal } from "./components/AddImagesModal";
 import {
   type OcrImageItem,
   type OcrOrder,
@@ -213,6 +214,12 @@ export const OcrEditPage: React.FC = () => {
     mergedActions: MergeAction[];
     skipped: SkippedItem[];
   } | null>(null);
+
+  /**
+   * "+ 이미지 추가" 모달 오픈 상태. 과거에는 OcrUpload 로 navigate 해 append 모드로
+   * 재분석을 돌리고 돌아왔지만, 편집 도중 페이지가 갈아엎히는 UX 가 별로라 모달 인라인으로 바꿨습니다.
+   */
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   /**
    * 주문 필드(주문일자·상태 태그) 변경을 이미지 상태에 반영합니다.
@@ -611,10 +618,7 @@ export const OcrEditPage: React.FC = () => {
           images={images}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onAdd={() => {
-            ocrStore.setImages(images);
-            navigate("/ocr-upload", { state: { append: true } });
-          }}
+          onAdd={() => setIsAddModalOpen(true)}
           onDelete={handleDeleteImage}
         />
         <ImagePreview image={selected} />
@@ -692,6 +696,23 @@ export const OcrEditPage: React.FC = () => {
           </div>
         </Modal>
       )}
+      <AddImagesModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onComplete={(newImages) => {
+          // 분석 결과를 기존 images 뒤에 append. 방금 들어온 첫 이미지로 selection 을 옮겨
+          // "내가 방금 추가한 이미지가 어느 건지" 바로 보이게 합니다.
+          const next = [...images, ...newImages];
+          setImages(next);
+          if (newImages[0]) {
+            setSelectedId(newImages[0].id);
+          }
+          // 다음에 저장 버튼을 눌렀을 때 ocrStore 에서 원본이 꺼내지는 일이 없도록
+          // 스토어에도 최신 스냅샷을 반영해 둡니다.
+          ocrStore.setImages(next);
+          setIsAddModalOpen(false);
+        }}
+      />
       {confirmState && (
         <Modal
           isOpen

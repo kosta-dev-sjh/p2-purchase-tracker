@@ -18,30 +18,13 @@ import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
 import { PLATFORM_LABELS } from "../../../constants/labels";
-import type { Platform } from "./PlatformSelect";
+import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
 
-export interface AnalysisProgress {
-  /** 현재 처리 중인 이미지 인덱스 (0-based). */
-  currentIndex: number;
-  /** 전체 이미지 수. */
-  totalCount: number;
-  /** 현재 이미지의 파일명. */
-  currentFileName: string;
-  /** 현재 이미지의 썸네일 URL(선택). */
-  currentThumbUrl?: string;
-  /** 현재 이미지에 찍힌 플랫폼(선택). */
-  currentPlatform?: Platform;
-  /**
-   * 현재 이미지의 Tesseract 진행률 0~1. 전처리/파싱 구간에서는 임시로 0~1 사이 값이
-   * 튀어 오르지 않도록 부모가 관리합니다.
-   */
-  currentProgress: number;
-  /**
-   * Tesseract logger가 주는 status 문자열. 예: "recognizing text", "loading tesseract core".
-   * 사용자 입장에선 내부 스텝 이름이 의미 없으므로, 이 모달은 한국어 라벨로 변환해 노출합니다.
-   */
-  currentStatus: string;
-}
+/**
+ * 모달이 받는 진행률 이벤트 타입. 실제 생성은 analyzeUploadedImages 가 담당하므로
+ * 타입 정의는 그쪽(utils) 을 단일 소스로 두고, 여기서는 재노출만 합니다.
+ */
+export type AnalysisProgress = OcrAnalysisProgress;
 
 const Overlay = styled.div`
   position: fixed;

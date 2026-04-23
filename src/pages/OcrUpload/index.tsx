@@ -13,7 +13,6 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import styled from "styled-components";
-import { createWorker } from "tesseract.js";
 import { AppShell } from "../../components/layout/AppShell";
 import { Button } from "../../components/primitives/Button";
 import { PLATFORM_LABELS } from "../../constants/labels";
@@ -30,16 +29,7 @@ import {
 } from "./components/AnalysisProgressModal";
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
-import {
-  parseCoupangOrderText,
-  parseNaverOrderText,
-  parseTemuOrderText,
-  type PurchaseOCRResult,
-} from "../../utils/ocrParsers";
-import { detectStatusFromOcrText } from "../../utils/ocrParse";
-import { preprocessImageForOcr } from "../../utils/ocrPreprocess";
-import { applyOcrCorrections } from "../../utils/ocrCorrection";
-import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
+import { analyzeUploadedImages } from "../../utils/ocrAnalyzeImages";
 
 const Wrap = styled.div`
   display: grid;
@@ -213,236 +203,21 @@ export const OcrUploadPage: React.FC = () => {
     if (targetImages.length === 0) return;
     setIsAnalyzing(true);
 
-    // 모달이 열리자마자 "첫 번째 이미지 준비 중"으로 보이도록 초기값을 찍어 둡니다.
-    // currentIndex=0 이면 전체 진행바는 0% 이고, 루프 진입 뒤 이미지별로 갱신됩니다.
-    setAnalysisProgress({
-      currentIndex: 0,
-      totalCount: targetImages.length,
-      currentFileName: targetImages[0]?.fileName ?? "",
-      currentThumbUrl: targetImages[0]?.thumbUrl,
-      currentPlatform: targetImages[0]?.platform,
-      currentProgress: 0,
-      currentStatus: "initializing",
-    });
-
     try {
-      // Tesseract logger: 내부 단계별 진행률을 0..1 구간으로 돌려줍니다.
-      // status가 "recognizing text"일 때가 실질적인 OCR 구간이라 이 구간의 progress를
-      // 현재 이미지 진행률로 노출합니다. 그 외 단계(엔진 로드 등)는 status 문자열만
-      // 반영해 "준비 중"처럼 비결정 상태로 보이게 합니다.
-      //
-      // createWorker 시그니처는 (langs, oem, options) 순이라 options를 넘기려면
-      // OEM 인자를 명시해야 합니다. 1 = LSTM_ONLY — tesseract.js v7 기본값.
-      const worker = await createWorker('kor+eng', 1, {
-        logger: (message) => {
-          setAnalysisProgress((prev) => {
-            // 다른 이미지로 이미 넘어갔는데 이전 이미지의 로거 이벤트가 뒤늦게 들어오는 경우,
-            // progress가 다시 0으로 튀어 보이지 않도록 status만 업데이트합니다.
-            if (message.status === "recognizing text") {
-              return {
-                ...prev,
-                currentProgress: message.progress,
-                currentStatus: message.status,
-              };
-            }
-            return {
-              ...prev,
-              currentStatus: message.status,
-            };
-          });
-        },
+      // 실제 OCR 파이프라인은 utils/ocrAnalyzeImages 로 분리됐습니다.
+      // 이 페이지는 진행률을 모달 상태로만 매핑해 두고, 이미지 추가(OcrEdit) 경로와
+      // 같은 구현체를 공유합니다.
+      const processedImages = await analyzeUploadedImages(targetImages, (event) => {
+        setAnalysisProgress(event);
       });
 
-      // Tesseract 파라미터 튜닝:
-      //  - tessedit_pageseg_mode=6(Single uniform block of text)로 두면 쇼핑 캡쳐처럼
-      //    "하나의 수직 블록"을 가진 이미지에서 라인 분할이 안정적으로 이뤄집니다.
-      //    기본값(3=Auto)은 한글 쇼핑 UI에서 아이콘/뱃지를 별도 블록으로 잘못 잡아
-      //    라인 경계가 흐트러지는 경우가 많았습니다.
-      //  - preserve_interword_spaces=1: 공백을 보존해 파서의 토큰 분리가 쉬워집니다.
-      // setParameters는 문자열 키-값만 받으므로 그대로 전달합니다.
-      try {
-        await worker.setParameters({
-          tessedit_pageseg_mode: "6",
-          preserve_interword_spaces: "1",
-        } as unknown as never);
-      } catch {
-        // 파라미터 설정 실패는 치명적이지 않으니 로그만 남기고 기본값으로 진행.
-        console.warn("[OcrUpload] tesseract.setParameters 실패 — 기본값으로 진행");
-      }
-
-      const processedImages: OcrImageItem[] = [];
-
-      for (let i = 0; i < targetImages.length; i++) {
-        const image = targetImages[i];
-
-        // 새 이미지 진입 시 모달의 "현재 이미지" 블록을 교체합니다. progress는 0으로 리셋해
-        // 이전 이미지 마무리 때의 잔상(예: 98%)이 다음 이미지 시작 시점에 잠깐 보이지 않도록 합니다.
-        setAnalysisProgress((prev) => ({
-          ...prev,
-          currentIndex: i,
-          currentFileName: image.fileName,
-          currentThumbUrl: image.thumbUrl,
-          currentPlatform: image.platform,
-          currentProgress: 0,
-          currentStatus: "preprocessing",
-        }));
-
-        if (!image.file) {
-          // 방어적 폴백. 정상 업로드 흐름에서는 File 객체가 반드시 있지만,
-          // 예외적으로 file 참조가 비어 있는 케이스(예: 테스트 주입)에서도
-          // 파이프라인이 터지지 않도록 빈 orders로 통과시킵니다.
-          processedImages.push({
-            id: image.id,
-            fileName: image.fileName,
-            thumbUrl: image.thumbUrl,
-            status: "analyzed" as const,
-            platform: image.platform,
-            orders: []
-          });
-          continue;
-        }
-
-        // 저해상도·저대비 캡쳐에서 Tesseract 인식률이 크게 갈리므로 업스케일 + 그레이스케일
-        // 전처리를 한 번 태운 뒤 OCR로 넘깁니다. 실패 시 원본 파일을 그대로 받는 방어적 경로.
-        const preprocessed = await preprocessImageForOcr(image.file);
-        const result = await worker.recognize(preprocessed);
-        // Tesseract 출력에 공통으로 끼는 전각 문자·보이지 않는 문자·콤마 사이 공백 등을
-        // 전역 후처리 유틸에서 정리한 뒤 각 플랫폼 파서로 넘깁니다. 쿠팡/네이버/테무 모두가
-        // 같은 정규화된 입력을 받으므로 파서의 regex를 점진적으로 단순화할 수 있습니다.
-        const rawText = applyOcrCorrections(result.data.text);
-
-        let parsedData: PurchaseOCRResult[] = [];
-        if (image.platform === 'coupang') {
-          parsedData = parseCoupangOrderText(rawText);
-        } else if (image.platform === 'naver') {
-          parsedData = parseNaverOrderText(rawText);
-        } else if (image.platform === 'temu') {
-          parsedData = parseTemuOrderText(rawText);
-        }
-
-        /**
-         * 한 개의 PurchaseOCRResult를 OcrOrder.products 항목으로 변환합니다.
-         * 가격만 잡히고 이름을 못 뽑은 경우엔 "상품명 입력 필요" 플레이스홀더로 남겨 사용자가
-         * OcrEdit에서 이름만 채워 저장할 수 있게 합니다.
-         */
-        const toProduct = (res: PurchaseOCRResult, idx: number) => {
-          const unitPrice = res.price ?? 0;
-          const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
-          const hasItem = Boolean(res.itemName);
-          const hasPrice = unitPrice > 0;
-          if (!hasItem && !hasPrice) return null;
-          return {
-            id: `${image.id}-product-${idx}`,
-            name: hasItem ? (res.itemName as string) : "상품명 입력 필요",
-            price: unitPrice,
-            quantity: qty,
-          };
-        };
-
-        let orders: OcrOrder[];
-
-        if (image.platform === 'coupang' && parsedData.length > 0) {
-          // 쿠팡 캡쳐는 **주문 헤더(YYYY. M. DD 주문) 한 개 = 주문 하나** 입니다. 실제 UI에서
-          // 주문상세 페이지는 헤더 하나 + 여러 배송 블록 구조이고(예: 피스타치오 + 캐리어),
-          // 주문목록/내역 페이지는 한 캡쳐에 헤더 여러 개(예: 4/7 주문 + 4/1 주문)가 쌓여 있습니다.
-          // 따라서 파싱 결과를 **헤더 날짜로 그룹화**해 각 날짜마다 OcrOrder를 하나씩 만들어야 합니다.
-          //   - 헤더 1개 이미지: 결과 전부가 같은 date → 카드 1장 (상품 N개 묶음)
-          //   - 헤더 N개 이미지: date별로 N장 → 사용자가 "4/7이 왜 4/1로 둔갑?" 같은 혼란 없음
-          //
-          // 주문 레벨 statusTag: 묶음 안 상품들이 전부 cancel이면 cancel, 전부 refund면 refund, 그 외에는
-          // purchase로 승격. 한 주문 안에 준비중 + 완료가 섞여 있어도 가계부 관점에서는 돈이 나간 건이므로.
-          const groupsByDate = new Map<string, PurchaseOCRResult[]>();
-          for (const res of parsedData) {
-            const key = res.date ?? "";
-            const arr = groupsByDate.get(key) ?? [];
-            arr.push(res);
-            groupsByDate.set(key, arr);
-          }
-
-          orders = Array.from(groupsByDate.entries()).map(([date, group], orderIdx) => {
-            const resultStatuses = group.map((res) =>
-              detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
-            );
-            const allCanceled = resultStatuses.every((s) => s === "cancel");
-            const allRefunded = resultStatuses.every((s) => s === "refund");
-            const orderStatusTag = allCanceled ? "cancel" : allRefunded ? "refund" : "purchase";
-
-            const products = group
-              .map((res, productIdx) => toProduct(res, orderIdx * 100 + productIdx))
-              .filter((p): p is NonNullable<typeof p> => p !== null);
-
-            const totalAmount = products.reduce(
-              (sum, p) => sum + p.price * (p.quantity ?? 1),
-              0,
-            );
-
-            return {
-              id: `${image.id}-order-${orderIdx}`,
-              orderDate: date,
-              statusTag: orderStatusTag,
-              statusLabel: "자동 추출됨",
-              totalAmount,
-              rawText: group[0].rawText,
-              products,
-            };
-          });
-        } else {
-          // 네이버/테무는 "이미지 1장 = 주문 N건(목록형)"이 자연스러운 플랫폼이라
-          // 기존처럼 결과 1개당 OcrOrder 1개로 매핑합니다.
-          orders = parsedData.map((res, idx) => {
-            const statusTag = image.platform === 'temu'
-              ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
-              : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
-            const product = toProduct(res, idx);
-            const unitPrice = res.price ?? 0;
-            const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
-            return {
-              id: `${image.id}-order-${idx}`,
-              orderDate: res.date ?? "",
-              statusTag,
-              statusLabel: "자동 추출됨",
-              totalAmount: product ? unitPrice * qty : 0,
-              rawText: res.rawText,
-              products: product ? [product] : [],
-            };
-          });
-        }
-
-        processedImages.push({
-          id: image.id,
-          fileName: image.fileName,
-          thumbUrl: image.thumbUrl,
-          status: "analyzed" as const,
-          platform: image.platform,
-          rawText: rawText,
-          orders: orders.length > 0 ? orders : [{
-             id: `${image.id}-empty`,
-             orderDate: "",
-             statusTag: "purchase",
-             totalAmount: 0,
-             rawText,
-             products: []
-          }]
-        });
-      }
-
-      await worker.terminate();
-
-      // 모든 이미지를 끝마쳤다는 의미로 전체 진행률을 100%로 찍고 넘어갑니다.
-      // navigate 직후 페이지가 교체돼 잠깐만 보이지만, 마지막 이미지에서 Tesseract가
-      // 100%를 안 쏜 채로 끝나는 케이스에도 "완료 직전에서 멈춘 것처럼" 보이는 찜찜함을 없앱니다.
-      setAnalysisProgress((prev) => ({
-        ...prev,
-        currentIndex: targetImages.length,
-        currentProgress: 1,
-        currentStatus: "done",
-      }));
-
-      ocrStore.setImages(isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages);
+      ocrStore.setImages(
+        isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages,
+      );
       navigate("/ocr-edit");
     } catch (error) {
-      console.error('OCR 파싱 실패:', error);
-      alert('이미지 분석 중 오류가 발생했습니다.');
+      console.error("OCR 파싱 실패:", error);
+      alert("이미지 분석 중 오류가 발생했습니다.");
     } finally {
       setIsAnalyzing(false);
     }
