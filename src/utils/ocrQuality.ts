@@ -170,18 +170,12 @@ export function classifyOcrCardQuality(card: {
     }
   }
 
-  // B3c. 공백으로 분리된 1~2자 한글 청크(단위 어휘 제외) 가 3개 이상이면 rejoin 실패 흔적.
-  //   예: "및음스모르맥세 이프 솔 리드 라인..." → "이프", "솔", "리드" = 3개.
-  //   "코지엔비 곱창머리끈 5 세트" 같은 정상은 단위(세트)를 제외해 카운트 0.
-  const shortHangulChunks =
-    (name.match(/(?:^|[\s(])([가-힣]{1,2})(?=$|[\s),])/g) ?? [])
-      .map((c) => c.replace(/^[\s(]/, "").trim())
-      .filter((c) => c.length > 0 && !UNIT_SUFFIX_HANGUL.has(c));
-  if (shortHangulChunks.length >= 3) {
-    badReasons.push(
-      `공백 분리 한글 파편 ${shortHangulChunks.length}개 (rejoin 실패 의심)`,
-    );
-  }
+  // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.
+  //   `박스 심플`, `이는` 같은 정상 한국 상품명의 내부 공백까지 OCR 분리로 오인해, 샘플 23장 중
+  //   52% 가 AI 트리거로 올라가면서 "1차 필터" 의 비용 절약 목적이 희석됐습니다.
+  //   OCR 분리 흔적은 대부분 rejoinSplitKoreanWords 단계에서 이미 정리되므로 여기서 다시 잡지
+  //   않고, 진짜 중대한 파손(priceOcrFailed, 하드 가비지, marker 잔류, 선두 환각 prefix) 만
+  //   bad 로 남깁니다.
 
   // B4. 가격이 살아있는 유료 상품(> 0 원) 인데 한글 비율이 너무 낮음.
   //   cancel/refund 는 0원이어도 정상(취소 완료 상태), 사은품 0원도 delivered 유효 → price>0 조건을
