@@ -384,6 +384,21 @@ export function classifyOcrCardQuality(card: {
     badReasons.push("한글 내부 라틴 토막 잔류");
   }
 
+  // B3v (2026-04-25). 이름 중간에 `삼성전자 ㅇ 5 입초고속충...` 처럼 단일 자모가 공백으로
+  //   분리돼 토큰처럼 끼는 경우. 정상 상품명은 `ㄱ`, `ㅇ` 같은 자모 단독 토큰을 쓰지 않고,
+  //   실측에서는 모바일 취소 카드에서 버튼/아이콘 잔류와 함께 반복되었습니다.
+  //   안전: 상품명 끝의 옵션 기호가 아니라 **공백으로 둘러싸인 단일 자모 토큰**만 잡습니다.
+  if (/\s[ㄱ-ㅎㅏ-ㅣ]\s/.test(name)) {
+    badReasons.push("공백 분리 단일 자모 토큰");
+  }
+
+  // B3w (2026-04-25). `25//+`, `500//`, `W//-` 처럼 slash 가 2번 이상 연속으로 붙는 경우.
+  //   정상 상품명/모델명은 `/` 한 번 정도만 쓰고, 연속 slash 는 모바일 OCR 이 버튼/단위/아이콘을
+  //   겹쳐 읽은 흔적에 가깝습니다.
+  if (/\/{2,}/.test(name)) {
+    badReasons.push("연속 slash 파편");
+  }
+
   // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.
   //   `박스 심플`, `이는` 같은 정상 한국 상품명의 내부 공백까지 OCR 분리로 오인해, 샘플 23장 중
   //   52% 가 AI 트리거로 올라가면서 "1차 필터" 의 비용 절약 목적이 희석됐습니다.
@@ -439,6 +454,23 @@ export function pickBadProducts<T extends {
   products: T[],
   statusTag?: "purchase" | "sub" | "cancel" | "refund",
 ): T[] {
+  // G1 (2026-04-25). 모바일 목록형 OCR 에서 공백이 대거 사라진 이미지들은 카드 하나씩 보면
+  //   "그럴듯한 한글 문자열" 이어서 gate 를 빠져나가지만, 이미지 전체로 보면 2개 이상 카드가
+  //   `유한양행엘레나여성질유산균이너프`, `원더풀피스타치오껄없는피스타치` 처럼 과하게
+  //   붙은 상태로 읽히는 패턴이 반복됩니다. 3장 이상 카드 중 **공백 없는 긴 한글 카드가 2장 이상**
+  //   보이면 이미지 단위 OCR 압축으로 보고 전체를 AI 대상으로 올립니다.
+  //   안전: 웹 카드처럼 보통 띄어쓰기가 어느 정도 살아있는 경우엔 미매치하고, 모바일 실측에서는
+  //   gate silent 누락(005)을 안정적으로 끌어올립니다.
+  const compressedNoSpaceCards = products.filter((p) => {
+    const name = (p.name ?? "").trim();
+    const hasSpace = /\s/.test(name);
+    const hangulCount = countMatches(name, HANGUL_SYLLABLE_REGEX);
+    return !hasSpace && hangulCount >= 12;
+  });
+  if (products.length >= 3 && compressedNoSpaceCards.length >= 2) {
+    return products.filter((p) => !p.aiApplied);
+  }
+
   return products.filter((p) => {
     if (p.aiApplied) return false; // 이미 AI 가 손댄 건 재시도 X
     return classifyOcrCardQuality({ ...p, statusTag }).tier === "bad";
