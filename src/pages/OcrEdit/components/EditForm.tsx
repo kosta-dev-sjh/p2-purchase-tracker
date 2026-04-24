@@ -14,7 +14,7 @@ import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
 import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder, Status } from "../data";
-import { isAiDebugMode } from "../../../utils/aiDebug";
+import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 import { detectTruncation } from "../../../utils/ocrTruncation";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
@@ -221,10 +221,10 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         <span>
           상품 {image.orders.reduce((acc, o) => acc + o.products.length, 0)}개
         </span>
-        {/* DEBUG-ONLY: AI 보정 요약 칩. aiDebug 플래그가 켜진 경우에만 노출.
-            실사용자는 AI 가 관여했는지 알 필요가 없다는 UX 원칙. 제거 방법은 aiDebug.ts 주석 참조. */}
-        {(() => {
-          if (!isAiDebugMode()) return null;
+        {/* ───── DEBUG 전용 (DEBUG_OCR_AI=true 일 때만 렌더됨) ─────
+            AI 보정 요약 칩. 배포 전 ocrAiDebug.ts 의 상수를 false 로 돌리거나 이 블록을
+            grep 후 제거. 실사용자는 AI 가 관여했는지 알 필요가 없다는 UX 원칙. */}
+        {DEBUG_OCR_AI && (() => {
           const aiCount = image.orders.reduce(
             (acc, o) => acc + o.products.filter((p) => p.aiApplied).length,
             0,

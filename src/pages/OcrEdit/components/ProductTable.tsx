@@ -10,7 +10,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import type { OcrProduct, Status } from "../data";
 import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
-import { isAiDebugMode } from "../../../utils/aiDebug";
+import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -367,10 +367,10 @@ export const ProductTable: React.FC<{
           aiApplied: row.aiApplied,
         });
         // 배지 우선순위: aiApplied > bad > (borderline 은 표시 안 함 → UI 소음 최소화)
-        //   - aiApplied 배지는 디버그 모드에서만 노출. 실사용자는 AI 가 관여했는지 알 필요
-        //     없고 결과 품질만 관심 있기 때문. isAiDebugMode() 는 aiDebug.ts 참고.
+        //   - aiApplied 배지는 DEBUG_OCR_AI 플래그가 true 인 개발 빌드에서만 노출. 실사용자는
+        //     AI 가 관여했는지 알 필요 없고 결과 품질만 관심 있기 때문. 정리 절차는 ocrAiDebug.ts 참고.
         //   - bad hint 는 디버그 무관하게 사용자 확인용으로 계속 노출.
-        const showAiBadge = row.aiApplied === true && isAiDebugMode();
+        const showAiBadge = row.aiApplied === true && DEBUG_OCR_AI;
         const showBadHint = !row.aiApplied && quality.tier === "bad";
         return (
         <Row key={row.id}>
@@ -380,7 +380,8 @@ export const ProductTable: React.FC<{
               value={row.name}
               onChange={(e) => patch(row.id, { name: e.target.value })}
             />
-            {/* DEBUG-ONLY: AI 보정 흔적 배지. aiDebug 플래그가 켜진 경우에만 노출. */}
+            {/* ───── DEBUG 전용 (DEBUG_OCR_AI=true 일 때만 렌더됨) ─────
+                AI 보정 흔적 배지. 배포 전 ocrAiDebug.ts 상수를 false 로 돌리면 즉시 제거. */}
             {showAiBadge && (
               <AiAppliedBadge title="[DEBUG] Tesseract 가 놓친 항목을 AI 가 보정">
                 ✨ AI 보정됨

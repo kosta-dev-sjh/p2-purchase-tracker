@@ -19,7 +19,7 @@ import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
-import { isAiDebugMode } from "../../../utils/aiDebug";
+import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 
 /**
  * 모달이 받는 진행률 이벤트 타입. 실제 생성은 analyzeUploadedImages 가 담당하므로
@@ -153,7 +153,7 @@ const NEUTRAL_PROGRESS_MESSAGES = [
 ];
 
 /**
- * DEBUG-ONLY: 동일 단계지만 "AI" 단어를 드러내는 디버그용 메시지. aiDebug 플래그가 켜진
+ * DEBUG-ONLY: 동일 단계지만 "AI" 단어를 드러내는 디버그용 메시지. DEBUG_OCR_AI 플래그가 켜진
  * 세션에서만 사용됩니다. 개발자가 실제로 AI 경로가 도는지 시각 확인할 때 유용.
  */
 const DEBUG_AI_MESSAGES = [
@@ -177,9 +177,9 @@ interface AnalysisProgressModalProps {
  */
 function humanizeStatus(status: string): string {
   const normalized = status.toLowerCase();
-  // "AI" 는 디버그 모드에서만 드러내고, 일반 사용자에게는 "2차 확인 중" 으로 중립 표시.
+  // DEBUG_OCR_AI=true 일 때만 "AI" 노출, 평상시에는 도구-중립적 "2차 확인 중".
   if (normalized.includes("ai-fallback")) {
-    return isAiDebugMode() ? "AI 보정 중" : "2차 확인 중";
+    return DEBUG_OCR_AI ? "AI 보정 중" : "2차 확인 중";
   }
   if (normalized.includes("recognizing")) return "글자 인식 중";
   if (normalized.includes("initializing")) return "엔진 준비 중";
@@ -200,8 +200,8 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
     currentProgress, currentStatus, phase } = progress;
   const isAiPhase = phase === "ai-fallback";
   // 디버그 모드에서는 파이프라인 세부를 보여주고, 실사용자 모드에서는 "2차 정확도 확인" 같은
-  // 도구-독립적인 문구로 보여줍니다. aiDebug 플래그 토글 → 페이지 새로고침 또는 리렌더로 반영.
-  const debugOn = isAiDebugMode();
+  // 도구-독립적인 문구로 보여줍니다. DEBUG_OCR_AI 플래그 토글 → 페이지 새로고침 또는 리렌더로 반영.
+  const debugOn = DEBUG_OCR_AI;
 
   // ── 단일 진행 바 계산 ──
   //
