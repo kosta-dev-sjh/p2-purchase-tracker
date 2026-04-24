@@ -29,6 +29,29 @@ const STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
 ];
 
 /**
+ * 쿠팡 전용 status 매핑 — 글로벌 STATUS_KEYWORDS 와 한 가지 다른 점:
+ * **반품완료** 는 쿠팡 컨텍스트에서 "구매를 통째로 되돌린 것" 에 가까워 cancel 로 분류합니다.
+ *
+ * 배경:
+ *   - 일반 정의: 반품 = 상품 받고 돌려주기, 환불 = 돈 돌려받기. 다른 쇼핑몰에서는 반품 ⊃ 환불
+ *     관계라 refund 분류가 자연스럽습니다.
+ *   - 그러나 쿠팡 "반품완료" 는 "주문 자체가 사라진 것처럼 처리됨"(전액 환원, 영수증 무효화)
+ *     이라 사용자 가계부 관점에서 "취소" 로 보는 게 직관적입니다.
+ *   - 사용자 메모리(spendtrack_signed_amount_convention.md): cancel 은 순지출 KPI 에서 제외,
+ *     refund 는 포함. 쿠팡 반품은 "구매 자체가 없었던 것" 으로 처리하길 원하므로 cancel 매핑이
+ *     KPI 의도와도 일치합니다.
+ *
+ * 다른 플랫폼(네이버/테무) 에서는 글로벌 detectStatusFromOcrText 를 그대로 쓰면 됩니다.
+ */
+const COUPANG_STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
+  // 반품을 cancel 로 우선 분류. 환불 키워드(환불완료/환불처리) 는 여전히 refund.
+  { status: "cancel", keywords: ["반품완료", "반품", "취소완료", "취소 완료", "주문취소", "결제취소"] },
+  { status: "refund", keywords: ["환불완료", "환불처리", "환불"] },
+  { status: "sub", keywords: ["정기결제", "정기 결제", "구독", "자동결제"] },
+  { status: "purchase", keywords: ["결제완료", "주문완료", "배송완료", "배송 완료", "배송중", "상품준비중", "상품 준비중", "구매완료", "구매확정", "구매"] },
+];
+
+/**
  * OCR 원문 전체에서 상태 키워드를 찾아 첫 매칭값을 반환합니다.
  * 키워드가 아무것도 매칭되지 않으면 undefined를 돌려주어, 호출부가
  * 기본값(쇼핑 컨텍스트에서는 보통 "purchase")을 결정하거나 사용자에게
@@ -38,11 +61,26 @@ const STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
  * 폴백으로 이 키워드 매칭을 태우는 2단 구조가 자연스럽습니다.
  */
 export function detectStatusFromOcrText(text: string): Status | undefined {
+  return detectStatusWith(STATUS_KEYWORDS, text);
+}
+
+/**
+ * 쿠팡 전용 status 추정. buildCoupangOrders 에서만 사용. 다른 호출자가 잘못 사용하지 않도록
+ * 함수 이름에 platform 명시.
+ */
+export function detectCoupangStatusFromOcrText(text: string): Status | undefined {
+  return detectStatusWith(COUPANG_STATUS_KEYWORDS, text);
+}
+
+function detectStatusWith(
+  table: Array<{ status: Status; keywords: string[] }>,
+  text: string,
+): Status | undefined {
   if (!text) return undefined;
   // 공백/개행 차이로 매칭이 어긋나지 않도록 정규화 후 포함 여부만 확인합니다.
   const normalized = text.replace(/\s+/g, "");
 
-  for (const { status, keywords } of STATUS_KEYWORDS) {
+  for (const { status, keywords } of table) {
     const hit = keywords.some((keyword) =>
       normalized.includes(keyword.replace(/\s+/g, ""))
     );

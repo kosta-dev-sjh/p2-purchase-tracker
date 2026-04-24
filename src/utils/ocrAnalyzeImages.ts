@@ -21,7 +21,10 @@ import {
   parseTemuOrderText,
   type PurchaseOCRResult,
 } from "./ocrParsers";
-import { detectStatusFromOcrText } from "./ocrParse";
+import {
+  detectStatusFromOcrText,
+  detectCoupangStatusFromOcrText,
+} from "./ocrParse";
 import { preprocessImageForOcr } from "./ocrPreprocess";
 import { applyOcrCorrections } from "./ocrCorrection";
 import { pickBadProducts } from "./ocrQuality";
@@ -90,8 +93,11 @@ function buildCoupangOrders(
   }
 
   return Array.from(groupsByDate.entries()).map(([date, group], orderIdx) => {
+    // 쿠팡 한정: 반품완료 → cancel 매핑 (자세한 근거는 ocrParse.ts COUPANG_STATUS_KEYWORDS).
+    // 사용자는 OcrEdit 화면에서 statusTag dropdown 으로 언제든 다시 바꿀 수 있고, 같은 이미지의
+    // 여러 주문을 한 번에 바꾸려면 EditForm 의 일괄 적용 UI 사용 가능.
     const resultStatuses = group.map((res) =>
-      detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
+      detectCoupangStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase",
     );
     const allCanceled = resultStatuses.every((s) => s === "cancel");
     const allRefunded = resultStatuses.every((s) => s === "refund");

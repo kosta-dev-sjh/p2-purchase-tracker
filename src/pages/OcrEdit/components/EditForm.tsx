@@ -12,8 +12,8 @@ import styled from "styled-components";
 import { Card, CardBd } from "../../../components/primitives/Card";
 import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
-import { CATEGORY_LABELS, PLATFORM_LABELS } from "../../../constants/labels";
-import type { OcrImageItem, OcrOrder } from "../data";
+import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
+import type { OcrImageItem, OcrOrder, Status } from "../data";
 import { isAiDebugMode } from "../../../utils/aiDebug";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
@@ -54,6 +54,58 @@ const SummaryChip = styled.span`
   font-size: 11px;
   font-weight: 600;
 `;
+
+/**
+ * 일괄 상태 변경 툴바. 한 캡쳐에 주문이 2건 이상일 때만 노출되며, 사용자가 OrderCard 마다
+ * statusTag 드롭다운을 일일이 클릭하지 않아도 한 번에 같은 상태로 바꿀 수 있게 합니다.
+ *
+ * 트리거 시나리오:
+ *   1) 쿠팡 "주문 취소 내역" 페이지: 한 캡쳐에 취소된 주문이 5~10건 — 모두 cancel 로.
+ *   2) 쿠팡 "반품완료" 묶음 페이지: 동일 (코드상으로는 이미 cancel 로 자동 매핑됐지만 사용자가
+ *      재확인하거나 실수로 잘못 잡힌 케이스를 한 번에 정정할 때 유용).
+ *   3) 신규 플랫폼이 자동 감지에 약해 모든 카드가 기본값 purchase 로 잡혔을 때 일괄 변경.
+ */
+const BulkActionBar = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.card};
+  background: ${tokens.color.tint};
+  font-size: 11.5px;
+  color: ${tokens.color.ink3};
+`;
+
+const BulkLabel = styled.span`
+  color: ${tokens.color.ink2};
+  font-weight: 600;
+  margin-right: 4px;
+`;
+
+const BulkButton = styled.button`
+  padding: 4px 9px;
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.chip};
+  background: ${tokens.color.panel};
+  color: ${tokens.color.ink2};
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background ${tokens.motion.fast}, border-color ${tokens.motion.fast};
+
+  &:hover {
+    border-color: ${tokens.color.accent};
+    color: ${tokens.color.accentHover};
+    background: ${tokens.color.accentSubtle};
+  }
+`;
+
+/** 일괄 변경 후보 status — 일반 사용자에게 의미 있는 4종. */
+const BULK_STATUS_OPTIONS: Status[] = ["purchase", "cancel", "refund", "sub"];
 
 /**
  * 기본 카테고리 목록. CATEGORY_LABELS의 key/label을 그대로 펼쳐 두고,
@@ -164,6 +216,29 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼
         저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요.
       </Hint>
+
+      {image.orders.length >= 2 && onOrderPatch && (
+        // 한 캡쳐 안 주문이 2건 이상일 때만 일괄 툴바 노출. 1건이면 OrderCard 의 자체 dropdown 으로 충분.
+        // "주문 취소 내역" / "반품완료 묶음" 같이 한 화면에 같은 상태가 몰리는 캡쳐에서 클릭 수를 N→1 로 줄임.
+        <BulkActionBar role="toolbar" aria-label="주문 상태 일괄 변경">
+          <BulkLabel>이 캡쳐의 {image.orders.length}건 모두</BulkLabel>
+          {BULK_STATUS_OPTIONS.map((option) => (
+            <BulkButton
+              key={option}
+              type="button"
+              onClick={() => {
+                for (const order of image.orders) {
+                  onOrderPatch(order.id, { statusTag: option });
+                }
+              }}
+              title={`이 캡쳐의 모든 주문을 '${STATUS_LABELS[option]}' 상태로 일괄 변경합니다`}
+            >
+              {STATUS_LABELS[option]}
+            </BulkButton>
+          ))}
+          <span style={{ color: tokens.color.ink4, marginLeft: 4 }}>로 일괄 변경</span>
+        </BulkActionBar>
+      )}
 
       {image.orders.map((order) => (
         <OrderCard
