@@ -14,6 +14,7 @@ import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
 import { CATEGORY_LABELS, PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder } from "../data";
+import { isAiDebugMode } from "../../../utils/aiDebug";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
 const ImageSummary = styled.div`
@@ -143,14 +144,16 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         <span>
           상품 {image.orders.reduce((acc, o) => acc + o.products.length, 0)}개
         </span>
+        {/* DEBUG-ONLY: AI 보정 요약 칩. aiDebug 플래그가 켜진 경우에만 노출.
+            실사용자는 AI 가 관여했는지 알 필요가 없다는 UX 원칙. 제거 방법은 aiDebug.ts 주석 참조. */}
         {(() => {
-          // AI 가 손댄 카드 수 — 0 이면 표시 안 함(사용자를 귀찮게 하지 않음).
+          if (!isAiDebugMode()) return null;
           const aiCount = image.orders.reduce(
             (acc, o) => acc + o.products.filter((p) => p.aiApplied).length,
             0,
           );
           return aiCount > 0 ? (
-            <SummaryChip title="Tesseract 가 놓친 항목을 AI 가 보정했어요">
+            <SummaryChip title="[DEBUG] Tesseract 가 놓친 항목을 AI 가 보정">
               ✨ AI 보정 {aiCount}개
             </SummaryChip>
           ) : null;

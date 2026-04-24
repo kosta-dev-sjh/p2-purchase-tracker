@@ -10,6 +10,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import type { OcrProduct, Status } from "../data";
 import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
+import { isAiDebugMode } from "../../../utils/aiDebug";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -366,8 +367,11 @@ export const ProductTable: React.FC<{
           aiApplied: row.aiApplied,
         });
         // 배지 우선순위: aiApplied > bad > (borderline 은 표시 안 함 → UI 소음 최소화)
-        const showAiBadge = row.aiApplied === true;
-        const showBadHint = !showAiBadge && quality.tier === "bad";
+        //   - aiApplied 배지는 디버그 모드에서만 노출. 실사용자는 AI 가 관여했는지 알 필요
+        //     없고 결과 품질만 관심 있기 때문. isAiDebugMode() 는 aiDebug.ts 참고.
+        //   - bad hint 는 디버그 무관하게 사용자 확인용으로 계속 노출.
+        const showAiBadge = row.aiApplied === true && isAiDebugMode();
+        const showBadHint = !row.aiApplied && quality.tier === "bad";
         return (
         <Row key={row.id}>
           <div>
@@ -376,8 +380,9 @@ export const ProductTable: React.FC<{
               value={row.name}
               onChange={(e) => patch(row.id, { name: e.target.value })}
             />
+            {/* DEBUG-ONLY: AI 보정 흔적 배지. aiDebug 플래그가 켜진 경우에만 노출. */}
             {showAiBadge && (
-              <AiAppliedBadge title="Tesseract 가 놓친 항목을 AI 가 보정했어요">
+              <AiAppliedBadge title="[DEBUG] Tesseract 가 놓친 항목을 AI 가 보정">
                 ✨ AI 보정됨
               </AiAppliedBadge>
             )}
@@ -413,7 +418,7 @@ export const ProductTable: React.FC<{
               //       가 이미 확정한 경우. 부드러운 톤.
               //   (c) 그 외 (드문 경로): 기존 "확인 필요" 배지.
               (row.priceOcrFailed && !row.aiApplied ? (
-                <ZeroPriceHint title="Tesseract 가 이 행의 가격 숫자를 읽지 못했어요. 이미지에서 확인 후 직접 입력해 주세요.">
+                <ZeroPriceHint title="이 행의 가격 숫자가 흐릿하게 인식됐어요. 이미지에서 확인 후 직접 입력해 주세요.">
                   ⚠ 가격 인식 실패
                 </ZeroPriceHint>
               ) : acknowledgedZeroIds.has(row.id) ? (

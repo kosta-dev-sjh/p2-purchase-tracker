@@ -20,6 +20,7 @@ import { ProgressBar } from "../../../components/primitives/ProgressBar";
 import { AiLoadingBlock } from "../../../components/primitives/AiLoadingBlock";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
+import { isAiDebugMode } from "../../../utils/aiDebug";
 
 /**
  * 모달이 받는 진행률 이벤트 타입. 실제 생성은 analyzeUploadedImages 가 담당하므로
@@ -138,12 +139,25 @@ const Notice = styled.div`
 `;
 
 /**
- * AI 보정 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종.
- * CsvUpload 의 AiLoadingIndicator 와 같은 톤(이모지 + 친근한 한국어 + pulse 애니메이션) 으로
- * 통일감을 줍니다. AI 호출이 평소보다 길어져도 "살아 있다" 는 신호가 끊기지 않도록 메시지가
- * 자연스럽게 변합니다.
+ * 2차 정확도 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종 (사용자용).
+ *
+ * UX 원칙: 사용자는 파이프라인 안에서 AI 가 돌고 있다는 사실을 알 필요가 없고, 결과 품질만
+ * 관심입니다. 문구는 모두 "도구 이름 언급 없이" 중립적으로. 메시지 변화 자체로 "살아 있다"
+ * 는 신호를 주어 대기 지루함만 완화합니다.
  */
-const AI_OCR_MESSAGES = [
+const NEUTRAL_PROGRESS_MESSAGES = [
+  "✨ 이미지를 자세히 다시 살펴보고 있어요...",
+  "🔎 놓친 상품명과 가격을 하나씩 확인하는 중이에요...",
+  "📋 글자가 흐릿한 부분은 원본 이미지와 대조 중입니다...",
+  "⏳ 조금만 더 기다려 주세요, 정확도 올리는 중이에요...",
+  "💪 거의 다 됐어요! 마지막 상품 확인 중입니다...",
+];
+
+/**
+ * DEBUG-ONLY: 동일 단계지만 "AI" 단어를 드러내는 디버그용 메시지. aiDebug 플래그가 켜진
+ * 세션에서만 사용됩니다. 개발자가 실제로 AI 경로가 도는지 시각 확인할 때 유용.
+ */
+const DEBUG_AI_MESSAGES = [
   "✨ AI 가 이미지를 자세히 살펴보고 있어요...",
   "🤖 놓친 상품명과 가격을 하나씩 짚어가는 중이에요...",
   "🔎 글자가 흐릿한 부분은 원본 이미지와 대조 중입니다...",
@@ -164,7 +178,10 @@ interface AnalysisProgressModalProps {
  */
 function humanizeStatus(status: string): string {
   const normalized = status.toLowerCase();
-  if (normalized.includes("ai-fallback")) return "AI 보정 중";
+  // "AI" 는 디버그 모드에서만 드러내고, 일반 사용자에게는 "2차 확인 중" 으로 중립 표시.
+  if (normalized.includes("ai-fallback")) {
+    return isAiDebugMode() ? "AI 보정 중" : "2차 확인 중";
+  }
   if (normalized.includes("recognizing")) return "글자 인식 중";
   if (normalized.includes("initializing")) return "엔진 준비 중";
   if (normalized.includes("loading language")) return "언어 데이터 불러오는 중";
@@ -183,6 +200,9 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
   const { currentIndex, totalCount, currentFileName, currentThumbUrl, currentPlatform,
     currentProgress, currentStatus, phase } = progress;
   const isAiPhase = phase === "ai-fallback";
+  // 디버그 모드에서는 파이프라인 세부를 보여주고, 실사용자 모드에서는 "2차 정확도 확인" 같은
+  // 도구-독립적인 문구로 보여줍니다. aiDebug 플래그 토글 → 페이지 새로고침 또는 리렌더로 반영.
+  const debugOn = isAiDebugMode();
 
   // 전체 진행률 = 완료된 이미지 수 기준. currentIndex가 지금 처리 중인 이미지이므로
   // "완료 = currentIndex", "전체 = totalCount". 마지막 이미지까지 끝나면 currentIndex === totalCount 가 됩니다.
@@ -197,10 +217,16 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
     <>
       <Overlay aria-hidden />
       <Card role="dialog" aria-modal="true" aria-label="OCR 이미지 분석 진행률">
-        <Title>{isAiPhase ? "AI 보정 중" : "이미지 분석 중"}</Title>
+        <Title>
+          {isAiPhase
+            ? debugOn
+              ? "AI 보정 중 · DEBUG"
+              : "정확도 확인 중"
+            : "이미지 분석 중"}
+        </Title>
         <Subtitle>
           {isAiPhase
-            ? "글자 인식이 흐릿한 항목을 AI 가 다시 살펴 보고 있어요. 원본 이미지를 참고해 이름·가격을 보정하는 단계입니다."
+            ? "글자가 흐릿한 항목을 원본 이미지와 대조해 정확도를 올리고 있어요. 조금만 더 기다려 주세요."
             : "업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가 걸릴 수 있습니다."}
         </Subtitle>
 
@@ -212,7 +238,7 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
           <>
             <Section>
               <SectionLabel>
-                <span>AI 보정 대상</span>
+                <span>{debugOn ? "AI 보정 대상 (DEBUG)" : "정확도 확인 대상"}</span>
                 <strong>
                   {currentIndex + 1} / {Math.max(1, totalCount)}장
                 </strong>
@@ -225,13 +251,14 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
                   </FileName>
                   <FileSub>
                     {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
-                    AI 가 이미지와 텍스트를 비교 중
+                    이미지와 텍스트를 대조 중
                   </FileSub>
                 </FileMeta>
               </CurrentRow>
               {/*
-                Tesseract 에서 깨끗하게 뽑힌 이미지는 AI 대상에서 제외되어 여기에 오지 않습니다.
-                아래 서브텍스트로 "왜 전체 개수보다 적을 수 있는지" 한 줄로 설명합니다.
+                1차 인식에서 깨끗하게 뽑힌 이미지는 2차 확인 대상에서 제외됩니다. 사용자에게는
+                "왜 전체 개수보다 적을 수 있는지" 만 한 줄로 알려주고, 어떤 엔진이 관여하는지는
+                숨깁니다 (디버그 모드에서만 노출).
               */}
               <div
                 style={{
@@ -241,11 +268,16 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
                   lineHeight: 1.5,
                 }}
               >
-                ✅ 파서가 깔끔하게 읽어낸 이미지는 AI 보정을 건너뜁니다.
+                ✅ 이미 깔끔하게 인식된 이미지는 2차 확인을 건너뜁니다.
+                {debugOn && (
+                  <span style={{ marginLeft: 6, color: "#9ca3af" }}>
+                    (DEBUG: pickBadProducts 필터 기준)
+                  </span>
+                )}
               </div>
             </Section>
             <AiLoadingBlock
-              messages={AI_OCR_MESSAGES}
+              messages={debugOn ? DEBUG_AI_MESSAGES : NEUTRAL_PROGRESS_MESSAGES}
               subText="이미지 복잡도에 따라 한 장당 3~10초 정도 걸릴 수 있어요."
             />
           </>
@@ -288,7 +320,7 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
 
         <Notice>
           {isAiPhase
-            ? "AI 보정은 놓친 상품만 골라서 처리하니 오래 걸리지 않아요. 완료되면 자동으로 편집 화면으로 이동합니다."
+            ? "2차 확인은 놓친 상품만 골라서 처리하니 오래 걸리지 않아요. 완료되면 자동으로 편집 화면으로 이동합니다."
             : "분석이 끝나면 자동으로 편집 화면으로 이동해요. 이 창이 닫힐 때까지 기다려 주세요."}
         </Notice>
       </Card>
