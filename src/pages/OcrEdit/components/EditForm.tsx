@@ -15,6 +15,7 @@ import { tokens } from "../../../styles/tokens";
 import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder, Status } from "../data";
 import { isAiDebugMode } from "../../../utils/aiDebug";
+import { detectTruncation } from "../../../utils/ocrTruncation";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
 const ImageSummary = styled.div`
@@ -106,6 +107,30 @@ const BulkButton = styled.button`
 
 /** 일괄 변경 후보 status — 일반 사용자에게 의미 있는 4종. */
 const BULK_STATUS_OPTIONS: Status[] = ["purchase", "cancel", "refund", "sub"];
+
+/**
+ * 잘림 경고 배너. 캡쳐 위/아래가 잘려 보이면 노출. 사용자가 잘린 부분을 보지 못하면
+ * 가격·이름이 누락된 채 저장될 수 있으므로 미리 알려 다시 캡쳐를 안내합니다.
+ *
+ * 색은 warn 톤(노랑계열) — 저장을 막지는 않는 soft warning.
+ */
+const TruncationBanner = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fcd34d;
+  border-radius: ${tokens.radius.card};
+  background: ${tokens.color.warnBg};
+  color: #92400e;
+  font-size: 11.5px;
+  line-height: 1.55;
+
+  strong {
+    font-weight: 700;
+  }
+`;
 
 /**
  * 기본 카테고리 목록. CATEGORY_LABELS의 key/label을 그대로 펼쳐 두고,
@@ -216,6 +241,27 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼
         저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요.
       </Hint>
+
+      {(() => {
+        // 잘림(truncation) 경고. detectTruncation 의 두 신호(topCut/bottomCut) 중 하나라도
+        // 있으면 사용자에게 "이 캡쳐는 일부가 잘린 것 같다" 를 미리 알려 다시 캡쳐를 유도합니다.
+        // 저장은 막지 않고 단순 hint — 이미 입력된 카드는 그대로 사용 가능.
+        const sig = detectTruncation(image);
+        if (!sig.topCut && !sig.bottomCut) return null;
+        const parts: string[] = [];
+        if (sig.topCut) parts.push("위쪽 (주문 헤더가 보이지 않음)");
+        if (sig.bottomCut) parts.push("아래쪽 (마지막 상품 가격이 잘림)");
+        return (
+          <TruncationBanner role="status" aria-live="polite">
+            <span aria-hidden="true">⚠️</span>
+            <span>
+              <strong>이 캡쳐의 {parts.join(" · ")}</strong>이 잘렸을 수 있어요.
+              누락된 부분이 있다면 그 영역을 다시 캡쳐해 새 이미지로 추가하시면
+              됩니다. 누락이 없다면 그대로 진행하셔도 됩니다.
+            </span>
+          </TruncationBanner>
+        );
+      })()}
 
       {image.orders.length >= 2 && onOrderPatch && (
         // 한 캡쳐 안 주문이 2건 이상일 때만 일괄 툴바 노출. 1건이면 OrderCard 의 자체 dropdown 으로 충분.
