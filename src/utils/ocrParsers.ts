@@ -185,13 +185,34 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     /^배송\s*조회\s*$/,
     /^리뷰(?:\s*작성(?:하기)?|\s*쓰기)\s*$/,
     /^교환[,\s]*반품\s*신청\s*$/,
-    /^판매자\s*문의\s*$/,
+    // 2026-04-24: 실측 캡쳐에서 "판매자 문의" 행 앞에 `@` 아이콘 OCR 잔류가 자주 붙습니다.
+    //   예: 222111 의 "@ 판매자문의" → 이전 정확 매칭 패턴은 anchor 로 거부되어 nameBuffer 로
+    //   떨어지고 end-of-loop 소프트 커밋에서 price=0 phantom 카드가 발생했습니다. leading 허용.
+    /^[\s@·•\-*]*판매자\s*문의\s*$/,
     /^주문\s*취소\s*>?\s*$/,
     // 모바일 버튼.
     /^더보기\s*$/,
     /^상세보기\s*>?\s*$/,
     /^배송\s*[·•\-]?\s*주문\s*관리\s*$/,
     /^바로\s*구매\s*$/,
+    // 모바일 버튼 OCR 잔류 — 쿠팡 앱의 "배송 · 주문 관리 | 바로구매 | [장바구니아이콘]" 버튼 행이
+    //   Tesseract 에서 "배송" 접두가 붙기도/빠지기도 하고, 중간점이 `ㆍ` 로 떨어지며 꼬리에
+    //   `번`/`벌`/`낼`/`드래` 같은 아이콘 오인식 파편이 이어지는 케이스가 9장 중 5장에서
+    //   관찰됐습니다. 또한 앞쪽에 "배송" 버튼 텍스트가 붙어 `배송 ㆍ 주문관리...` 가 되거나,
+    //   같은 행의 좌측 상품 스펙 꼬리(`패이 56배속`)가 `ㆍ 주문관리...` 앞에 붙어 섞여 나오기도
+    //   합니다. prefix 를 정확히 잡기 어려워, **"주문관리" / "바로구매" 중 하나라도 포함된
+    //   길이 ≤ 60 의 라인** 은 통째로 버튼 노이즈로 간주합니다. 쿠팡 상품명에는 두 phrase 가
+    //   등장하지 않아(button UI 전용 문구) 안전합니다. 가격/상태/분리배송 검사가 이미 이 라인
+    //   보다 앞서 도는 덕에 숫자가 섞인 진짜 가격 라인은 여기까지 오지 않습니다.
+    //
+    //   예: "ㆍ 주문관리바로구매 `", "배송 ㆍ 주문관리바로구매벌", "패이 56배속 ㆍ 주문관리으소묘"
+    //       → 모두 "주문관리" 포함 · 길이 ≤ 60 → 버튼 노이즈로 컷.
+    /^.{0,60}주문\s*관리.*$/,
+    /^.{0,60}바로\s*구매.*$/,
+    // 장바구니 아이콘 OCR 부스러기 (쿠팡 앱 우측 하단 carts 아이콘을 한 글자씩 읽어 `으스묘`,
+    //   `으스뇨`, `으소묘`, `미의슬뇨`, `스뇨` 로 뱉는 실측 케이스). "0 20 으스묘" 처럼 디지트/
+    //   공백이 앞에 섞여 들어오는 변이까지 잡도록 prefix 를 짧은 임의 문자열로 엽니다.
+    /^.{0,10}(?:으스묘|으스뇨|으소묘|미의슬뇨|스뇨)\s*$/,
     // 화면 헤더 / 검색창 placeholder / 목록 타이틀.
     /^주문한\s*상품을\s*검색할\s*수\s*있어요[!！]?\s*$/,
     /^주문\s*목록\s*$/,
@@ -205,10 +226,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   ];
 
   // 분리배송 마커 — "일부 상품이 분리되어 배송됩니다" / "분리배송된 상품입니다" / 단독 "• 분리 배송".
+  // leading OCR junk (`@`, `"`, `'`, bullet, dot 등) 은 흡수해서, `@ 일부 상품이 분리되어...`
+  // 같은 실제 캡쳐 케이스에서도 마커가 떨어지지 않도록 합니다 (222053, 222127 회귀 방지).
   const COUPANG_SPLIT_MARKERS = [
-    /^일부\s*상품이\s*분리되어\s*배송됩니다[.…]?\s*$/,
-    /^분리배송된\s*상품입니다[.…]?\s*$/,
-    /^[\s•·\-*]*분리\s*배송\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*일부\s*상품이\s*분리되어\s*배송됩니다[.…]?\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*분리배송된\s*상품입니다[.…]?\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*분리\s*배송\s*$/,
   ];
 
   // 주문일 코어 패턴 — `2026. 4. 22` 처럼 "YYYY. M. DD" 세 숫자를 뽑아냅니다. pre-scan 용은
@@ -273,6 +296,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 
   // 주문 헤더 (inline): 라인 맨 앞에서 날짜로 시작할 때만 헤더로 인정. `주문` 단어 요구 없음.
   const orderHeaderRegex = new RegExp('^' + COUPANG_DATE_CORE.source);
+  // 주문 헤더 (inline with numeric prefix): 데스크톱 full-page 스크롤 캡쳐에서 order-count 배지가
+  // 같은 시각 행에 `236368 2025. 12. 17 주문 상세보기 >` 처럼 앞에 붙어 나오는 케이스를 커버합니다.
+  // 오탐 방지를 위해 **`주문` 단어가 같은 라인에 함께 있어야만** 헤더로 인정합니다.
+  const orderHeaderPrefixedRegex = new RegExp(
+    '^\\s*\\d+\\s+' + COUPANG_DATE_CORE.source + '.*주\\s*문'
+  );
 
   // 상품명 앞에 붙는 쿠팡 전용 태그/아이콘. 선두 장식·가비지 → 로켓/시간/멤버십/프로모 compound →
   // bare badge 순으로 alternation 을 쌓습니다. 여러 개가 겹쳐 붙을 수 있어 caller 에서 while 로
@@ -325,8 +354,16 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 
   // 맨 앞의 "2026. 4. 16" 처럼 "주문" 단어 없이 날짜만 뜨는 최후의 폴백 용도로 스캔해 둡니다.
   // 메인 루프가 진짜 주문 헤더("주문" 단어 포함)를 만나면 이 값은 덮어씌워집니다.
-  for (const line of allLines.slice(0, 10)) {
+  //
+  // **첫 상태 라인(배송완료/취소완료 등) 이전의 날짜만** 초기값으로 허용합니다. 모바일 쿠팡
+  // 캡쳐에서는 date 헤더가 카드 *사이에* 오면서 앞쪽에 date 가 없는 "orphan" 카드가 먼저
+  // 등장하는 케이스(006, 007, 004 등)가 있는데, 이전에는 pre-scan 이 먼 뒤쪽 헤더를 집어
+  // 와서 orphan 카드에도 잘못된 date 가 붙었습니다. 상태 라인을 만나면 break 해서 orphan 은
+  // 그대로 date="" 로 남기고, 메인 루프가 실제 헤더를 만날 때 비로소 orderDate 를 갱신하도록
+  // 했습니다. 범위 자체는 30 라인으로 넉넉히 두되, status 게이트가 선행합니다.
+  for (const line of allLines.slice(0, 30)) {
     if (sectionBoundaryRegex.test(line)) break;
+    if (statusLineRegex.test(line)) break;
     const m = line.match(orderDateRegex);
     if (m) {
       const mm = m[2].padStart(2, '0');
@@ -547,8 +584,19 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // 또한 가격/상태/노이즈 라인이 `priceLineRegex` → `statusLineRegex` → `noiseLineRegex`
     // 순으로 **이 헤더 검사보다 앞서** 매치되므로 숫자가 섞인 실제 가격 라인이 헤더로
     // 잘못 잡힐 위험도 낮습니다.
-    const headerMatch = line.match(orderHeaderRegex);
+    const headerMatch =
+      line.match(orderHeaderRegex) ?? line.match(orderHeaderPrefixedRegex);
     if (headerMatch) {
+      // 2026-04-24: 헤더가 **카드 뒤에** 오는 모바일 쿠팡 캡쳐(004/006/007 등 orphan 카드
+      // 바로 아래에 date 가 오는 레이아웃) 에서는 이전까지 쌓인 nameBuffer 를 먼저 soft-commit
+      // 해야 합니다. 이전에는 곧바로 `nameBuffer = []` 로 리셋하면서 "이름만 잡혔고 가격이
+      // OCR 에서 증발한 카드"(예: 004의 덴티본, price=0) 가 통째 증발했습니다. 가격 없이 flush
+      // 될 때의 orderDate 는 **새 header 적용 이전 값** 이어야 해서 update 보다 먼저 soft-commit
+      // 합니다. 웹 캡쳐는 header 가 화면 최상단(statusCardsStarted===0)에 오니 guard 에 걸려
+      // 회귀하지 않습니다.
+      if (statusCardsStarted > 0 && nameBuffer.length > 0) {
+        flushNameAndPrice(0, undefined);
+      }
       const mm = headerMatch[2].padStart(2, '0');
       const dd = headerMatch[3].padStart(2, '0');
       orderDate = `${headerMatch[1]}-${mm}-${dd}`;
@@ -646,7 +694,14 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     if (stripped.length >= 2) {
       const hasKorean = /[가-힣]/.test(stripped);
       const letterCount = (stripped.match(/[A-Za-z]/g) || []).length;
-      if (hasKorean || letterCount >= 3) {
+      // 2026-04-24: 디지트 비율 가드 추가.
+      //   "로 2121" 같이 1글자 한글 + 숫자만 뭉친 OCR 잔류가 nameBuffer 에 들어가 soft-commit
+      //   단계에서 price=0 placeholder 카드로 emit 되는 회귀(004) 가 있어, 전체 글자 중 숫자가
+      //   절반 이상이면 noise 로 버립니다. 정상 상품명은 한글이 주를 이뤄 ratio 가 낮습니다.
+      const nonSpaceLen = stripped.replace(/\s+/g, '').length;
+      const digitCount = (stripped.match(/\d/g) || []).length;
+      const mostlyDigits = nonSpaceLen > 0 && digitCount / nonSpaceLen >= 0.5;
+      if (!mostlyDigits && (hasKorean || letterCount >= 3)) {
         nameBuffer.push(stripped);
       }
     }
