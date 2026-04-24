@@ -139,8 +139,11 @@ export function classifyOcrCardQuality(card: {
   }
 
   // B2. 화면/버튼/split-marker 잔류.
+  //   2026-04-25: 공백 정규화 후 매칭. Tesseract 가 `판매자 문의` 처럼 버튼을 공백 섞어
+  //   뱉는 실사용 케이스에서 substring 리스트(공백 없음) 와 매칭 실패하던 이슈 수정.
+  const nameNoSpace = name.replace(/\s+/g, "");
   for (const g of NAME_HARD_GARBAGE_SUBSTRINGS) {
-    if (name.includes(g)) {
+    if (nameNoSpace.includes(g)) {
       badReasons.push(`마커 잔류: "${g}"`);
       break;
     }
@@ -168,6 +171,36 @@ export function classifyOcrCardQuality(card: {
     if (restHangul >= 8) {
       badReasons.push(`선두 OCR 환각 의심 ("${prefixMatch[0]}")`);
     }
+  }
+
+  // B3d. 선두 latin+digit+latin 파편 (2026-04-25): OCR 이 원본 상품명 앞에 `ns 7 EAE` 같은
+  //   잡문자를 붙여 내뱉는 실사용 케이스. 일반 상품명의 영문 브랜드(`BFL`, `LG`) 는 digit 이
+  //   섞이지 않으므로, **latin + 공백 + digit + 공백 + latin** 의 3단 구조가 선두에 오면
+  //   OCR 환각으로 거의 확정.
+  //   예: "ns 7 EAE 에프에이 EA, 100개입, 4개" → bad.
+  //   대비: "BFL 빅사이즈", "LG 홈베이킹", "[최신형] 차이슨" → 모두 미매치.
+  if (/^[a-zA-Z]+\s+\d+\s+[a-zA-Z]/.test(name)) {
+    badReasons.push("선두 latin+digit+latin 파편");
+  }
+
+  // B3e. 선두 기호+라틴 파편: `+ wy 하우스오브허...` 처럼 상품명 앞에 기호 + 공백 + 짧은 라틴
+  //   글자가 붙는 케이스. 정상 상품명은 `[...]`/`(...)` 대괄호/괄호로 프로모 태그를 두르고,
+  //   `+` / `-` / `*` / `=` 같은 기호 뒤에 공백+라틴이 오는 조합은 OCR 버튼·아이콘 잔류.
+  if (/^[+\-*/=<>~]\s+[a-zA-Z]/.test(name)) {
+    badReasons.push("선두 기호+라틴 파편");
+  }
+
+  // B3f. 꼬리 `, 숫자` 파편: "끈끈이 트랩, 674" 처럼 이름 끝이 `쉼표 + 숫자` 로 끝나는 케이스.
+  //   가격·수량 파편이 상품명으로 누수된 전형적 신호. 정상 상품명은 `, 5개` / `, 100g` 처럼
+  //   숫자 뒤에 단위가 오므로 "숫자로만" 끝나는 경우만 잡음.
+  if (/,\s*\d+\s*\.?\s*$/.test(name)) {
+    badReasons.push("꼬리 숫자 파편 (단위 없음)");
+  }
+
+  // B3g. 꼬리 `, 단일 라틴 글자` 파편: "..., 17, i." 처럼 쉼표 + 1~2자 라틴 + 선택 온점으로
+  //   끝나는 케이스. OCR 이 상품명 꼬리를 단일 글자로 잘라 뱉은 전형.
+  if (/,\s*[a-zA-Z]{1,2}\.?\s*$/.test(name)) {
+    badReasons.push("꼬리 단일 라틴 파편");
   }
 
   // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.

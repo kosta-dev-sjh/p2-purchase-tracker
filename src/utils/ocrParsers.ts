@@ -617,6 +617,31 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     const joined = stripTrailingOcrResidue(
       stripTags(nameBuffer.join('').replace(/\s+/g, ' ').trim())
     );
+
+    // 2026-04-25 phantom guard: 이름이 결국 **버튼 문구 그 자체** 로 정리되면 카드로 emit 하지
+    // 말고 조용히 폐기. 원인: Tesseract 가 "판매자 문의" / "배송조회" 같은 우측 액션 버튼 라인을
+    // noiseLineRegex 가 못 잡는 변형(예: "판 매 자  문 의") 로 뱉고, 단일-자모 rejoin 이 "판매자
+    // 문의" 로 복원한 뒤 nameBuffer 로 흘러 들어가 soft-commit 경로에서 price=0 phantom 카드로
+    // emit 되는 실사용 버그 리포트. 공백을 제거한 비교로 OCR 변형까지 한꺼번에 흡수합니다.
+    const PHANTOM_BUTTON_PHRASES = new Set([
+      "판매자문의",
+      "장바구니담기",
+      "배송조회",
+      "교환반품신청",
+      "고환반품신청",
+      "반품신청",
+      "주문취소",
+      "주문상세보기",
+      "배송주문관리",
+      "주문관리",
+      "바로구매",
+    ]);
+    const joinedNoSpace = joined.replace(/\s+/g, "");
+    if (PHANTOM_BUTTON_PHRASES.has(joinedNoSpace)) {
+      nameBuffer = [];
+      return; // phantom skip
+    }
+
     const itemName = joined.length > 0 ? joined : null;
     // 정책 변경(2026-04-23): 이름 없이 가격만 잡힌 주문도 더 이상 조용히 버리지 않습니다.
     //
