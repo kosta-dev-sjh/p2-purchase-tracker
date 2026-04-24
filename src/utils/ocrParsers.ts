@@ -411,6 +411,22 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 파서가 아직 첫 status 를 만나기 전이라면 pre-amble 잔존물이 nameBuffer 에 들어 있을 수
   // 있어 soft-commit 하지 않습니다.
   let statusCardsStarted = 0;
+  // 2026-04-25: end-of-loop phantom 방지용 두 플래그.
+  //   lastStatusHadPrice : 직전 status-reset 이후 priceLine 이 한 번이라도 매칭됐는지.
+  //   bufferReopenedAfterPrice : priceLine 매칭 이후에 **새로** name 라인이 nameBuffer 에
+  //     push 되어 "다음 카드" 가 쌓이기 시작했는지. 이게 true 이면 end-of-loop 에 도달한
+  //     buffer 는 "price 없이 쌓다 만 다음 카드" 로 phantom 확정.
+  //
+  //   phantom 판정 조건 (end-of-loop 에서 drop):
+  //     · lastStatusHadPrice=false  → status 안에서 price 한 번도 없음 + buffer 만 남음
+  //       (예: 002 벨로티 — 화면 맨 아래 잘린 fragment / 추천 섹션)
+  //     · lastStatusHadPrice=true && bufferReopenedAfterPrice=true → price 이후 새로 쌓은 buffer
+  //       (예: 003 의슬뇨 — 화장지 price flush 뒤 icon OCR 이 나타남)
+  //   legit emit (= 기존 복구 정책) 조건:
+  //     · lastStatusHadPrice=false && bufferReopenedAfterPrice=false
+  //       → 이 status 의 첫 카드가 price OCR 실패 (222018 aroma 오일 스타일)
+  let lastStatusHadPrice = false;
+  let bufferReopenedAfterPrice = false;
 
   // 맨 앞의 "2026. 4. 16" 처럼 "주문" 단어 없이 날짜만 뜨는 최후의 폴백 용도로 스캔해 둡니다.
   // 메인 루프가 진짜 주문 헤더("주문" 단어 포함)를 만나면 이 값은 덮어씌워집니다.
@@ -762,6 +778,8 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       if (Number.isFinite(price) && price >= 0) {
         const quantity = pm[2] ? Number(pm[2]) : undefined;
         flushNameAndPrice(price, quantity);
+        lastStatusHadPrice = true;
+        bufferReopenedAfterPrice = false;
         continue;
       }
       // 가격 매치되었지만 숫자 파싱 실패 → 아래 이름 후보 처리로 폴백하지 말고 그냥 스킵.
@@ -777,6 +795,8 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       const price = Number(priceStr);
       if (Number.isFinite(price) && price > 0) {
         flushNameAndPrice(price, undefined);
+        lastStatusHadPrice = true;
+        bufferReopenedAfterPrice = false;
         continue;
       }
       continue;
@@ -801,6 +821,9 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       currentStatus = line;
       nameBuffer = [];
       statusCardsStarted += 1;
+      // 새 status 구간 시작 — 플래그 리셋. 이 status 에서 priceLine 매칭 여부를 새로 추적.
+      lastStatusHadPrice = false;
+      bufferReopenedAfterPrice = false;
       // 새 카드가 시작됐으니 직전 카드에서 못 소비한 pendingSplit 플래그는 폐기합니다.
       // (정상 플로우에서는 flush 시점에 이미 소비됐을 것이지만, name 라인이 누락된 경우
       // 다음 무관한 카드까지 split 으로 오염되는 걸 막기 위한 안전장치.)
@@ -829,16 +852,26 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // 이기 때문에 `한글이 있거나 || 영문 3자+` 로 좁혀도 정상 상품명은 모두 보존됩니다.
     const stripped = stripTags(line);
     if (stripped.length >= 2) {
-      const hasKorean = /[가-힣]/.test(stripped);
+      const koreanCount = (stripped.match(/[가-힣]/g) || []).length;
       const letterCount = (stripped.match(/[A-Za-z]/g) || []).length;
-      // 2026-04-24: 디지트 비율 가드 추가.
+      // 2026-04-24: 디지트 비율 가드.
       //   "로 2121" 같이 1글자 한글 + 숫자만 뭉친 OCR 잔류가 nameBuffer 에 들어가 soft-commit
       //   단계에서 price=0 placeholder 카드로 emit 되는 회귀(004) 가 있어, 전체 글자 중 숫자가
-      //   절반 이상이면 noise 로 버립니다. 정상 상품명은 한글이 주를 이뤄 ratio 가 낮습니다.
+      //   절반 이상이면 noise 로 버립니다.
       const nonSpaceLen = stripped.replace(/\s+/g, '').length;
       const digitCount = (stripped.match(/\d/g) || []).length;
       const mostlyDigits = nonSpaceLen > 0 && digitCount / nonSpaceLen >= 0.5;
-      if (!mostlyDigits && (hasKorean || letterCount >= 3)) {
+      // 2026-04-25: 단일 한글(1 글자) 만 포함한 라인은 icon OCR 노이즈일 확률이 압도적.
+      //   실측 케이스: 002의 "구0 ? ~", 일반 쿠팡 앱 하단 아이콘이 `구`/`무` 한 글자로 찍힘.
+      //   정상 한국 상품명 라인은 2+ 한글 어휘가 포함됨 (브랜드·단위 어휘 제외 시에도).
+      //   순수 영문 브랜드(BFL, HANYO) 3자+는 letterCount 로 별도 허용.
+      const qualifies = koreanCount >= 2 || letterCount >= 3;
+      if (!mostlyDigits && qualifies) {
+        // priceLine 매칭 후 첫 name push 는 "다음 카드 시작" 의 신호. end-of-loop phantom
+        // 가드에서 사용. buffer 가 비었다가 채워지는 transition 만 추적.
+        if (nameBuffer.length === 0 && lastStatusHadPrice) {
+          bufferReopenedAfterPrice = true;
+        }
         nameBuffer.push(stripped);
       }
     }
@@ -853,9 +886,23 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 루프 안의 status 라인 soft-commit 정책 (위 참조) 과 동일한 근거로 마지막 카드도 동일하게
   // price=0 placeholder 로 살려 냅니다. statusCardsStarted 가드로 pre-amble (아직 첫 status
   // 가 나오기 전 단계) 의 잔존 nameBuffer 까지 부풀리지 않도록 방어합니다.
-  if (statusCardsStarted > 0 && nameBuffer.length > 0) {
-    flushNameAndPrice(0, undefined, { priceOcrFailed: true });
-  }
+  //
+  // 2026-04-25 phantom 방지 — **end-of-loop soft-commit 자체를 제거**.
+  //
+  // 배경: 쌓였던 두 가지 시나리오가 모두 phantom 으로 확인:
+  //   · status 안에서 price 한 번도 없이 buffer 만 쌓임 → 잘린 fragment/추천 섹션 (002 "벨로티")
+  //   · price flush 이후 새로 쌓인 buffer → icon OCR 노이즈 (003 "의슬뇨")
+  // legit 해 보였던 "첫 카드 price 실패" 케이스 (222018 aroma) 는 실측상 priceLineFallback 이
+  // "장바구니 담기" 앵커로 5290원을 이미 잡아주기 때문에 end-of-loop 에 도달하지 않음.
+  //
+  // 즉 현재 샘플 23장 기준 end-of-loop soft-commit 은 **항상 phantom**. 완전 제거해 phantom 0.
+  // 만약 미래에 legit cut-off 마지막 카드가 발견되면, priceLineFallback 앵커 어휘를 넓히거나
+  // AI 보정 경로로 회수하는 쪽이 더 정확 (phantom 비용 > 복구 이득).
+  //
+  // ※ lastStatusHadPrice / bufferReopenedAfterPrice 플래그는 현재 소비처가 없어졌지만 디버깅
+  //   추적용으로 남겨둘지 여부는 차후 판단. 지금은 변수 선언만 남기고 조건문은 제거.
+  void lastStatusHadPrice;
+  void bufferReopenedAfterPrice;
 
   if (results.length === 0) {
     return [{ mall, itemName: null, price: null, date: orderDate, rawText, statusText: rawText }];
