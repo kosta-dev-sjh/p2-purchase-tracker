@@ -17,6 +17,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
+import { AiLoadingBlock } from "../../../components/primitives/AiLoadingBlock";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
 
@@ -136,6 +137,20 @@ const Notice = styled.div`
   line-height: 1.5;
 `;
 
+/**
+ * AI 보정 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종.
+ * CsvUpload 의 AiLoadingIndicator 와 같은 톤(이모지 + 친근한 한국어 + pulse 애니메이션) 으로
+ * 통일감을 줍니다. AI 호출이 평소보다 길어져도 "살아 있다" 는 신호가 끊기지 않도록 메시지가
+ * 자연스럽게 변합니다.
+ */
+const AI_OCR_MESSAGES = [
+  "✨ AI 가 이미지를 자세히 살펴보고 있어요...",
+  "🤖 놓친 상품명과 가격을 하나씩 짚어가는 중이에요...",
+  "🔎 글자가 흐릿한 부분은 원본 이미지와 대조 중입니다...",
+  "⏳ 조금만 더 기다려 주세요, 정확도 올리는 중이에요...",
+  "💪 거의 다 됐어요! 마지막 상품 확인 중입니다...",
+];
+
 interface AnalysisProgressModalProps {
   isOpen: boolean;
   progress: AnalysisProgress;
@@ -185,50 +200,87 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
         <Title>{isAiPhase ? "AI 보정 중" : "이미지 분석 중"}</Title>
         <Subtitle>
           {isAiPhase
-            ? "글자 인식이 흐릿한 항목을 AI 가 다시 살펴 보고 있어요. 원본 이미지를 참고해 이름·가격을 보정하는 단계로, 5~10초 정도 걸릴 수 있습니다."
+            ? "글자 인식이 흐릿한 항목을 AI 가 다시 살펴 보고 있어요. 원본 이미지를 참고해 이름·가격을 보정하는 단계입니다."
             : "업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가 걸릴 수 있습니다."}
         </Subtitle>
 
-        <Section>
-          <SectionLabel>
-            <span>{isAiPhase ? "AI 보정 진행" : "전체 진행"}</span>
-            <strong>{isAiPhase ? `${Math.round(currentProgress * 100)}%` : overallPercentLabel}</strong>
-          </SectionLabel>
-          <ProgressBar
-            value={isAiPhase ? currentProgress : overallRatio}
-            tone={isAiPhase ? "accent" : "neutral"}
-            size={8}
-            indeterminate={isAiPhase && currentProgress === 0}
-          />
-        </Section>
+        {isAiPhase ? (
+          // AI 단계는 응답 시간이 가변적이라 진행 바 대신 공용 AiLoadingBlock 사용:
+          //   - CSV 분석 로딩(AiLoadingIndicator) 과 동일한 스피너·메시지 로테이션 톤
+          //   - 현재 어느 이미지 처리 중인지 썸네일/파일명은 그대로 노출해 맥락 유지
+          //   - 이미지 단위 순서("N번째 / M장") 는 Section 형태로 한 줄만 보여줌
+          <>
+            <Section>
+              <SectionLabel>
+                <span>진행 이미지</span>
+                <strong>
+                  {Math.min(
+                    Math.floor(currentProgress * Math.max(1, totalCount)) + 1,
+                    Math.max(1, totalCount),
+                  )}
+                  {" / "}
+                  {Math.max(1, totalCount)}장
+                </strong>
+              </SectionLabel>
+              <CurrentRow>
+                <Thumb $src={currentThumbUrl} aria-hidden />
+                <FileMeta>
+                  <FileName title={currentFileName}>
+                    {currentFileName || "이미지 준비 중"}
+                  </FileName>
+                  <FileSub>
+                    {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
+                    AI 가 이미지와 텍스트를 비교 중
+                  </FileSub>
+                </FileMeta>
+              </CurrentRow>
+            </Section>
+            <AiLoadingBlock
+              messages={AI_OCR_MESSAGES}
+              subText="이미지 복잡도에 따라 한 장당 3~10초 정도 걸릴 수 있어요."
+            />
+          </>
+        ) : (
+          <>
+            <Section>
+              <SectionLabel>
+                <span>전체 진행</span>
+                <strong>{overallPercentLabel}</strong>
+              </SectionLabel>
+              <ProgressBar value={overallRatio} tone="neutral" size={8} />
+            </Section>
 
-        <Section>
-          <SectionLabel>
-            <span>현재 이미지</span>
-            <strong>{currentPercent}%</strong>
-          </SectionLabel>
-          <CurrentRow>
-            <Thumb $src={currentThumbUrl} aria-hidden />
-            <FileMeta>
-              <FileName title={currentFileName}>
-                {currentFileName || "이미지 준비 중"}
-              </FileName>
-              <FileSub>
-                {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
-                {humanizeStatus(currentStatus)}
-              </FileSub>
-            </FileMeta>
-          </CurrentRow>
-          <ProgressBar
-            value={currentProgress}
-            tone="accent"
-            size={8}
-            indeterminate={!currentStatus.toLowerCase().includes("recognizing") && currentPercent === 0}
-          />
-        </Section>
+            <Section>
+              <SectionLabel>
+                <span>현재 이미지</span>
+                <strong>{currentPercent}%</strong>
+              </SectionLabel>
+              <CurrentRow>
+                <Thumb $src={currentThumbUrl} aria-hidden />
+                <FileMeta>
+                  <FileName title={currentFileName}>
+                    {currentFileName || "이미지 준비 중"}
+                  </FileName>
+                  <FileSub>
+                    {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
+                    {humanizeStatus(currentStatus)}
+                  </FileSub>
+                </FileMeta>
+              </CurrentRow>
+              <ProgressBar
+                value={currentProgress}
+                tone="accent"
+                size={8}
+                indeterminate={!currentStatus.toLowerCase().includes("recognizing") && currentPercent === 0}
+              />
+            </Section>
+          </>
+        )}
 
         <Notice>
-          분석이 끝나면 자동으로 편집 화면으로 이동해요. 이 창이 닫힐 때까지 기다려 주세요.
+          {isAiPhase
+            ? "AI 보정은 놓친 상품만 골라서 처리하니 오래 걸리지 않아요. 완료되면 자동으로 편집 화면으로 이동합니다."
+            : "분석이 끝나면 자동으로 편집 화면으로 이동해요. 이 창이 닫힐 때까지 기다려 주세요."}
         </Notice>
       </Card>
     </>
