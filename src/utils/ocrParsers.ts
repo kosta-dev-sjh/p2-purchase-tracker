@@ -20,6 +20,14 @@ export interface PurchaseOCRResult {
    * 파서가 못 찾았으면 undefined — caller가 기본값 1을 쓰도록 내버려 둡니다.
    */
   quantity?: number;
+  /**
+   * Tesseract 가 가격 라인을 아예 못 읽어서 soft-commit 된 카드 표시. `price` 필드가 0 이면
+   * 두 가지 의미가 가능한데 (사은품·쿠폰으로 실제 0원 / OCR 이 `11,900 원` 을 `oo 장바구니 담기`
+   * 같은 쓰레기로 읽어 가격 라인이 증발), 전자는 사용자가 그대로 저장하면 되고 후자는 AI
+   * 보정 대상입니다. 이 플래그가 true 면 후자. priceLineRegex 매칭이 한 번도 안 일어났을 때만
+   * 파서가 true 로 찍습니다.
+   */
+  priceOcrFailed?: boolean;
 }
 
 /**
@@ -537,7 +545,12 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     return cleaned.trim();
   };
 
-  const flushNameAndPrice = (priceNum: number, quantity: number | undefined) => {
+  // priceOcrFailed: soft-commit 경로에서만 true 로 넘어옵니다. 정상 priceLineRegex 매칭 시 false/undefined.
+  const flushNameAndPrice = (
+    priceNum: number,
+    quantity: number | undefined,
+    opts: { priceOcrFailed?: boolean } = {},
+  ) => {
     // 라인 단위로 한 번 stripTags 를 했어도, 쿠팡이 상품 박스를 여러 줄로 쪼개 뱉어
     // 첫 줄에 "판매자 로켓" 같은 태그 조각, 둘째 줄에 실제 상품명이 오는 경우가 있습니다.
     // 이때는 join 뒤 선두에 다시 태그가 모여 올라오므로, 마지막에 한 번 더 돌려 꼬리를 정리합니다.
@@ -582,6 +595,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       rawText,
       statusText: currentStatus ?? undefined,
       quantity,
+      ...(opts.priceOcrFailed ? { priceOcrFailed: true } : {}),
     };
     if (pendingSplit) {
       entry._splitDelivery = true;
@@ -629,7 +643,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       // 합니다. 웹 캡쳐는 header 가 화면 최상단(statusCardsStarted===0)에 오니 guard 에 걸려
       // 회귀하지 않습니다.
       if (statusCardsStarted > 0 && nameBuffer.length > 0) {
-        flushNameAndPrice(0, undefined);
+        flushNameAndPrice(0, undefined, { priceOcrFailed: true });
       }
       const mm = headerMatch[2].padStart(2, '0');
       const dd = headerMatch[3].padStart(2, '0');
@@ -693,7 +707,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
       // (statusCardsStarted===0 이면 pre-amble 잔존물 — 주문 헤더 위의 화면 제목 등 — 이라
       //  soft-commit 하지 않습니다.)
       if (statusCardsStarted > 0 && nameBuffer.length > 0) {
-        flushNameAndPrice(0, undefined);
+        flushNameAndPrice(0, undefined, { priceOcrFailed: true });
       }
       currentStatus = line;
       nameBuffer = [];
@@ -751,7 +765,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // price=0 placeholder 로 살려 냅니다. statusCardsStarted 가드로 pre-amble (아직 첫 status
   // 가 나오기 전 단계) 의 잔존 nameBuffer 까지 부풀리지 않도록 방어합니다.
   if (statusCardsStarted > 0 && nameBuffer.length > 0) {
-    flushNameAndPrice(0, undefined);
+    flushNameAndPrice(0, undefined, { priceOcrFailed: true });
   }
 
   if (results.length === 0) {

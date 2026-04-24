@@ -124,25 +124,37 @@ const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
  * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
  */
 /**
- * OCR 품질 배지. classifyOcrCardQuality 의 tier 에 따라 두 가지 톤:
- *   - bad (AI 재분석 권장): warn/neg 톤 — OCR 파서로 복구 불가 신호. split-marker/하드
- *     가비지/한글 비율 부족 등으로 이름이 근본적으로 망가진 카드.
- *   - borderline (이름 확인 필요): info 톤 — 짧거나 자모 파편이 남은 의심 카드. 사용자가
- *     직접 고칠 수 있는 수준이라 소프트 경고만.
- *
- * 실제 AI 호출 트리거는 #47 에서 연결 예정. 현재 버전은 시각 hint 까지.
+ * 2026-04-24 UX 방향 전환: 이전에는 tier 별로 "AI 재분석 권장 / 이름 확인 필요" 두 가지 배지를
+ * 띄워 사용자에게 확인을 요청했지만, 자잘한 잔류까지 경고하면 "이 사이트 OCR 이 미덥지 못하다"
+ * 는 인상을 주어 오히려 신뢰를 깎습니다. 이제는:
+ *   1) AI 가 조용히 bad 카드를 처리 → **✨ AI 보정됨** 배지(차분한 accent 톤, 자랑거리)
+ *   2) AI 도 실패한 잔류 bad → **⚠ 확인 권장** 배지 (neg 톤, 사용자 수동 확인 유도)
+ *   3) borderline (짧은 이름, 자모 1~2개) → 배지 없이 조용히 저장 — 약간의 차이는 감수.
  */
-const QualityHint = styled.span<{ $tier: "bad" | "borderline" }>`
+const AiAppliedBadge = styled.span`
   display: inline-flex;
   align-items: center;
   gap: 4px;
   margin-top: 4px;
   padding: 1px 6px;
   border-radius: 4px;
-  background: ${({ $tier }) =>
-    $tier === "bad" ? tokens.color.negSubtle : tokens.color.accentSubtle};
-  color: ${({ $tier }) =>
-    $tier === "bad" ? tokens.color.neg : tokens.color.accentHover};
+  background: ${tokens.color.accentSubtle};
+  color: ${tokens.color.accentHover};
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+`;
+
+const BadHint = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: ${tokens.color.negSubtle};
+  color: ${tokens.color.neg};
   font-size: 10px;
   font-weight: 700;
   line-height: 1.4;
@@ -238,6 +250,8 @@ function toProduct(row: ProductRow): OcrProduct {
     price: row.priceRaw ? Number(row.priceRaw) : 0,
     link: row.link || undefined,
     ...(row.quantity !== undefined ? { quantity: row.quantity } : {}),
+    ...(row.priceOcrFailed ? { priceOcrFailed: true } : {}),
+    ...(row.aiApplied ? { aiApplied: true } : {}),
   };
 }
 
@@ -348,7 +362,12 @@ export const ProductTable: React.FC<{
           price: row.priceRaw ? Number(row.priceRaw) : 0,
           quantity: row.quantity,
           statusTag,
+          priceOcrFailed: row.priceOcrFailed,
+          aiApplied: row.aiApplied,
         });
+        // 배지 우선순위: aiApplied > bad > (borderline 은 표시 안 함 → UI 소음 최소화)
+        const showAiBadge = row.aiApplied === true;
+        const showBadHint = !showAiBadge && quality.tier === "bad";
         return (
         <Row key={row.id}>
           <div>
@@ -357,15 +376,15 @@ export const ProductTable: React.FC<{
               value={row.name}
               onChange={(e) => patch(row.id, { name: e.target.value })}
             />
-            {quality.tier !== "clean" && (
-              <QualityHint
-                $tier={quality.tier}
-                title={quality.reasons.join(" · ")}
-              >
-                {quality.tier === "bad"
-                  ? "🤖 AI 재분석 권장"
-                  : "이름 확인 필요"}
-              </QualityHint>
+            {showAiBadge && (
+              <AiAppliedBadge title="Tesseract 가 놓친 항목을 AI 가 보정했어요">
+                ✨ AI 보정됨
+              </AiAppliedBadge>
+            )}
+            {showBadHint && (
+              <BadHint title={quality.reasons.join(" · ")}>
+                ⚠ 내용 확인 권장
+              </BadHint>
             )}
           </div>
           <div>
@@ -387,7 +406,17 @@ export const ProductTable: React.FC<{
               "의도한 0원" 임을 표시하면 톤이 부드러워집니다.
             */}
             {(row.priceRaw === "" || Number(row.priceRaw) === 0) &&
-              (acknowledgedZeroIds.has(row.id) ? (
+              // 3-way 분기:
+              //   (a) priceOcrFailed && !aiApplied : Tesseract 실패 상태가 남아있음 — AI 보정이
+              //       스텁이거나 실패한 경우. 가격을 직접 입력하라고 분명히 요청.
+              //   (b) acknowledgedZero 또는 !priceOcrFailed : 진짜 0원(사은품/이벤트) 이거나 사용자
+              //       가 이미 확정한 경우. 부드러운 톤.
+              //   (c) 그 외 (드문 경로): 기존 "확인 필요" 배지.
+              (row.priceOcrFailed && !row.aiApplied ? (
+                <ZeroPriceHint title="Tesseract 가 이 행의 가격 숫자를 읽지 못했어요. 이미지에서 확인 후 직접 입력해 주세요.">
+                  ⚠ 가격 인식 실패
+                </ZeroPriceHint>
+              ) : acknowledgedZeroIds.has(row.id) ? (
                 <ZeroPriceHint
                   $acknowledged
                   title="0원으로 기록돼요. 다시 확인이 필요하면 되돌리기를 누르세요."
@@ -402,7 +431,7 @@ export const ProductTable: React.FC<{
                   </ZeroPriceAction>
                 </ZeroPriceHint>
               ) : (
-                <ZeroPriceHint title="OCR 이 가격을 놓쳤을 수 있어요. 사은품/이벤트 등으로 실제 0원이라면 '이대로 저장' 을 눌러 주세요.">
+                <ZeroPriceHint title="사은품/이벤트 등으로 실제 0원이라면 '이대로 저장' 을 눌러 주세요.">
                   0원 · 확인 필요
                   <ZeroPriceAction
                     type="button"

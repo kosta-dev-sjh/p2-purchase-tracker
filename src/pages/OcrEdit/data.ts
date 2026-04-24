@@ -25,6 +25,17 @@ export interface OcrProduct {
   /** 상품 수량. 쿠팡처럼 "1개", "2개"가 함께 찍히는 캡쳐를 감안해 기본 1. */
   quantity?: number;
   link?: string;
+  /**
+   * Tesseract 가 가격 라인을 아예 못 읽어서 `price` 가 0 으로 떨어진 카드 표시. `price === 0` 이
+   * 두 경우를 의미할 수 있어 (사은품·쿠폰으로 진짜 0원 / OCR 실패) 구분용 플래그.
+   * true 인 카드는 AI 자동 보정 대상, false/undefined 인 0원은 그대로 저장해도 되는 정상 케이스.
+   */
+  priceOcrFailed?: boolean;
+  /**
+   * 이 카드가 AI 보정을 거쳤음을 표시. UI 에서 "✨ AI 보정됨" 배지를 띄우고, 사용자가 다시
+   * 편집하면 이 flag 를 떨어뜨려도 됩니다(편집 후에는 "사용자 확정" 상태라고 보면 됨).
+   */
+  aiApplied?: boolean;
 }
 
 /**

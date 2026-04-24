@@ -14,7 +14,6 @@ import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
 import { CATEGORY_LABELS, PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder } from "../data";
-import { summarizeImageQuality } from "../../../utils/ocrQuality";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
 const ImageSummary = styled.div`
@@ -39,28 +38,20 @@ const Hint = styled.div`
 `;
 
 /**
- * AI 재분석 배너 — summarizeImageQuality.shouldShowImageBanner 가 true 일 때만 렌더.
- *
- * 기준 (src/utils/ocrQuality.ts 참고): 카드 3장 이상인 이미지에서 bad 비율이 ≥ 30%.
- * 한 이미지 전체가 OCR 로 복구 불가 수준이면 카드 하나씩 고치기보다 전체를 AI 에 넘기는
- * 쪽이 맥락 보존 유리. 실제 호출 트리거는 #47 에서 연결 예정.
+ * 인식률 요약 배지 — "주문 N건 · 상품 M개" 요약 옆에 AI 보정된 카드 수를 차분한 톤으로
+ * 같이 노출. 경고 배너가 아닌 단순 상태 표시라서, 사용자가 "이 캡쳐가 어느 정도 신뢰할 수
+ * 있나" 를 한눈에 볼 수 있습니다.
  */
-const AiBanner = styled.div`
-  display: flex;
+const SummaryChip = styled.span`
+  display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
-  padding: 10px 12px;
-  border: 1px solid #fcd34d;
-  border-radius: ${tokens.radius.card};
-  background: ${tokens.color.warnBg};
-  color: #92400e;
-  font-size: 12px;
-  line-height: 1.5;
-
-  strong {
-    font-weight: 700;
-  }
+  gap: 4px;
+  padding: 2px 7px;
+  border-radius: ${tokens.radius.chip};
+  background: ${tokens.color.accentSubtle};
+  color: ${tokens.color.accentHover};
+  font-size: 11px;
+  font-weight: 600;
 `;
 
 /**
@@ -149,28 +140,27 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
       <ImageSummary>
         <Tag kind={image.platform}>{PLATFORM_LABELS[image.platform]}</Tag>
         <span>주문 {image.orders.length}건</span>
+        <span>
+          상품 {image.orders.reduce((acc, o) => acc + o.products.length, 0)}개
+        </span>
+        {(() => {
+          // AI 가 손댄 카드 수 — 0 이면 표시 안 함(사용자를 귀찮게 하지 않음).
+          const aiCount = image.orders.reduce(
+            (acc, o) => acc + o.products.filter((p) => p.aiApplied).length,
+            0,
+          );
+          return aiCount > 0 ? (
+            <SummaryChip title="Tesseract 가 놓친 항목을 AI 가 보정했어요">
+              ✨ AI 보정 {aiCount}개
+            </SummaryChip>
+          ) : null;
+        })()}
       </ImageSummary>
 
       <Hint>
         OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼
         저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요.
       </Hint>
-
-      {(() => {
-        // 이미지 단위 품질 요약. 카드 3장 이상이면서 bad 비율 ≥ 30% 일 때만 배너 노출.
-        const q = summarizeImageQuality(image);
-        if (!q.shouldShowImageBanner) return null;
-        return (
-          <AiBanner role="status" aria-live="polite">
-            <span aria-hidden="true">🤖</span>
-            <span>
-              <strong>{q.counts.bad}개 상품</strong>이 OCR 로 복구가 어려워요
-              ({q.total}개 중, <strong>{Math.round(q.badRatio * 100)}%</strong>).
-              캡쳐 전체를 AI 로 재분석하면 정확도가 올라갈 수 있어요.
-            </span>
-          </AiBanner>
-        );
-      })()}
 
       {image.orders.map((order) => (
         <OrderCard

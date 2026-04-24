@@ -82,6 +82,10 @@ export function classifyOcrCardQuality(card: {
   price: number;
   quantity?: number;
   statusTag?: "purchase" | "sub" | "cancel" | "refund";
+  /** Tesseract 가 가격을 아예 못 읽었을 때 true. price===0 이어도 AI 자동 호출 대상이 됨. */
+  priceOcrFailed?: boolean;
+  /** 이미 AI 보정을 거친 카드는 두 번 호출하지 않기 위한 가드. */
+  aiApplied?: boolean;
 }): OcrCardQuality {
   const name = (card.name ?? "").trim();
   const nameLen = name.length;
@@ -97,6 +101,11 @@ export function classifyOcrCardQuality(card: {
   const badReasons: string[] = [];
 
   // --- Tier 1 조건 (OR 만족 시 즉시 bad) ---
+
+  // B0. Tesseract 가 가격을 아예 못 읽음 — 진짜 0원(사은품/쿠폰) 과 구분해서 무조건 AI 호출.
+  if (card.priceOcrFailed) {
+    badReasons.push("Tesseract 가 가격 라인 인식 실패");
+  }
 
   // B1. 이름이 비었거나 한글 3 글자 미만 → 사람이 이해 못 함.
   if (nameLen === 0) {
@@ -132,6 +141,14 @@ export function classifyOcrCardQuality(card: {
 
   // --- Tier 0 조건 (AND 전부 만족해야 clean) ---
 
+  // Tier 0 "clean" 요건.
+  //   - 이름 길이 ≥ 10 && 한글 ≥ 4 → 사람이 대충 알아볼 수 있는 수준
+  //   - price > 0 OR 취소/환불 (priceOcrFailed 는 이미 위에서 bad 처리됐음)
+  //   - 자모 잔류 < 2 개
+  //
+  // ※ 2026-04-24: 이전에 borderline 이었던 약한 신호(짧은 이름, 자모 1 개 등) 는 사용자에게
+  //   배지를 띄워 신뢰도를 떨어뜨리기보다 "그대로 저장" 쪽이 UX 상 낫다는 피드백을 반영해
+  //   borderline 기준을 강하게 조였습니다. 실제 UI 에서 borderline 배지는 노출 안 함.
   const cleanChecks: string[] = [];
   if (nameLen < 10) cleanChecks.push(`이름 짧음 (${nameLen})`);
   if (hangulCount < 4) cleanChecks.push(`한글 < 4 (${hangulCount})`);
@@ -145,6 +162,23 @@ export function classifyOcrCardQuality(card: {
   }
 
   return { tier: "borderline", reasons: cleanChecks };
+}
+
+/** 재분류 시 "bad" 인 제품만 필터링하는 헬퍼 — AI 자동 호출 대상. */
+export function pickBadProducts<T extends {
+  name: string | null | undefined;
+  price: number;
+  quantity?: number;
+  priceOcrFailed?: boolean;
+  aiApplied?: boolean;
+}>(
+  products: T[],
+  statusTag?: "purchase" | "sub" | "cancel" | "refund",
+): T[] {
+  return products.filter((p) => {
+    if (p.aiApplied) return false; // 이미 AI 가 손댄 건 재시도 X
+    return classifyOcrCardQuality({ ...p, statusTag }).tier === "bad";
+  });
 }
 
 /**

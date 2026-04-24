@@ -149,6 +149,7 @@ interface AnalysisProgressModalProps {
  */
 function humanizeStatus(status: string): string {
   const normalized = status.toLowerCase();
+  if (normalized.includes("ai-fallback")) return "AI 보정 중";
   if (normalized.includes("recognizing")) return "글자 인식 중";
   if (normalized.includes("initializing")) return "엔진 준비 중";
   if (normalized.includes("loading language")) return "언어 데이터 불러오는 중";
@@ -165,7 +166,8 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
   if (!isOpen) return null;
 
   const { currentIndex, totalCount, currentFileName, currentThumbUrl, currentPlatform,
-    currentProgress, currentStatus } = progress;
+    currentProgress, currentStatus, phase } = progress;
+  const isAiPhase = phase === "ai-fallback";
 
   // 전체 진행률 = 완료된 이미지 수 기준. currentIndex가 지금 처리 중인 이미지이므로
   // "완료 = currentIndex", "전체 = totalCount". 마지막 이미지까지 끝나면 currentIndex === totalCount 가 됩니다.
@@ -180,17 +182,24 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
     <>
       <Overlay aria-hidden />
       <Card role="dialog" aria-modal="true" aria-label="OCR 이미지 분석 진행률">
-        <Title>이미지 분석 중</Title>
+        <Title>{isAiPhase ? "AI 보정 중" : "이미지 분석 중"}</Title>
         <Subtitle>
-          업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가 걸릴 수 있습니다.
+          {isAiPhase
+            ? "글자 인식이 흐릿한 항목을 AI 가 다시 살펴 보고 있어요. 원본 이미지를 참고해 이름·가격을 보정하는 단계로, 5~10초 정도 걸릴 수 있습니다."
+            : "업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가 걸릴 수 있습니다."}
         </Subtitle>
 
         <Section>
           <SectionLabel>
-            <span>전체 진행</span>
-            <strong>{overallPercentLabel}</strong>
+            <span>{isAiPhase ? "AI 보정 진행" : "전체 진행"}</span>
+            <strong>{isAiPhase ? `${Math.round(currentProgress * 100)}%` : overallPercentLabel}</strong>
           </SectionLabel>
-          <ProgressBar value={overallRatio} tone="neutral" size={8} />
+          <ProgressBar
+            value={isAiPhase ? currentProgress : overallRatio}
+            tone={isAiPhase ? "accent" : "neutral"}
+            size={8}
+            indeterminate={isAiPhase && currentProgress === 0}
+          />
         </Section>
 
         <Section>

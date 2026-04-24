@@ -24,6 +24,8 @@ import {
 import { detectStatusFromOcrText } from "./ocrParse";
 import { preprocessImageForOcr } from "./ocrPreprocess";
 import { applyOcrCorrections } from "./ocrCorrection";
+import { pickBadProducts } from "./ocrQuality";
+import { runAiOcrFallback } from "./aiOcrFallback";
 
 /**
  * 분석 진행률 이벤트. AnalysisProgressModal 이 그대로 받아 두 개의 진행 바를 그립니다.
@@ -39,6 +41,11 @@ export interface OcrAnalysisProgress {
   currentProgress: number;
   /** Tesseract가 준 내부 단계 문자열 그대로. UI에서 한국어로 변환해 보여줍니다. */
   currentStatus: string;
+  /**
+   * 현재 파이프라인 단계. Tesseract 루프가 끝나면 'ai-fallback' 으로 전환돼 복구 불가 카드를
+   * AI 에 넘기고 있음을 UI 에 알립니다. 기본값은 'tesseract'.
+   */
+  phase?: "tesseract" | "ai-fallback";
 }
 
 /**
@@ -61,6 +68,8 @@ function toProduct(
     name: hasItem ? (res.itemName as string) : "상품명 입력 필요",
     price: unitPrice,
     quantity: qty,
+    // Tesseract 단에서 가격 라인을 못 읽은 경우만 플래그를 전파 — AI 자동 보정 트리거 용도.
+    ...(res.priceOcrFailed ? { priceOcrFailed: true } : {}),
   };
 }
 
@@ -305,6 +314,57 @@ export async function analyzeUploadedImages(
                 },
               ],
       });
+    }
+
+    // ───────── AI 자동 보정 단계 ─────────
+    //
+    // Tesseract 루프가 끝난 뒤 전체 처리 결과를 한 번 훑어, "파서로 복구 불가" 로 분류되는
+    // 카드가 있는 이미지에 대해 AI 를 조용히 호출합니다. 권장 배지/배너 없이 파이프라인 안쪽
+    // 에서 자동으로 해결되는 구조 — 사용자가 편집 화면을 볼 때는 이미 aiApplied 배지만 붙은
+    // 상태.
+    //
+    // AI 호출은 이미지 단위로 순회. 한 이미지 안의 모든 주문에 대해 bad 제품을 모아 한 번에
+    // 요청합니다. 현재 구현은 스텁(runAiOcrFallback) 이라 1.2s 지연 후 aiApplied 플래그만 찍어
+    // 돌려주며, 실 API 가 붙으면 여기서 name/price 가 실제로 복구됩니다.
+    const imagesNeedingAi = processed
+      .map((img) => ({
+        img,
+        badPerOrder: img.orders.map((o) => pickBadProducts(o.products, o.statusTag)),
+      }))
+      .filter((x) => x.badPerOrder.some((arr) => arr.length > 0));
+
+    if (imagesNeedingAi.length > 0) {
+      for (let i = 0; i < imagesNeedingAi.length; i += 1) {
+        const { img, badPerOrder } = imagesNeedingAi[i];
+        onProgress({
+          currentIndex: totalCount, // Tesseract 단계가 끝났다고 알려주려고 total 유지.
+          totalCount,
+          currentFileName: img.fileName,
+          currentThumbUrl: img.thumbUrl,
+          currentPlatform: img.platform,
+          currentProgress: i / imagesNeedingAi.length,
+          currentStatus: "ai-fallback",
+          phase: "ai-fallback",
+        });
+
+        // 한 이미지의 모든 주문에서 bad 카드를 합쳐 한 번에 AI 에 질의 (토큰 절약).
+        const flatBad = badPerOrder.flat();
+        if (flatBad.length === 0) continue;
+        const fallback = await runAiOcrFallback({
+          imageId: img.id,
+          platform: img.platform,
+          rawText: img.rawText ?? "",
+          problemProducts: flatBad,
+        });
+        if (fallback.failed) continue;
+
+        // 응답은 입력과 같은 id 순서로 온다는 가정 하에 id → 보정된 product 맵으로 치환.
+        const byId = new Map(fallback.products.map((p) => [p.id, p]));
+        img.orders = img.orders.map((o) => ({
+          ...o,
+          products: o.products.map((p) => byId.get(p.id) ?? p),
+        }));
+      }
     }
 
     // 모든 이미지 완료. 100%로 한 번 더 찍어 줍니다.
