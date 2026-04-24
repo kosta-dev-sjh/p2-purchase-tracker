@@ -30,7 +30,11 @@ const chipTone = {
   `,
 };
 
-export const Chip = styled.span<{ tone?: ChipTone }>`
+// 2026-04-24: `tone` 을 transient prop (`$tone`) 으로 전환.
+//   styled.span 이 non-transient `tone` 을 DOM 으로 그대로 전달해
+//   "unknown prop 'tone' is being sent through to the DOM" 경고가 발생했습니다.
+//   Chip 은 리포 전역에서 쓰이므로 일괄로 접두사 `$` 를 붙이고 호출부도 함께 갱신합니다.
+export const Chip = styled.span<{ $tone?: ChipTone }>`
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -40,6 +44,6 @@ export const Chip = styled.span<{ tone?: ChipTone }>`
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   line-height: 1.4;
-  ${({ tone = "neu" }) => chipTone[tone]};
+  ${({ $tone = "neu" }) => chipTone[$tone]};
 `;
 

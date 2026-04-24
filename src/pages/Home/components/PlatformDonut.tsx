@@ -116,6 +116,9 @@ const Row = styled.li`
 const DonutWrap = styled.div`
   width: 200px;
   height: 200px;
+  /* ResponsiveContainer 가 부모 flex 의 min-width: auto 때문에 첫 프레임에 width=-1 측정값을
+     받아 경고를 쏟아내던 회귀 방지. 고정 200x200 wrap 에도 min-width: 0 을 같이 박습니다. */
+  min-width: 0;
   position: relative;
   margin: 0 auto;
 `;

@@ -93,7 +93,7 @@ export const RepeatTop3: React.FC<{ items: RepeatItem[] }> = ({ items }) => (
   <Card>
     <CardHd>
       <CardTitle>반복 구매 TOP 3</CardTitle>
-      <Chip tone="info">이번 달 3회 이상 구매</Chip>
+      <Chip $tone="info">이번 달 3회 이상 구매</Chip>
     </CardHd>
     <CardBd>
       <List>
