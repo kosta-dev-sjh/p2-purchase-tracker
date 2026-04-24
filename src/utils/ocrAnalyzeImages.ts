@@ -319,12 +319,17 @@ export async function analyzeUploadedImages(
     // ───────── AI 자동 보정 단계 ─────────
     //
     // Tesseract 루프가 끝난 뒤 전체 처리 결과를 한 번 훑어, "파서로 복구 불가" 로 분류되는
-    // 카드가 있는 이미지에 대해 Gemini 2.5 Flash Vision 을 조용히 호출합니다. 권장 배지/배너
-    // 없이 파이프라인 안쪽에서 자동으로 해결되는 구조 — 사용자가 편집 화면을 볼 때는 이미
-    // aiApplied 배지만 붙은 상태입니다.
+    // bad 카드가 **하나라도 있는 이미지만** 뽑아 Gemini 2.5 Flash Vision 을 호출합니다.
     //
-    // AI 호출은 이미지 단위로 순회. 한 이미지 안의 모든 주문에 대해 bad 제품을 모아 한 번에
-    // 요청합니다(토큰 절약). 원본 File 을 함께 넘겨 Vision 활성화.
+    // 1차 필터 (bad 0장인 이미지는 AI 호출 X) 로 비용을 절약하면서, 일단 AI 호출이 발동하면
+    // 이미지 input 비용이 이미 지불되므로 그 이미지의 **전체 카드**를 한 번에 검증받습니다.
+    //   - 이미지 input: ~$0.0002 (비용의 90%)
+    //   - 카드당 출력 토큰: ~30 토큰 × $0.3/M ≈ $0.00001 (사실상 무시 가능)
+    //   → 같은 호출 안에서 5 카드 검증 vs 1 카드 검증 비용 차이 $0.00004. Clean 카드도 AI 가
+    //     미세 오류 발견하면 함께 고치고, 맞으면 원본 그대로 반환.
+    //
+    // aiApplied 플래그는 aiService 가 **실제 값이 바뀐 카드에만** 찍어 UI 배지(✨) 가 거짓말
+    // 하지 않도록 합니다.
     const imagesNeedingAi = processed
       .map((img, idx) => ({
         img,
@@ -348,14 +353,18 @@ export async function analyzeUploadedImages(
           phase: "ai-fallback",
         });
 
-        // 한 이미지의 모든 주문에서 bad 카드를 합쳐 한 번에 AI 에 질의 (토큰 절약).
-        const flatBad = badPerOrder.flat();
-        if (flatBad.length === 0) continue;
+        // 이 이미지의 **전체 카드**(bad 포함) 를 allProducts 로. bad 는 badIds 힌트로 AI 에게
+        // "이 카드들은 특히 의심스러움" 을 알려줌. 토큰은 몇십 개 늘지만 비용은 무시 가능.
+        const allProducts = img.orders.flatMap((o) => o.products);
+        const badIds = badPerOrder.flat().map((p) => p.id);
+        if (allProducts.length === 0) continue;
+
         const fallback = await runAiOcrFallback({
           imageId: img.id,
           platform: img.platform,
           rawText: img.rawText ?? "",
-          problemProducts: flatBad,
+          allProducts,
+          badIds,
           imageFile: file,
         });
         if (fallback.failed) continue;

@@ -243,15 +243,27 @@ export interface FallbackOcrProductsInput {
   platform: Platform;
   /** 이미지 전체 Tesseract rawText — 파서 후처리 적용된 상태. */
   rawText: string;
-  /** AI 가 보정할 카드들. id 유지, name/price 가 현재 값(참고용). */
-  problemProducts: Pick<OcrProduct, "id" | "name" | "price" | "quantity">[];
+  /**
+   * 이 이미지의 **전체 카드 목록**. bad 만 넘기지 않고 clean 까지 포함하는 이유:
+   *   - 이미지 input 이 이미 업로드되는 시점이라 비용 90% 는 지불된 상태 (Gemini Flash 출력
+   *     토큰은 카드당 ~30 토큰 × $0.3/M 로 사실상 무시 가능).
+   *   - AI 가 이미지 전체를 보면서 "bad 카드만 고치고 clean 은 원본 유지" 하려면 결국 clean
+   *     카드의 원본 값을 프롬프트에 알려주는 쪽이 정확. clean 도 AI 가 미세 오류 발견하면
+   *     고치고, 그대로면 그대로 반환.
+   *   - 호출부(aiOcrFallback) 에서 실제로 값이 변한 카드에만 aiApplied 플래그를 찍음.
+   */
+  allProducts: Pick<OcrProduct, "id" | "name" | "price" | "quantity">[];
+  /** 이 이미지에서 파서가 bad 로 분류한 카드 id 집합. AI 에게 "특히 이 id 들은 의심스러우니 주의해 보라" 고 힌트 전달. */
+  badIds?: string[];
   /** 원본 이미지(있으면 Vision 활성화). 브라우저에서 업로드한 File 객체 그대로. */
   imageFile?: File;
 }
 
 export interface FallbackOcrProductsResult {
-  /** 입력 problemProducts 와 같은 순서·id. name/price/quantity 는 보정된 값. */
+  /** 입력 allProducts 와 같은 순서·id. 변경된 카드는 name/price 가 새 값, 아닌 카드는 원본 유지. */
   products: OcrProduct[];
+  /** AI 응답에서 실제로 값이 변경된 id 집합. caller 가 aiApplied 플래그를 찍을 때 사용. */
+  changedIds: Set<string>;
 }
 
 /**
@@ -265,7 +277,9 @@ export async function fallbackOcrProducts(
   input: FallbackOcrProductsInput,
 ): Promise<FallbackOcrProductsResult | null> {
   if (!API_KEY) return null;
-  if (input.problemProducts.length === 0) return { products: [] };
+  if (input.allProducts.length === 0) {
+    return { products: [], changedIds: new Set() };
+  }
 
   try {
     const model = genAI.getGenerativeModel({
@@ -274,33 +288,38 @@ export async function fallbackOcrProducts(
     });
 
     const platformKor = PLATFORM_LABELS[input.platform] ?? "쇼핑몰";
+    const badIdSet = new Set(input.badIds ?? []);
 
-    // problemProducts 를 한 블록으로 넘겨 각 id 별로 한 라인씩 받습니다.
-    const problemsBlock = input.problemProducts
-      .map((p, i) =>
-        `${i + 1}. id=${p.id} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}`,
-      )
+    // allProducts 를 한 블록으로 넘김. bad 로 분류된 id 에는 "(의심)" 힌트를 달아 AI 가 주의하게.
+    const productsBlock = input.allProducts
+      .map((p, i) => {
+        const flag = badIdSet.has(p.id) ? " (의심)" : "";
+        return `${i + 1}. id=${p.id}${flag} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}`;
+      })
       .join("\n");
 
-    const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 OCR 파서가 복구 못 한 상품 카드만 다시 읽어내는 추출기다.
-입력에는 (1) OCR 로 뽑힌 rawText, (2) 문제 카드 목록(id · 현재 이름 · 현재 가격) 이 들어온다.
-원본 이미지가 함께 주어지면 이미지를 우선 참조하고, 없으면 rawText 만으로 유추해라.
+    const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격을 이미지와 rawText 로 검증·보정하는 추출기다.
+입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격) 이 들어온다.
+"(의심)" 이 붙은 카드는 Tesseract 파서가 복구 못 한 카드라 특히 신경 써서 이미지에서 다시 읽어내라.
+그렇지 않은 카드도 이미지를 확인해 **분명한 오류**가 있으면 고치되, 맞으면 현재 값을 **그대로** 반환하라.
 
 규칙을 엄격히 지킨다:
 - 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
 - 각 라인 형식: \`id|name|price|quantity\`
 - id 는 입력과 글자 단위로 정확히 같게 복사한다(재생성 금지).
-- name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게. 판독 불가면 현재 이름을 정리만 해서 반환.
+- name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게.
+- **변경은 필요할 때만**: 현재 이름이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
+  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임 등)" 에만.
 - price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
 - quantity 는 정수. 수량을 찾을 수 없으면 1.
-- 입력된 문제 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
+- 입력된 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
 - 설명 문장 추가 금지. 첫 라인부터 데이터다.
 
 rawText:
 ${input.rawText.slice(0, 8000)}
 
-문제 카드 목록:
-${problemsBlock}`;
+이 이미지의 상품 카드 전체:
+${productsBlock}`;
 
     // Gemini 멀티모달: parts 배열 [text, inlineData?]
     const parts: Array<
@@ -324,8 +343,8 @@ ${problemsBlock}`;
     const text = (await result.response.text()).trim();
 
     // 파이프 파싱. id 가 입력과 매칭되는 것만 받아들임.
-    const inputIds = new Set(input.problemProducts.map((p) => p.id));
-    const idToInput = new Map(input.problemProducts.map((p) => [p.id, p]));
+    const inputIds = new Set(input.allProducts.map((p) => p.id));
+    const idToInput = new Map(input.allProducts.map((p) => [p.id, p]));
     const recovered = new Map<string, OcrProduct>();
 
     for (const rawLine of text.split(/\r?\n/)) {
@@ -349,19 +368,31 @@ ${problemsBlock}`;
 
     if (recovered.size === 0) return null;
 
-    // 입력 순서 유지. 응답에 빠진 id 는 현재 값을 유지하되 호출 실패로 간주하지 않음.
-    const products: OcrProduct[] = input.problemProducts.map((p) => {
+    // 입력 순서 유지. 응답에 빠진 id 는 원본 값 그대로. 실제로 값이 변경된 id 만 changedIds 에 수집.
+    const changedIds = new Set<string>();
+    const products: OcrProduct[] = input.allProducts.map((p) => {
       const r = recovered.get(p.id);
-      if (r) return r;
-      return {
-        id: p.id,
-        name: p.name,
-        price: p.price,
-        ...(p.quantity !== undefined ? { quantity: p.quantity } : {}),
-      };
+      if (!r) {
+        return {
+          id: p.id,
+          name: p.name,
+          price: p.price,
+          ...(p.quantity !== undefined ? { quantity: p.quantity } : {}),
+        };
+      }
+      // 이름·가격·수량 어느 하나라도 바뀌었으면 changed. 공백 차이만 나는 경우도 "바뀜" 으로
+      // 취급 — 사용자는 이름 정돈도 AI 보정의 혜택으로 인식.
+      const prevName = (p.name ?? "").trim();
+      const nextName = r.name.trim();
+      const changed =
+        prevName !== nextName ||
+        (p.price ?? 0) !== r.price ||
+        (p.quantity ?? 1) !== (r.quantity ?? 1);
+      if (changed) changedIds.add(p.id);
+      return r;
     });
 
-    return { products };
+    return { products, changedIds };
   } catch (error) {
     console.error("OCR Products Fallback Failed:", error);
     return null;

@@ -29,8 +29,15 @@ export interface AiOcrFallbackRequest {
   platform: "coupang" | "naver" | "temu";
   /** 전체 rawText — 문제 카드의 맥락 보존용. */
   rawText: string;
-  /** AI 가 보정해야 할 카드만. 이미 aiApplied==true 인 건 caller 에서 제외해 넘긴다고 가정. */
-  problemProducts: OcrProduct[];
+  /**
+   * 이 이미지의 **전체 카드 목록**. 이미지 input 비용은 이미 지불되므로, 한 번 호출 시 모든
+   * 카드를 AI 에게 검증받는 게 비용 효율적(출력 토큰은 카드당 ~30토큰 × $0.3/M 수준).
+   */
+  allProducts: OcrProduct[];
+  /**
+   * 파서가 bad 로 분류한 카드 id 집합. AI 에게 "이 카드들은 특히 의심스러우니 주의" 힌트로 전달.
+   */
+  badIds: string[];
   /** 선택: 원본 이미지 File — Vision 모델에 직접 이미지 입력 시 사용 (Gemini 멀티모달). */
   imageFile?: File;
 }
@@ -60,18 +67,24 @@ async function callRealAi(
   const recovered = await fallbackOcrProducts({
     platform: request.platform,
     rawText: request.rawText,
-    problemProducts: request.problemProducts.map((p) => ({
+    allProducts: request.allProducts.map((p) => ({
       id: p.id,
       name: p.name,
       price: p.price,
       quantity: p.quantity,
     })),
+    badIds: request.badIds,
     imageFile: request.imageFile,
   });
   if (!recovered) return null;
+  // aiApplied 플래그는 **실제로 값이 변경된 카드에만** 찍습니다. AI 가 clean 카드를 그대로
+  // 돌려줬다면 사용자 화면에 ✨ 배지가 뜨지 않도록 해 UI 소음을 최소화.
   return {
     provider: "gemini",
-    products: recovered.products.map((p) => ({ ...p, aiApplied: true })),
+    products: recovered.products.map((p) => ({
+      ...p,
+      ...(recovered.changedIds.has(p.id) ? { aiApplied: true } : {}),
+    })),
   };
 }
 
@@ -80,7 +93,8 @@ async function callRealAi(
  *
  * 동작 순서:
  *   1. callRealAi 시도 — 실 API 가 연결돼 있으면 그 결과 반환.
- *   2. null 이면 스텁 경로: 1.2s 지연 후 입력을 aiApplied 만 찍어 돌려줌.
+ *   2. null 이면 스텁 경로: 1.2s 지연 후 입력을 그대로 돌려줌 (aiApplied 안 찍음 — 실제 변경
+ *      없음을 정직하게 표시).
  *
  * UX 원칙:
  *   - 절대 throw 하지 않음. 실패해도 caller 의 파이프라인이 중단되지 않게 failed:true 로 반환.
@@ -97,14 +111,12 @@ export async function runAiOcrFallback(
     console.warn("[aiOcrFallback] callRealAi failed, falling back to stub:", e);
   }
 
-  // 스텁 경로: 약 1.2s 의 가짜 지연 후 플래그만 찍어 돌려줌.
+  // 스텁 경로: 1.2s 지연만 시뮬레이션하고 카드는 **변경 없이** 그대로 반환. 내용이 바뀌지
+  // 않았으므로 aiApplied 플래그도 안 찍어, UI 에서 ✨ 배지가 거짓말하지 않게 합니다.
   await new Promise<void>((resolve) => setTimeout(resolve, 1200));
   return {
     provider: "stub",
-    products: request.problemProducts.map((p) => ({
-      ...p,
-      aiApplied: true,
-    })),
-    notes: "stub: 실 AI 엔드포인트 미연결 — 카드 내용은 변경되지 않았으며 aiApplied 플래그만 표시됩니다.",
+    products: request.allProducts.map((p) => ({ ...p })),
+    notes: "stub: 실 AI 엔드포인트 미연결 — 변경 사항 없음.",
   };
 }
