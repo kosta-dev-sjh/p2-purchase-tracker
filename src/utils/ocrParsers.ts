@@ -1,6 +1,29 @@
 /**
  * 역할: 각 쇼핑몰 플랫폼의 OCR 텍스트를 구조화된 주문 데이터로 변환하는 파서 모음입니다.
  * 위치: src/utils/ocrParsers.ts
+ *
+ * ─── 플랫폼별 투자 수준 정책 (2026-04-24 · Claude ↔ Codex 교차 검토 합의) ────────────
+ *
+ *   쿠팡 (parseCoupangOrderText)
+ *     - 현재 샘플 23장 ground-truth harness(`.ocr-raw-cache/ground-truth.json`)
+ *       기준 23/23 PASS 상태로 **회귀 대응 모드** 로 동결합니다.
+ *     - "정확도 추가 상승" 을 노린 새 regex/후처리 튜닝은 금지. 회귀가 생기면 고치고,
+ *       새 OCR 변형 패턴이 한 번 관찰되는 수준에서는 AI 보정(aiService) 에 위임합니다.
+ *
+ *   네이버쇼핑 (parseNaverOrderText) / 테무 (parseTemuOrderText)
+ *     - **얕은 1차 파서** 로 유지. 편집 가능한 구조화 초안만 책임집니다:
+ *         · 주문 단위 분리
+ *         · 날짜/상태/상품명/가격의 대략적 추출
+ *         · 명백한 쓰레기 문자열 제거
+ *     - 세밀한 이름 복원, 분리배송, OCR 환각 복구 같은 예외 처리는 작성하지 않고
+ *       `aiService.fallbackOcrProducts` 의 Vision 보정에 위임합니다.
+ *     - 쿠팡 파서의 규칙을 복제하지 마세요. 투자 깊이는 쿠팡의 1/5 수준이면 충분.
+ *
+ *   신규 플랫폼 추가 시
+ *     - 먼저 `docs/OCR_Architecture_Decision.md` §"의사결정 트리" 항목을 읽고 오세요.
+ *     - 얕은 1차 파서 + `ocrQuality` bad 판정 → AI 보정 패턴이 기본 템플릿입니다.
+ *
+ * ──────────────────────────────────────────────────────────────────────────────
  */
 
 export interface PurchaseOCRResult {

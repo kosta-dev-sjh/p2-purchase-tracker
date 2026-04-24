@@ -384,6 +384,45 @@ export async function analyzeUploadedImages(
       }
     }
 
+    // ───────── AI 변경 실효율 로깅 ─────────
+    //
+    // CLAUDE.md §9.4 에 명문화된 3개 지표를 콘솔에 찍습니다. 게이트 과민/둔감 판단 자료.
+    // 개발자 도구에서 평소 업로드 시 수치가 쌓이도록 console.info 레벨로 출력.
+    //
+    //   - 게이트 발동율: 전체 중 AI 호출로 넘어간 이미지 비율
+    //   - 카드 레벨 실효율: 전체 카드 중 실제로 aiApplied 찍힌 비율
+    //   - 이미지 레벨 실효율: AI 호출된 이미지 중 최소 1카드 이상 수정된 비율
+    //
+    // 실효율이 지속적으로 낮으면 ocrQuality.classifyOcrCardQuality 의 bad 판정 기준을
+    // 완화할 후보. 반대로 높으면 현재 게이트가 잘 조정된 것.
+    try {
+      const totalCards = processed.reduce(
+        (acc, img) => acc + img.orders.reduce((a, o) => a + o.products.length, 0),
+        0,
+      );
+      const aiAppliedCards = processed.reduce(
+        (acc, img) =>
+          acc + img.orders.reduce(
+            (a, o) => a + o.products.filter((p) => p.aiApplied).length,
+            0,
+          ),
+        0,
+      );
+      const aiChangedImages = processed.filter((img) =>
+        img.orders.some((o) => o.products.some((p) => p.aiApplied)),
+      ).length;
+      const triggeredImages = imagesNeedingAi.length;
+      const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(1) : "0.0");
+      console.info(
+        `[OCR] 완료 요약 · 이미지 ${processed.length}장 · 카드 ${totalCards}개\n` +
+        `       게이트 발동율: ${triggeredImages}/${processed.length}장 (${pct(triggeredImages, processed.length)}%)\n` +
+        `       카드 실효율  : ${aiAppliedCards}/${totalCards}카드 (${pct(aiAppliedCards, totalCards)}%) 가 AI 보정됨\n` +
+        `       이미지 실효율: ${aiChangedImages}/${triggeredImages || 0}장 (${pct(aiChangedImages, triggeredImages)}%) 의 AI 호출에서 최소 1카드 수정`,
+      );
+    } catch (e) {
+      console.warn("[OCR] 완료 요약 로깅 실패:", e);
+    }
+
     // 모든 이미지 완료. 100%로 한 번 더 찍어 줍니다.
     onProgress({
       currentIndex: totalCount,
