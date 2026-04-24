@@ -8,7 +8,8 @@
 import React, { useEffect, useState } from "react";
 import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
-import type { OcrProduct } from "../data";
+import type { OcrProduct, Status } from "../data";
+import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -122,6 +123,32 @@ const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
  * 배지 안에 들어가는 인라인 액션 버튼("이대로 저장" / "되돌리기").
  * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
  */
+/**
+ * OCR 품질 배지. classifyOcrCardQuality 의 tier 에 따라 두 가지 톤:
+ *   - bad (AI 재분석 권장): warn/neg 톤 — OCR 파서로 복구 불가 신호. split-marker/하드
+ *     가비지/한글 비율 부족 등으로 이름이 근본적으로 망가진 카드.
+ *   - borderline (이름 확인 필요): info 톤 — 짧거나 자모 파편이 남은 의심 카드. 사용자가
+ *     직접 고칠 수 있는 수준이라 소프트 경고만.
+ *
+ * 실제 AI 호출 트리거는 #47 에서 연결 예정. 현재 버전은 시각 hint 까지.
+ */
+const QualityHint = styled.span<{ $tier: "bad" | "borderline" }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: ${({ $tier }) =>
+    $tier === "bad" ? tokens.color.negSubtle : tokens.color.accentSubtle};
+  color: ${({ $tier }) =>
+    $tier === "bad" ? tokens.color.neg : tokens.color.accentHover};
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  white-space: nowrap;
+`;
+
 const ZeroPriceAction = styled.button`
   padding: 0;
   border: none;
@@ -218,8 +245,13 @@ export const ProductTable: React.FC<{
   products: OcrProduct[];
   /** 상품 목록이 변경될 때마다 부모에게 최신 목록을 올려줍니다. */
   onChange?: (products: OcrProduct[]) => void;
+  /**
+   * 이 주문의 상태 태그. OCR 품질 분류에서 "price=0 이 취소/환불이면 정상" 판정 용도.
+   * 없으면 purchase 로 간주합니다.
+   */
+  statusTag?: Status;
   fieldIdPrefix?: string;
-}> = ({ products, onChange, fieldIdPrefix = "ocr-product" }) => {
+}> = ({ products, onChange, statusTag, fieldIdPrefix = "ocr-product" }) => {
   const [rows, setRows] = useState<ProductRow[]>(products.map(toRow));
 
   /**
@@ -308,7 +340,16 @@ export const ProductTable: React.FC<{
       <HeaderCell>상품 링크</HeaderCell>
       <HeaderCell />
       <HeaderCell />
-      {rows.map((row) => (
+      {rows.map((row) => {
+        // 품질 분류는 row 의 현재 값(사용자가 편집 중이면 반영된 상태) 으로 매번 재계산합니다.
+        // 이렇게 하면 사용자가 이름을 손으로 고쳐 깨끗해지면 배지도 곧바로 사라집니다.
+        const quality = classifyOcrCardQuality({
+          name: row.name,
+          price: row.priceRaw ? Number(row.priceRaw) : 0,
+          quantity: row.quantity,
+          statusTag,
+        });
+        return (
         <Row key={row.id}>
           <div>
             <Input
@@ -316,6 +357,16 @@ export const ProductTable: React.FC<{
               value={row.name}
               onChange={(e) => patch(row.id, { name: e.target.value })}
             />
+            {quality.tier !== "clean" && (
+              <QualityHint
+                $tier={quality.tier}
+                title={quality.reasons.join(" · ")}
+              >
+                {quality.tier === "bad"
+                  ? "🤖 AI 재분석 권장"
+                  : "이름 확인 필요"}
+              </QualityHint>
+            )}
           </div>
           <div>
             {/* 숫자만 입력 가능, 콤마 포맷 표시 */}
@@ -396,7 +447,8 @@ export const ProductTable: React.FC<{
             </RemoveButton>
           </div>
         </Row>
-      ))}
+        );
+      })}
       <AddRow type="button" onClick={handleAdd}>
         + 상품 직접 추가하기
       </AddRow>

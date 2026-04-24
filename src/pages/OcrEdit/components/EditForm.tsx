@@ -14,6 +14,7 @@ import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
 import { CATEGORY_LABELS, PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder } from "../data";
+import { summarizeImageQuality } from "../../../utils/ocrQuality";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
 const ImageSummary = styled.div`
@@ -35,6 +36,31 @@ const Hint = styled.div`
   color: ${tokens.color.ink3};
   font-size: 11.5px;
   line-height: 1.55;
+`;
+
+/**
+ * AI 재분석 배너 — summarizeImageQuality.shouldShowImageBanner 가 true 일 때만 렌더.
+ *
+ * 기준 (src/utils/ocrQuality.ts 참고): 카드 3장 이상인 이미지에서 bad 비율이 ≥ 30%.
+ * 한 이미지 전체가 OCR 로 복구 불가 수준이면 카드 하나씩 고치기보다 전체를 AI 에 넘기는
+ * 쪽이 맥락 보존 유리. 실제 호출 트리거는 #47 에서 연결 예정.
+ */
+const AiBanner = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid #fcd34d;
+  border-radius: ${tokens.radius.card};
+  background: ${tokens.color.warnBg};
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong {
+    font-weight: 700;
+  }
 `;
 
 /**
@@ -129,6 +155,22 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼
         저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요.
       </Hint>
+
+      {(() => {
+        // 이미지 단위 품질 요약. 카드 3장 이상이면서 bad 비율 ≥ 30% 일 때만 배너 노출.
+        const q = summarizeImageQuality(image);
+        if (!q.shouldShowImageBanner) return null;
+        return (
+          <AiBanner role="status" aria-live="polite">
+            <span aria-hidden="true">🤖</span>
+            <span>
+              <strong>{q.counts.bad}개 상품</strong>이 OCR 로 복구가 어려워요
+              ({q.total}개 중, <strong>{Math.round(q.badRatio * 100)}%</strong>).
+              캡쳐 전체를 AI 로 재분석하면 정확도가 올라갈 수 있어요.
+            </span>
+          </AiBanner>
+        );
+      })()}
 
       {image.orders.map((order) => (
         <OrderCard

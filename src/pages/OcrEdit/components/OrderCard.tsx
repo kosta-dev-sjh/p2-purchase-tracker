@@ -653,6 +653,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
         <ProductTable
           products={order.products}
           onChange={onProductsChange}
+          statusTag={order.statusTag}
           fieldIdPrefix={`ocr-order-${order.id}`}
         />
 
