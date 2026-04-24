@@ -263,12 +263,35 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   ];
 
   // 분리배송 마커 — "일부 상품이 분리되어 배송됩니다" / "분리배송된 상품입니다" / 단독 "• 분리 배송".
+  //
   // leading OCR junk (`@`, `"`, `'`, bullet, dot 등) 은 흡수해서, `@ 일부 상품이 분리되어...`
   // 같은 실제 캡쳐 케이스에서도 마커가 떨어지지 않도록 합니다 (222053, 222127 회귀 방지).
+  //
+  // 2026-04-24 (사용자 버그 리포트 수정): Tesseract 가 `배` 를 `바`·`버` 로 섞어 읽는 케이스
+  // (`분리바송`, `분리버송`) 와, 마커와 상품명이 한 줄로 합쳐져 나오는 케이스(`일부 상품이
+  // 분리되어 배송됩니다분리 배송 _ASI S...`) 가 관찰돼 대응. `[배바버]` 문자 클래스로 변형
+  // 흡수하고, **line 전체 anchored** 가 아니라 아래 splitMarkerSubstringRegex 로 **substring**
+  // 매치 후 마커 텍스트만 떼어내고 뒤에 붙은 상품명은 nameBuffer 로 보냅니다.
+  // 변형 위치는 `배송` 의 **배** 글자 (OCR 이 `바`·`버`·`베` 로 오인). `되어` 쪽은 실측상
+  // 변형이 거의 없어 유지. `송` 도 거의 변형 없음.
   const COUPANG_SPLIT_MARKERS = [
-    /^[\s@"'`·•▪\-*ㆍ]*일부\s*상품이\s*분리되어\s*배송됩니다[.…]?\s*$/,
-    /^[\s@"'`·•▪\-*ㆍ]*분리배송된\s*상품입니다[.…]?\s*$/,
-    /^[\s@"'`·•▪\-*ㆍ]*분리\s*배송\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*일부\s*상품이\s*분리되어\s*[배바버베]송됩니다[.…]?\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*분리[배바버베]송된\s*상품입니다[.…]?\s*$/,
+    /^[\s@"'`·•▪\-*ㆍ]*분리\s*[배바버베]송\s*$/,
+  ];
+
+  // 같은 마커들을 **substring** 으로 찾아 라인 중간/끝에 섞여 있는 케이스도 잡습니다.
+  // 매칭 시 `line.replace(MARKER, '')` 로 제거하면 앞/뒤 붙어 있던 상품명은 그대로 유지됩니다.
+  //
+  // 예: `OQ 분리바송된 상품입니다분리 배송 _ASI S...` → 마커 2개(분리바송된 상품입니다 +
+  // 분리 배송) 를 떼어내면 `OQ  _ASI S...` 가 남고, 이후 leadingTag/가비지 처리에서 정리됩니다.
+  //
+  // 주의: 긴 패턴이 먼저 매칭되도록 **배열 순서 중요**. "분리 배송" 만 먼저 지우면 "분리배송된
+  // 상품입니다" 의 "된 상품입니다" 가 나머지로 떨어져 오히려 이름 오염을 악화시킵니다.
+  const COUPANG_SPLIT_MARKER_SUBSTRINGS: RegExp[] = [
+    /일부\s*상품이\s*분리되어\s*[배바버베]송됩니다[.…]?/g,
+    /분리[배바버베]송된\s*상품입니다[.…]?/g,
+    /분리\s*[배바버베]송(?=\s|$|[가-힣])/g,
   ];
 
   // 주문일 코어 패턴 — `2026. 4. 22` 처럼 "YYYY. M. DD" 세 숫자를 뽑아냅니다. pre-scan 용은
@@ -629,8 +652,26 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   };
 
   for (const rawLine of allLines) {
-    const line = rawLine.trim();
+    // 2026-04-24: `line` 을 let 으로 바꿔 분리배송 마커 substring 제거 후에도 같은 이터레이션
+    // 에서 나머지 텍스트(실제 상품명) 를 계속 처리할 수 있게 합니다.
+    let line = rawLine.trim();
     if (!line) continue;
+
+    // 분리배송 마커 substring 선처리 — 마커가 상품명과 한 줄로 합쳐진 케이스 대응.
+    //   예: `OQ 분리바송된 상품입니다분리 배송 _ASI S...` 처럼 마커 문구와 상품명이 붙은 경우,
+    //   마커 텍스트만 떼어낸 뒤 남는 부분은 아래의 status/noise/name 파이프라인으로 계속 흘려
+    //   나머지를 상품명 조각으로 살립니다. 마커가 한 번이라도 히트하면 pendingSplit 플래그를
+    //   세워 flush 시 _splitDelivery=true 로 표식.
+    for (const markerRe of COUPANG_SPLIT_MARKER_SUBSTRINGS) {
+      if (markerRe.test(line)) {
+        pendingSplit = true;
+        line = line.replace(markerRe, " ").replace(/\s+/g, " ").trim();
+        // markerRe 는 global 플래그라 .test 후 lastIndex 가 이동하므로 다음 루프에서 꼬이지
+        // 않게 명시적으로 리셋.
+        markerRe.lastIndex = 0;
+      }
+    }
+    if (!line) continue; // 마커 제거 뒤 남는 게 없으면 단독 마커 라인이었던 것.
 
     // 섹션 경계를 한 번이라도 보면 그 뒤는 전부 무시(총계 오인식 방지).
     if (inPaymentSection) continue;
@@ -797,25 +838,40 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 
   // ───────── 분리배송 후처리 병합 ─────────
   //
-  // `_splitDelivery` 가 붙은 항목 중 (date, itemName, price) 가 같은 그룹은 **첫 항목에**
-  // quantity 를 합산해 하나로 줄입니다. 쿠팡 데스크톱/모바일 모두에서 동일 상품이 창고 분리
-  // 발송으로 카드 3장으로 찍히는 경우, 사용자가 실제로 주문한 수량(예: 3박스)은 카드별 1개의
-  // **합**입니다. 만약 capture 가 일부만 잡아서 같은 그룹이 1장만 보이면 병합 없이 그대로 둡니다.
+  // `_splitDelivery` 가 붙은 항목들은 **(date, price) 기준으로 묶어** 대표 1건만 남깁니다.
   //
-  // 주의: "원본"(일부 상품이 분리되어 배송됩니다) / "복사"(분리배송된 상품입니다) 구분 없이
-  // 모두 `_splitDelivery=true` 로 들어오므로, 둘 중 아무거나 먼저 나온 항목이 대표 항목이 됩니다.
-  // 이는 파서 입력 순서(capture 순서) = 사용자가 화면에서 본 순서에 가까우므로 자연스럽습니다.
+  // ── 2026-04-24 정책 변경 (사용자 실사용 버그 리포트) ──────────────────────────────────
+  //
+  // 이전 정책: 같은 (date, name, price) 인 split-delivery 카드들을 찾아 quantity 를 합산.
+  //           예: 29,490 원 × qty 1 카드 3개 → 29,490 원 × qty 3 로 병합 → 총액 88,470 원.
+  //
+  // 새 정책:  중복 카드를 **drop 만** 하고 quantity 는 **합산하지 않음**.
+  //           예: 29,490 원 × qty 1 카드 3개 → 29,490 원 × qty 1 로 1건만 남김. 총액 29,490 원.
+  //
+  // 변경 이유 (사용자 피드백):
+  //   "분리배송은 29,400원 안에 포함되어있는거거든? 각각 따로따로가 아니라 29,400원 딱 이
+  //    가격에 저거 세개를 보내는 거라서"
+  //   → 쿠팡 분리배송 카드에 표시되는 가격은 **주문 총액** 을 각 배송 카드에 반복 노출한
+  //     것이지 카드당 별도 결제가 아님. 합산하면 실제 결제 금액의 N 배로 부풀어 오름.
+  //
+  // 그룹 키를 (date, name, price) 가 아닌 (date, price) 로 바꾼 이유:
+  //   OCR 에서 상품명이 배송 카드별로 조금씩 달리 인식(분리배송 마커 substring 이 다르게
+  //   찍힘, 이름 꼬리 잘림 등) 돼 이름 기준 그룹핑이 자주 실패합니다. 같은 날짜 + 같은 가격의
+  //   _splitDelivery 카드는 쿠팡 실사용 맥락에서 동일 주문일 확률이 압도적입니다.
+  //   이름은 **가장 긴(= 가장 많이 살아남은) 쪽** 을 대표로 채택해 정보 유실을 최소화.
   const merged: PurchaseOCRResult[] = [];
   const groupIndex = new Map<string, number>(); // key → merged[] 의 인덱스
   for (const r of results) {
     if (r._splitDelivery) {
-      const key = `${r.date ?? ''}|${r.itemName ?? ''}|${r.price ?? ''}`;
+      const key = `${r.date ?? ''}|${r.price ?? ''}`;
       const existingIdx = groupIndex.get(key);
       if (existingIdx !== undefined) {
-        // 같은 (date, name, price) 가 이미 들어가 있음 → 수량만 합쳐서 버림
         const prev = merged[existingIdx];
-        prev.quantity = (prev.quantity ?? 1) + (r.quantity ?? 1);
-        continue;
+        // 더 긴(정보 살아남은) 이름으로 대표 카드의 이름을 교체. quantity 는 유지.
+        if ((r.itemName ?? '').length > (prev.itemName ?? '').length) {
+          prev.itemName = r.itemName;
+        }
+        continue; // 중복 drop — 합산 X.
       }
       groupIndex.set(key, merged.length);
     }
