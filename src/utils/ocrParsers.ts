@@ -160,7 +160,13 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     /주문\s*상세보기/,
     /리뷰\s*(?:작성(?:하기)?|쓰기)/,
     /배송\s*조회/,
-    /교환[,\s]*반품\s*신청/,
+    // 교환의 '교' 가 OCR 에서 '고' 로 떨어지는 케이스가 실측 캡쳐(222035·222043·222049·222122
+    // 등) 에서 과반으로 나와 `[교고]` 로 흡수. 사이에 쉼표/온점/중간점이 들어오는 변형도 허용.
+    /[교고]환\s*[,.·]?\s*반품\s*신청/,
+    // '반품 신청' 단독으로 꼬리에 남은 잔류 (222018 코코도르의 "... 1 개반품신청" 처럼 앞 공백이
+    // 없거나 '교환' 이 통째로 날아간 케이스) 도 함께 컷. 한국 쇼핑 상품명에 '반품신청' 이 등장할
+    // 일이 거의 없으므로 꼬리 매칭에 한해 안전.
+    /반품\s*신청/,
     /판매자\s*문의/,
     /장바구니\s*담기/,
   ];
@@ -381,8 +387,13 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 돌려 **알려진 액션/네비 버튼 문구** 만 제거합니다. 버튼 목록 자체는 위 vocabulary 블록의
   // COUPANG_DESKTOP_BUTTONS + COUPANG_MOBILE_BUTTONS 에서 공유해, 단독 라인 노이즈(noiseLineRegex) 와
   // 꼬리 컷(trailingButtonRegex) 이 동일한 어휘 집합을 보도록 정규화했습니다.
+  // 2026-04-24: prefix 를 `\s+` → `[\s,·.]*` 로 완화.
+  //   "1 개반품신청" (코코도르), "교환반품신청" (크리스마), "...고환. 반품신청" (여러 건) 같이
+  //   공백이 없거나 쉼표/온점이 끼어든 꼬리를 기존 `\s+` 은 못 잡고 nameBuffer 에 그대로 남겼습니다.
+  //   버튼 어휘 자체에는 `주문 취소`, `장바구니 담기` 등 의미상 상품명 꼬리에 올 수 없는 문구만
+  //   있으므로 prefix 0 글자를 허용해도 정상 이름을 갉아먹지 않습니다.
   const trailingButtonRegex = new RegExp(
-    '\\s+(?:' + joinRegex([...COUPANG_DESKTOP_BUTTONS, ...COUPANG_MOBILE_BUTTONS]) + ')\\s*>?\\s*$'
+    '[\\s,·.]*(?:' + joinRegex([...COUPANG_DESKTOP_BUTTONS, ...COUPANG_MOBILE_BUTTONS]) + ')\\s*>?\\s*$'
   );
 
   /**
@@ -505,6 +516,27 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     return cleaned;
   };
 
+  // 2026-04-24: 라인-단위 stripTags 가 끝난 뒤 **전체 join** 결과에 한 번만 돌리는 꼬리 정리.
+  //   라인 단위에서 쉼표 꼬리를 컷하면 "... 내의세트 ," + "밝브랙 ..." 처럼 줄바꿈 신호용 쉼표가
+  //   사라져 join 시 "세트밝브랙" 처럼 붙어 버리는 회귀가 생김(222011 케이스). 라인 단위에서는
+  //   경계를 보존하고, 최종 name 에만 OCR 꼬리 부스러기(truncation `…`·`.…`, 단독 자모 ㅇㄴㅁㄱ)
+  //   를 한 번 컷합니다. 쇼핑몰 상품명이 자모/truncation 으로 끝날 일이 없어 과적합 없이 안전.
+  const stripTrailingOcrResidue = (name: string): string => {
+    let prev = '';
+    let cleaned = name;
+    while (cleaned !== prev) {
+      prev = cleaned;
+      cleaned = cleaned
+        .replace(/[\s,·.…\-]*[ㄱ-ㅎㅏ-ㅣ]+\s*$/, '')
+        .replace(/\s*[…]+\s*\.?\s*$/, '')
+        .replace(/\s*\.…\s*$/, '')
+        // 꼬리 ` .` (공백+온점) 컷 — OCR 이 상품명 뒤 truncation 을 온점 1개로 떨군 케이스.
+        // 공백이 앞에 있어야만 매칭해 "Dr." 같은 붙은 약어는 보존.
+        .replace(/\s+\.\s*$/, '');
+    }
+    return cleaned.trim();
+  };
+
   const flushNameAndPrice = (priceNum: number, quantity: number | undefined) => {
     // 라인 단위로 한 번 stripTags 를 했어도, 쿠팡이 상품 박스를 여러 줄로 쪼개 뱉어
     // 첫 줄에 "판매자 로켓" 같은 태그 조각, 둘째 줄에 실제 상품명이 오는 경우가 있습니다.
@@ -523,7 +555,9 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // nameBuffer 항목 자체에 그대로 있으므로 이 변경에 영향받지 않습니다.
     //
     // stripTags 는 멱등이라 태그가 이미 깨끗한 이름에 돌려도 no-op 입니다.
-    const joined = stripTags(nameBuffer.join('').replace(/\s+/g, ' ').trim());
+    const joined = stripTrailingOcrResidue(
+      stripTags(nameBuffer.join('').replace(/\s+/g, ' ').trim())
+    );
     const itemName = joined.length > 0 ? joined : null;
     // 정책 변경(2026-04-23): 이름 없이 가격만 잡힌 주문도 더 이상 조용히 버리지 않습니다.
     //
