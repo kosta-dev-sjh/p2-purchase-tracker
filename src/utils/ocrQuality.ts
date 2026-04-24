@@ -56,10 +56,34 @@ const NAME_HARD_GARBAGE_SUBSTRINGS = [
  *   - `】【` : 쿠팡 태그 OCR 잔류
  *   - `__`  : 구분선 OCR 잔류 (코멧 분리배송 실측)
  *   - `\`   : 백슬래시 잔류
- *   - 3+ 연속 자모: ㅋㅋㅋ 같은 합법 패턴 제외를 위해 `ㅋ` 은 반복 허용하되 일반 자모는 2+ 만 있어도
- *     OCR 파편으로 간주 (별도 카운트에서 처리).
+ *   - `` ` ``: 백틱 잔류 (코펫 순백 케이스에서 `\`줏` 처럼 섞임)
+ *   - `---` : 연속 대시 (구분선 OCR 잔류)
  */
-const NAME_HARD_GARBAGE_CHARS_REGEX = /】【|__|\\/;
+const NAME_HARD_GARBAGE_CHARS_REGEX = /】【|__|\\|`|---/;
+
+/**
+ * 정상 한국 상품명에 거의 안 등장하는 기호들. 단독으로 1~2개는 허용하지만, 3개 이상 섞여
+ * 나오면 OCR 노이즈로 간주. `[`, `]` 는 `[최신형]` 같은 정상 프로모 태그에 쓰이므로 제외.
+ * `_`, backtick, `<>{}|=~` 는 쇼핑몰 UI/OCR 환각 외에는 사실상 나오지 않습니다.
+ */
+const WEIRD_SYMBOLS_REGEX = /[<>{}|=~`_']/g;
+
+/**
+ * 선두 OCR 환각 prefix 감지: "짧은 한글 1~3자" + "구두점·기호" + "공백 또는 한글" 구조가
+ * 이름 맨 앞에 있고, 뒤에 충분히 긴 한글 본문이 이어지면 OCR 환각으로 판정.
+ * 실측: "촨뜸므. 헬펙 코멋오리지널...", "훌:' 유한양행...", "[ 잘아눌 덴티본..." 등.
+ * 정상 상품명은 구두점이 선두 바로 뒤에 붙는 구조가 거의 없어 오탐 낮음.
+ */
+const PREFIX_OCR_NOISE_REGEX = /^([가-힣]{1,3})[.:;'"_·`\[\]\-]+(?=\s|[가-힣])/;
+
+/**
+ * 단위 한글 어휘 — 1~2자 한글 청크 카운트에서 제외할 "정상" 단어. OCR 분리 흔적 판정 시
+ * 이들이 있으면 신호가 약해지므로 필터링합니다. 상품명에서 수량·사이즈 표시로 자주 쓰임.
+ */
+const UNIT_SUFFIX_HANGUL = new Set([
+  "개", "장", "세트", "종", "병", "통", "팩", "권", "회", "매", "벌",
+  "소", "중", "대",
+]);
 
 /**
  * 단일 자모(ㄱ-ㅎ·ㅏ-ㅣ, ㆍ)는 정상 상품명에 등장하지 않습니다. 개수를 세어 품질 신호로 사용.
@@ -124,7 +148,39 @@ export function classifyOcrCardQuality(card: {
 
   // B3. 하드 가비지 문자.
   if (NAME_HARD_GARBAGE_CHARS_REGEX.test(name)) {
-    badReasons.push("하드 가비지 문자(】【, __, \\)");
+    badReasons.push("하드 가비지 문자(】【, __, \\, ` 등)");
+  }
+
+  // B3a. 비정상 기호 혼재 — `<>{}|=~`_'` 중 3개 이상이면 OCR 환각/UI 잔류로 간주.
+  //   예: "싫구<_랗_ ] 사빌루쥬..." ← `<`, `_`, `_` = 3개.
+  //   정상 상품명은 이 기호들이 거의 나오지 않음(프로모 태그 `[...]` 는 제외 클래스).
+  const weirdSymCount = (name.match(WEIRD_SYMBOLS_REGEX) ?? []).length;
+  if (weirdSymCount >= 3) {
+    badReasons.push(`비정상 기호 혼재 (${weirdSymCount}개)`);
+  }
+
+  // B3b. 선두 OCR 환각 prefix. "촨뜸므.", "훌:'", "[ 잘아눌" 같은 짧은 한글+구두점 패턴.
+  //   뒤에 8자 이상의 한글 본문이 있을 때만 prefix 로 간주 (오탐 방지).
+  const prefixMatch = PREFIX_OCR_NOISE_REGEX.exec(name);
+  if (prefixMatch) {
+    const rest = name.slice(prefixMatch[0].length);
+    const restHangul = (rest.match(HANGUL_SYLLABLE_REGEX) ?? []).length;
+    if (restHangul >= 8) {
+      badReasons.push(`선두 OCR 환각 의심 ("${prefixMatch[0]}")`);
+    }
+  }
+
+  // B3c. 공백으로 분리된 1~2자 한글 청크(단위 어휘 제외) 가 3개 이상이면 rejoin 실패 흔적.
+  //   예: "및음스모르맥세 이프 솔 리드 라인..." → "이프", "솔", "리드" = 3개.
+  //   "코지엔비 곱창머리끈 5 세트" 같은 정상은 단위(세트)를 제외해 카운트 0.
+  const shortHangulChunks =
+    (name.match(/(?:^|[\s(])([가-힣]{1,2})(?=$|[\s),])/g) ?? [])
+      .map((c) => c.replace(/^[\s(]/, "").trim())
+      .filter((c) => c.length > 0 && !UNIT_SUFFIX_HANGUL.has(c));
+  if (shortHangulChunks.length >= 3) {
+    badReasons.push(
+      `공백 분리 한글 파편 ${shortHangulChunks.length}개 (rejoin 실패 의심)`,
+    );
   }
 
   // B4. 가격이 살아있는 유료 상품(> 0 원) 인데 한글 비율이 너무 낮음.
