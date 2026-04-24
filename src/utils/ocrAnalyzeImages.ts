@@ -340,15 +340,21 @@ export async function analyzeUploadedImages(
       .filter((x) => x.badPerOrder.some((arr) => arr.length > 0));
 
     if (imagesNeedingAi.length > 0) {
+      // AI phase 에서는 진행 지표를 **AI 대상 이미지 부분집합** 기준으로 보냅니다. 예: 업로드 5장
+      // 중 3장만 AI 필요 → 모달에 "1/3장 · 2/3장 · 3/3장" 으로 노출. 전체 5장 기준으로 표시하면
+      // "3번 이미지는 왜 건너뛰지?" 혼동이 생깁니다(사용자 실측 보고).
+      const aiPhaseTotal = imagesNeedingAi.length;
       for (let i = 0; i < imagesNeedingAi.length; i += 1) {
         const { img, file, badPerOrder } = imagesNeedingAi[i];
         onProgress({
-          currentIndex: totalCount, // Tesseract 단계가 끝났다고 알려주려고 total 유지.
-          totalCount,
+          // currentIndex / totalCount 둘 다 AI 부분집합 기준. Tesseract phase 와 의미가 달라지는
+          // 것은 phase 플래그로 구분되므로 모달 단에서 헷갈리지 않습니다.
+          currentIndex: i,
+          totalCount: aiPhaseTotal,
           currentFileName: img.fileName,
           currentThumbUrl: img.thumbUrl,
           currentPlatform: img.platform,
-          currentProgress: i / imagesNeedingAi.length,
+          currentProgress: i / aiPhaseTotal,
           currentStatus: "ai-fallback",
           phase: "ai-fallback",
         });

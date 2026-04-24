@@ -212,14 +212,9 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
           <>
             <Section>
               <SectionLabel>
-                <span>진행 이미지</span>
+                <span>AI 보정 대상</span>
                 <strong>
-                  {Math.min(
-                    Math.floor(currentProgress * Math.max(1, totalCount)) + 1,
-                    Math.max(1, totalCount),
-                  )}
-                  {" / "}
-                  {Math.max(1, totalCount)}장
+                  {currentIndex + 1} / {Math.max(1, totalCount)}장
                 </strong>
               </SectionLabel>
               <CurrentRow>
@@ -234,6 +229,20 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
                   </FileSub>
                 </FileMeta>
               </CurrentRow>
+              {/*
+                Tesseract 에서 깨끗하게 뽑힌 이미지는 AI 대상에서 제외되어 여기에 오지 않습니다.
+                아래 서브텍스트로 "왜 전체 개수보다 적을 수 있는지" 한 줄로 설명합니다.
+              */}
+              <div
+                style={{
+                  marginTop: 8,
+                  fontSize: 11.5,
+                  color: "#6b7280",
+                  lineHeight: 1.5,
+                }}
+              >
+                ✅ 파서가 깔끔하게 읽어낸 이미지는 AI 보정을 건너뜁니다.
+              </div>
             </Section>
             <AiLoadingBlock
               messages={AI_OCR_MESSAGES}
