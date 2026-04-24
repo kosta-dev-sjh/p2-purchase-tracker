@@ -11,7 +11,8 @@
  */
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { CsvRow } from "./csvParse";
-import type { Status } from "../pages/OcrEdit/data";
+import type { Status, OcrProduct, Platform } from "../pages/OcrEdit/data";
+import { PLATFORM_LABELS } from "../constants/labels";
 
 const API_KEY = import.meta.env.VITE_GEMINI_API_KEY || "";
 const genAI = new GoogleGenerativeAI(API_KEY);
@@ -207,5 +208,162 @@ ${compressed}`;
   } catch (error) {
     console.error("CSV Fallback Failed:", error);
     return [];
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+// fallbackOcrProducts — Tesseract 가 복구 못 한 상품 카드를 Gemini Vision 으로 재추출
+// ─────────────────────────────────────────────────────────────
+//
+// 동작: 파서가 'bad' 로 분류한 카드의 id 를 유지한 채 name/price/quantity 만 이미지와 rawText
+// 를 근거로 재추출. 출력은 기존 aiService 컨벤션(파이프 포맷, JSON/코드펜스 금지, temperature
+// 0) 을 그대로 따라 파싱 실패 위험을 최소화합니다.
+//
+// 호출 규약:
+//   - 입력 id 와 출력 id 가 1:1 로 매칭돼야 합니다. 매칭 안 되면 caller 가 원본을 유지.
+//   - 이미지(File) 가 있으면 Vision 으로 같이 넘깁니다(훨씬 정확). 없으면 rawText 만으로 추측.
+//   - 실패(키 없음/네트워크/파싱 0건) 시 null 반환. Caller 는 graceful fallback.
+
+/** File → base64 (data URL 의 뒤쪽만). Gemini SDK 의 inlineData.data 규격. */
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      // "data:image/png;base64,iVBOR..." → "iVBOR..." 만 추출.
+      const commaIdx = result.indexOf(",");
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result);
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+export interface FallbackOcrProductsInput {
+  platform: Platform;
+  /** 이미지 전체 Tesseract rawText — 파서 후처리 적용된 상태. */
+  rawText: string;
+  /** AI 가 보정할 카드들. id 유지, name/price 가 현재 값(참고용). */
+  problemProducts: Pick<OcrProduct, "id" | "name" | "price" | "quantity">[];
+  /** 원본 이미지(있으면 Vision 활성화). 브라우저에서 업로드한 File 객체 그대로. */
+  imageFile?: File;
+}
+
+export interface FallbackOcrProductsResult {
+  /** 입력 problemProducts 와 같은 순서·id. name/price/quantity 는 보정된 값. */
+  products: OcrProduct[];
+}
+
+/**
+ * Gemini 2.5 Flash 로 문제 카드의 이름/가격을 복구합니다.
+ *
+ * - API_KEY 없음 → null
+ * - 파싱 결과 0건 → null
+ * - 예외 → null (caller 는 원본 유지)
+ */
+export async function fallbackOcrProducts(
+  input: FallbackOcrProductsInput,
+): Promise<FallbackOcrProductsResult | null> {
+  if (!API_KEY) return null;
+  if (input.problemProducts.length === 0) return { products: [] };
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: "gemini-2.5-flash",
+      generationConfig: FAST_GENERATION_CONFIG as never,
+    });
+
+    const platformKor = PLATFORM_LABELS[input.platform] ?? "쇼핑몰";
+
+    // problemProducts 를 한 블록으로 넘겨 각 id 별로 한 라인씩 받습니다.
+    const problemsBlock = input.problemProducts
+      .map((p, i) =>
+        `${i + 1}. id=${p.id} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}`,
+      )
+      .join("\n");
+
+    const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 OCR 파서가 복구 못 한 상품 카드만 다시 읽어내는 추출기다.
+입력에는 (1) OCR 로 뽑힌 rawText, (2) 문제 카드 목록(id · 현재 이름 · 현재 가격) 이 들어온다.
+원본 이미지가 함께 주어지면 이미지를 우선 참조하고, 없으면 rawText 만으로 유추해라.
+
+규칙을 엄격히 지킨다:
+- 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
+- 각 라인 형식: \`id|name|price|quantity\`
+- id 는 입력과 글자 단위로 정확히 같게 복사한다(재생성 금지).
+- name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게. 판독 불가면 현재 이름을 정리만 해서 반환.
+- price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
+- quantity 는 정수. 수량을 찾을 수 없으면 1.
+- 입력된 문제 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
+- 설명 문장 추가 금지. 첫 라인부터 데이터다.
+
+rawText:
+${input.rawText.slice(0, 8000)}
+
+문제 카드 목록:
+${problemsBlock}`;
+
+    // Gemini 멀티모달: parts 배열 [text, inlineData?]
+    const parts: Array<
+      { text: string } | { inlineData: { mimeType: string; data: string } }
+    > = [{ text: prompt }];
+    if (input.imageFile) {
+      try {
+        const base64 = await fileToBase64(input.imageFile);
+        parts.push({
+          inlineData: {
+            mimeType: input.imageFile.type || "image/png",
+            data: base64,
+          },
+        });
+      } catch (e) {
+        console.warn("[fallbackOcrProducts] 이미지 base64 변환 실패, 텍스트로만 진행:", e);
+      }
+    }
+
+    const result = await model.generateContent(parts as never);
+    const text = (await result.response.text()).trim();
+
+    // 파이프 파싱. id 가 입력과 매칭되는 것만 받아들임.
+    const inputIds = new Set(input.problemProducts.map((p) => p.id));
+    const idToInput = new Map(input.problemProducts.map((p) => [p.id, p]));
+    const recovered = new Map<string, OcrProduct>();
+
+    for (const rawLine of text.split(/\r?\n/)) {
+      const line = rawLine.trim();
+      if (!line || line.startsWith("```") || line.startsWith("#")) continue;
+      const cols = line.split("|").map((c) => c.trim());
+      if (cols.length < 3) continue;
+      const [id, name, priceStr, qtyStr] = cols;
+      if (!inputIds.has(id)) continue;
+      const price = parseInt(priceStr.replace(/[^0-9-]/g, ""), 10);
+      if (!Number.isFinite(price)) continue;
+      const orig = idToInput.get(id)!;
+      const quantity = qtyStr ? parseInt(qtyStr.replace(/[^0-9]/g, ""), 10) : undefined;
+      recovered.set(id, {
+        id,
+        name: name || orig.name || "",
+        price: Math.max(0, price),
+        ...(quantity && quantity > 0 ? { quantity } : {}),
+      });
+    }
+
+    if (recovered.size === 0) return null;
+
+    // 입력 순서 유지. 응답에 빠진 id 는 현재 값을 유지하되 호출 실패로 간주하지 않음.
+    const products: OcrProduct[] = input.problemProducts.map((p) => {
+      const r = recovered.get(p.id);
+      if (r) return r;
+      return {
+        id: p.id,
+        name: p.name,
+        price: p.price,
+        ...(p.quantity !== undefined ? { quantity: p.quantity } : {}),
+      };
+    });
+
+    return { products };
+  } catch (error) {
+    console.error("OCR Products Fallback Failed:", error);
+    return null;
   }
 }

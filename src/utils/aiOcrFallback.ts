@@ -20,6 +20,7 @@
  */
 
 import type { OcrProduct } from "../pages/OcrEdit/data";
+import { fallbackOcrProducts } from "./aiService";
 
 export interface AiOcrFallbackRequest {
   /** 이미지 식별자 (디버깅/로깅 용, API 에는 전송 안 해도 됨). */
@@ -30,14 +31,14 @@ export interface AiOcrFallbackRequest {
   rawText: string;
   /** AI 가 보정해야 할 카드만. 이미 aiApplied==true 인 건 caller 에서 제외해 넘긴다고 가정. */
   problemProducts: OcrProduct[];
-  /** 선택: 원본 이미지 data URL — Vision 모델에 직접 이미지 입력 시 사용. */
-  imageDataUrl?: string;
+  /** 선택: 원본 이미지 File — Vision 모델에 직접 이미지 입력 시 사용 (Gemini 멀티모달). */
+  imageFile?: File;
 }
 
 export interface AiOcrFallbackResult {
   /** 입력 problemProducts 와 같은 순서. aiApplied=true 로 마킹됩니다. */
   products: OcrProduct[];
-  provider: "stub" | "claude" | "openai";
+  provider: "stub" | "gemini" | "claude" | "openai";
   /** AI 가 자체적으로 남긴 코멘트 (예: "이미지 해상도가 낮아 일부만 복구"). 디버깅용. */
   notes?: string;
   /** 호출이 완전히 실패했을 때 (네트워크 / 키 없음 / 타임아웃). caller 는 원본 상태로 진행. */
@@ -45,19 +46,33 @@ export interface AiOcrFallbackResult {
 }
 
 /**
- * 실제 LLM 호출 자리. 현재는 **의도적으로 비어 있음** — 키·엔드포인트가 확정되면 여기에
- * fetch() 호출을 추가. 구현 가이드:
- *   1. system prompt: "쿠팡 주문내역 캡쳐의 문제 카드만 이름/가격/수량을 복구해 JSON 으로 반환"
- *   2. user content: rawText + problemProducts 의 현재 필드 + (옵션) imageDataUrl
- *   3. response: `{ products: [{ id, name, price, quantity? }] }` 스키마
- *   4. validation: id 가 입력과 일치하는지, name/price 가 비어 있지 않은지 검증
- *   5. 실패 시 `{ ..., failed: true }` 반환, caller 는 원본을 그대로 사용
+ * 실제 LLM 호출 — Gemini 2.5 Flash Vision 을 사용해 문제 카드만 재추출합니다.
+ * aiService.fallbackOcrProducts 에서 실제 API 호출과 프롬프트·파싱을 담당하고, 이 함수는
+ * 그 결과를 AiOcrFallbackResult 포맷으로 래핑하며 aiApplied 플래그를 찍습니다.
+ *
+ * 반환:
+ *   - 정상 복구 → `{ provider: "gemini", products: [...with aiApplied] }`
+ *   - 키 없음 / 파싱 실패 / 예외 → null (caller 는 스텁 경로로 빠짐)
  */
 async function callRealAi(
-  _request: AiOcrFallbackRequest,
+  request: AiOcrFallbackRequest,
 ): Promise<AiOcrFallbackResult | null> {
-  // TODO(#47): 실제 API 호출 연결. 현재는 null 을 리턴해 caller 가 스텁으로 fallback 하게 함.
-  return null;
+  const recovered = await fallbackOcrProducts({
+    platform: request.platform,
+    rawText: request.rawText,
+    problemProducts: request.problemProducts.map((p) => ({
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      quantity: p.quantity,
+    })),
+    imageFile: request.imageFile,
+  });
+  if (!recovered) return null;
+  return {
+    provider: "gemini",
+    products: recovered.products.map((p) => ({ ...p, aiApplied: true })),
+  };
 }
 
 /**

@@ -319,23 +319,24 @@ export async function analyzeUploadedImages(
     // ───────── AI 자동 보정 단계 ─────────
     //
     // Tesseract 루프가 끝난 뒤 전체 처리 결과를 한 번 훑어, "파서로 복구 불가" 로 분류되는
-    // 카드가 있는 이미지에 대해 AI 를 조용히 호출합니다. 권장 배지/배너 없이 파이프라인 안쪽
-    // 에서 자동으로 해결되는 구조 — 사용자가 편집 화면을 볼 때는 이미 aiApplied 배지만 붙은
-    // 상태.
+    // 카드가 있는 이미지에 대해 Gemini 2.5 Flash Vision 을 조용히 호출합니다. 권장 배지/배너
+    // 없이 파이프라인 안쪽에서 자동으로 해결되는 구조 — 사용자가 편집 화면을 볼 때는 이미
+    // aiApplied 배지만 붙은 상태입니다.
     //
     // AI 호출은 이미지 단위로 순회. 한 이미지 안의 모든 주문에 대해 bad 제품을 모아 한 번에
-    // 요청합니다. 현재 구현은 스텁(runAiOcrFallback) 이라 1.2s 지연 후 aiApplied 플래그만 찍어
-    // 돌려주며, 실 API 가 붙으면 여기서 name/price 가 실제로 복구됩니다.
+    // 요청합니다(토큰 절약). 원본 File 을 함께 넘겨 Vision 활성화.
     const imagesNeedingAi = processed
-      .map((img) => ({
+      .map((img, idx) => ({
         img,
+        // targetImages[idx] 는 처리 순서가 processed 와 동일하므로 안전하게 대응.
+        file: targetImages[idx]?.file,
         badPerOrder: img.orders.map((o) => pickBadProducts(o.products, o.statusTag)),
       }))
       .filter((x) => x.badPerOrder.some((arr) => arr.length > 0));
 
     if (imagesNeedingAi.length > 0) {
       for (let i = 0; i < imagesNeedingAi.length; i += 1) {
-        const { img, badPerOrder } = imagesNeedingAi[i];
+        const { img, file, badPerOrder } = imagesNeedingAi[i];
         onProgress({
           currentIndex: totalCount, // Tesseract 단계가 끝났다고 알려주려고 total 유지.
           totalCount,
@@ -355,6 +356,7 @@ export async function analyzeUploadedImages(
           platform: img.platform,
           rawText: img.rawText ?? "",
           problemProducts: flatBad,
+          imageFile: file,
         });
         if (fallback.failed) continue;
 
