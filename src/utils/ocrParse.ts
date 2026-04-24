@@ -41,7 +41,7 @@ const STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
  *     refund 는 포함. 쿠팡 반품은 "구매 자체가 없었던 것" 으로 처리하길 원하므로 cancel 매핑이
  *     KPI 의도와도 일치합니다.
  *
- * 다른 플랫폼(네이버/테무) 에서는 글로벌 detectStatusFromOcrText 를 그대로 쓰면 됩니다.
+ * 다른 플랫폼(네이버) 에서는 글로벌 detectStatusFromOcrText 를 그대로 쓰면 됩니다.
  */
 const COUPANG_STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
   // 반품을 cancel 로 우선 분류. 환불 키워드(환불완료/환불처리) 는 여전히 refund.

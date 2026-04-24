@@ -25,8 +25,8 @@ import { fallbackOcrProducts } from "./aiService";
 export interface AiOcrFallbackRequest {
   /** 이미지 식별자 (디버깅/로깅 용, API 에는 전송 안 해도 됨). */
   imageId: string;
-  /** 플랫폼 힌트 — system prompt 에 "쿠팡/네이버/테무 캡쳐" 라고 알려주는 용도. */
-  platform: "coupang" | "naver" | "temu";
+  /** 플랫폼 힌트 — system prompt 에 "쿠팡/네이버 캡쳐" 라고 알려주는 용도. */
+  platform: "coupang" | "naver";
   /** 전체 rawText — 문제 카드의 맥락 보존용. */
   rawText: string;
   /**

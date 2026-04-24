@@ -6,7 +6,7 @@
  *       적용 지점:
  *         OcrUpload/index.tsx의 runAnalysis에서 worker.recognize() 직후 rawText에 한 번
  *         태운 뒤, 각 플랫폼 파서(parseCoupangOrderText 등)로 넘깁니다. 따라서 여기 추가한
- *         규칙은 쿠팡/네이버/테무 모두가 동시에 이득을 받습니다.
+ *         규칙은 쿠팡/네이버 모두가 동시에 이득을 받습니다.
  *
  *       설계 원칙:
  *         1) "거의 부작용 없는" 형식 정규화만 한다. 한글 철자 교정(예: "대일" → "내일")처럼
@@ -333,7 +333,7 @@ function dropStandaloneRibbonNoiseLines(input: string): string {
     return false;
   };
 
-  const survivesContext = (line: string, index: number): boolean => {
+  const survivesContext = (_line: string, index: number): boolean => {
     const prev = lines[index - 1]?.trim() ?? "";
     const next = lines[index + 1]?.trim() ?? "";
     const prevLooksCardBoundary =

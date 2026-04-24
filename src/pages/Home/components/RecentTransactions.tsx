@@ -12,7 +12,7 @@ import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 
-type Platform = "coupang" | "naver" | "temu" | "unspecified";
+type Platform = "coupang" | "naver" | "unspecified";
 
 export interface RecentItem {
   id: string;
@@ -181,4 +181,3 @@ export const RecentTransactions: React.FC<{ items: RecentItem[] }> = ({ items })
     </Card>
   );
 };
-

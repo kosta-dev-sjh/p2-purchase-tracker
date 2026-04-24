@@ -3,9 +3,6 @@
  *       하는 아주 얇은 pub/sub 스토어입니다. transactionsStore / profileStore와 같은
  *       패턴을 써서 Context 없이 컴포넌트 간 신호만 전달합니다.
  * 위치: src/components/onboarding/tourStore.ts
- *
- * TODO(auth): 실제 인증 플로우로 넘어갈 때 이 스토어는 그대로 두어도 됩니다.
- *             목업과 무관하게 "기능 투어 트리거" 용도로 쓸 수 있기 때문입니다.
  */
 import { useEffect, useState } from "react";
 

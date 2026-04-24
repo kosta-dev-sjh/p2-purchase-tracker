@@ -7,6 +7,7 @@ import { useNavigate } from "react-router-dom";
 import type { NavKey } from "./AppShell";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
+import { logOut } from "../../lib/firebaseSync";
 
 interface SidebarProps {
   activeNav: NavKey;
@@ -266,6 +267,10 @@ const ActionButton = styled.button`
 
 export const Sidebar = ({ activeNav, user }: SidebarProps) => {
   const navigate = useNavigate();
+  const handleLogout = async () => {
+    await logOut();
+    navigate("/login", { replace: true });
+  };
 
   return (
     <Aside>
@@ -314,7 +319,7 @@ export const Sidebar = ({ activeNav, user }: SidebarProps) => {
           <div className="name">{user.name}</div>
           <div className="sub">{user.email ?? ""}</div>
           <div className="sub">
-            <ActionButton type="button" onClick={() => navigate("/login")}>
+            <ActionButton type="button" onClick={() => void handleLogout()}>
               로그아웃
             </ActionButton>
           </div>
@@ -323,4 +328,3 @@ export const Sidebar = ({ activeNav, user }: SidebarProps) => {
     </Aside>
   );
 };
-

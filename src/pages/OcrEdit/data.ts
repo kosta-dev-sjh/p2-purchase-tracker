@@ -15,7 +15,7 @@
  * 위치: src\pages\OcrEdit\data.ts
  */
 
-export type Platform = "coupang" | "naver" | "temu";
+export type Platform = "coupang" | "naver";
 export type Status = "purchase" | "sub" | "cancel" | "refund";
 
 export interface OcrProduct {

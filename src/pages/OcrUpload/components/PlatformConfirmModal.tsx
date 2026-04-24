@@ -32,13 +32,9 @@ import type { Platform } from "./PlatformSelect";
 
 /**
  * 모달에서 선택할 수 있는 플랫폼 집합.
- * PlatformSelect와 동일한 OCR 파서 지원 목록만 노출합니다(쿠팡/네이버/테무).
+ * PlatformSelect와 동일한 OCR 파서 지원 목록만 노출합니다(쿠팡/네이버).
  */
-const SELECTABLE_PLATFORMS: readonly Platform[] = [
-  "coupang",
-  "naver",
-  "temu",
-];
+const SELECTABLE_PLATFORMS: readonly Platform[] = ["coupang", "naver"];
 
 const Description = styled.p`
   margin: 0 0 16px;
@@ -85,7 +81,7 @@ const List = styled.div`
 const Row = styled.div`
   /*
    * 한 줄에 썸네일 · 파일명 · 칩 3개를 모두 밀어 넣는 구조는 "네이버쇼핑" 라벨이
-   * 길어서 모달 폭(≈480px)에서도 맨 뒤 칩(테무)이 잘려 보이지 않는 문제가
+ * 길어서 모달 폭(≈480px)에서도 맨 뒤 칩이 잘려 보이지 않는 문제가
    * 있었습니다.
    *   - flex-wrap을 허용하면 한두 개 칩만 다음 줄로 튕겨 레이아웃이 어그러지고,
    *   - flex-wrap을 끄면 넘치는 부분이 그대로 오버플로우로 가려집니다.

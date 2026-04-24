@@ -12,6 +12,8 @@ import { tokens } from "../styles/tokens";
 import { CATEGORY_LABELS, DEFAULT_CATEGORY_KEY } from "../constants/labels";
 import type { TxCategory } from "../pages/Transactions/components/TransactionTable";
 import type { ConceptId } from "../data/categoryConcepts";
+import { auth } from "../lib/firebase";
+import { addCategory, removeCategory, updateCategory } from "../lib/firebaseRepository";
 
 export interface CategoryEntry {
   id: string;
@@ -47,7 +49,7 @@ const STANDARD_CONCEPT_BINDINGS: Record<string, ConceptId[]> = {
   etc: [],
 };
 
-const SEED: CategoryEntry[] = [
+export const DEFAULT_CATEGORIES: CategoryEntry[] = [
   {
     id: DEFAULT_CATEGORY_KEY,
     name: CATEGORY_LABELS.etc,
@@ -133,8 +135,8 @@ function writeCurrent(items: CategoryEntry[]): void {
 function ensureSeeded(): CategoryEntry[] {
   const existing = readCurrent();
   if (existing && existing.length > 0) return existing;
-  writeCurrent(SEED);
-  return SEED;
+  writeCurrent(DEFAULT_CATEGORIES);
+  return DEFAULT_CATEGORIES;
 }
 
 interface CategoriesState {
@@ -145,6 +147,7 @@ interface CategoriesState {
     id: string,
     patch: { name?: string; color?: string; conceptIds?: ConceptId[] }
   ) => void;
+  hydrate: (items: CategoryEntry[]) => CategoryEntry[];
 }
 
 const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
@@ -163,6 +166,10 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     const next = reassignConcepts(get().items, entry);
     writeCurrent(next);
     set({ items: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void addCategory(uid, entry);
+    }
     return entry;
   },
   remove: (id) => {
@@ -171,6 +178,10 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     const next = get().items.filter((entry) => entry.id !== id);
     writeCurrent(next);
     set({ items: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void removeCategory(uid, id);
+    }
   },
   update: (id, patch) => {
     const target = get().items.find((entry) => entry.id === id);
@@ -187,6 +198,15 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     const next = needsReassign ? reassignConcepts(base, nextEntry) : base;
     writeCurrent(next);
     set({ items: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void updateCategory(uid, id, nextEntry);
+    }
+  },
+  hydrate: (items) => {
+    writeCurrent(items);
+    set({ items });
+    return items;
   },
 }));
 
@@ -231,6 +251,9 @@ export const categoriesStore = {
     patch: { name?: string; color?: string; conceptIds?: ConceptId[] }
   ): void {
     useCategoriesStoreBase.getState().update(id, patch);
+  },
+  hydrate(items: CategoryEntry[]): CategoryEntry[] {
+    return useCategoriesStoreBase.getState().hydrate(items);
   },
   /**
    * 추정 유틸에 주입할 바인딩 스냅샷. CategoryEntry 전체를 흘리지 않고 필요한 필드만.

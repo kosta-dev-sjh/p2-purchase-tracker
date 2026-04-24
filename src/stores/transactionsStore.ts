@@ -18,6 +18,13 @@ import {
   normalizeMerchantKey,
   shouldInferCategory,
 } from "../utils/categoryInference";
+import { auth } from "../lib/firebase";
+import {
+  addTransactions,
+  removeTransaction,
+  replaceTransactions,
+  updateTransaction,
+} from "../lib/firebaseRepository";
 
 /**
  * 저장 경계에서 참조하는 "가맹점명 → 사용자 선택 카테고리" 학습 캐시.
@@ -125,6 +132,7 @@ interface TransactionsState {
   ) => void;
   /** 저장된 거래를 모두 지워 "빈 계정" 상태로 돌립니다. */
   clearAll: () => TxRow[];
+  hydrate: (rows: TxRow[]) => TxRow[];
 }
 
 const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
@@ -132,34 +140,58 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
   replaceAll: (rows) => {
     writeCurrent(rows);
     set({ rows });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void replaceTransactions(uid, rows);
+    }
   },
   addFromImport: (rows) => {
     const enriched = enrichCategories(rows);
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void addTransactions(uid, enriched);
+    }
   },
   addFromManual: (row) => {
     const next = [row, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void addTransactions(uid, [row]);
+    }
   },
   addMany: (rows) => {
     const enriched = enrichCategories(rows);
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void addTransactions(uid, enriched);
+    }
   },
   addOne: (row) => {
     const next = [row, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void addTransactions(uid, [row]);
+    }
   },
   updateOne: (id, patch) => {
     const prev = get().rows.find((row) => row.id === id);
     const next = get().rows.map((row) => (row.id === id ? { ...row, ...patch } : row));
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void updateTransaction(uid, id, patch);
+    }
 
     // 사용자가 카테고리를 명시적으로 바꾼 경우만 학습 캐시에 기록합니다.
     // - patch.categories가 포함돼 있고
@@ -184,6 +216,10 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     const next = get().rows.filter((row) => row.id !== id);
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void removeTransaction(uid, id);
+    }
   },
   appendItemsToTransaction: (id, items, source = "OCR") => {
     const next = get().rows.map((row) => {
@@ -200,11 +236,27 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     });
     writeCurrent(next);
     set({ rows: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      const updated = next.find((row) => row.id === id);
+      if (updated) {
+        void updateTransaction(uid, id, updated);
+      }
+    }
   },
   clearAll: () => {
     writeCurrent([]);
     set({ rows: [] });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void replaceTransactions(uid, []);
+    }
     return [];
+  },
+  hydrate: (rows) => {
+    writeCurrent(rows);
+    set({ rows });
+    return rows;
   },
 }));
 
@@ -252,6 +304,9 @@ export const transactionsStore = {
   },
   clearAll(): TxRow[] {
     return useTransactionsStoreBase.getState().clearAll();
+  },
+  hydrate(rows: TxRow[]): TxRow[] {
+    return useTransactionsStoreBase.getState().hydrate(rows);
   },
   subscribe(listener: (rows: TxRow[]) => void): () => void {
     return useTransactionsStoreBase.subscribe((state) => listener(state.rows));

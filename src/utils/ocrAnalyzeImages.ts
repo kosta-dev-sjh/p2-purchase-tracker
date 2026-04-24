@@ -18,7 +18,6 @@ import type { OcrImageItem, OcrOrder } from "../pages/OcrEdit/data";
 import {
   parseCoupangOrderText,
   parseNaverOrderText,
-  parseTemuOrderText,
   type PurchaseOCRResult,
 } from "./ocrParsers";
 import {
@@ -129,20 +128,14 @@ function buildCoupangOrders(
 }
 
 /**
- * 네이버/테무용: "이미지 1장 = 주문 N건(목록형)" 형식이라 결과 1개당 OcrOrder 1개.
+ * 네이버용: "이미지 1장 = 주문 N건(목록형)" 형식이라 결과 1개당 OcrOrder 1개.
  */
 function buildFlatOrders(
   imageId: string,
-  platform: Platform,
   parsed: PurchaseOCRResult[],
 ): OcrOrder[] {
   return parsed.map((res, idx) => {
-    const statusTag =
-      platform === "temu"
-        ? res.statusText
-          ? (detectStatusFromOcrText(res.statusText) ?? "purchase")
-          : "purchase"
-        : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
+    const statusTag = detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase";
     const product = toProduct(res, idx, imageId);
     const unitPrice = res.price ?? 0;
     const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
@@ -325,14 +318,12 @@ export async function analyzeUploadedImages(
         parsedData = parseCoupangOrderText(rawText);
       } else if (image.platform === "naver") {
         parsedData = parseNaverOrderText(rawText);
-      } else if (image.platform === "temu") {
-        parsedData = parseTemuOrderText(rawText);
       }
 
       const orders =
         image.platform === "coupang" && parsedData.length > 0
           ? buildCoupangOrders(image.id, parsedData)
-          : buildFlatOrders(image.id, image.platform, parsedData);
+          : buildFlatOrders(image.id, parsedData);
 
       const imageItem: OcrImageItem = {
         id: image.id,

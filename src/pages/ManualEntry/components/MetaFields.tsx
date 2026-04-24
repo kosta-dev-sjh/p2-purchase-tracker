@@ -27,7 +27,7 @@ const CATEGORY_OPTIONS: CategoryKey[] = ["living", "fashion", "digital", "food",
  * 이 필드 값을 모두 collect 해서 transactionsStore에 addOne() 할 수 있도록
  * 컨트롤드 입력으로 만들었습니다. props가 없으면 undefined 기본값으로 동작합니다.
  *
- * platform 값은 TxPlatform과 동일한 키("coupang" | "naver" | "temu" | "unspecified")를
+ * platform 값은 TxPlatform과 동일한 키("coupang" | "naver" | "unspecified")를
  * 그대로 저장합니다. mapPlatform 유틸이 키 문자열과 한글 라벨 양쪽을 모두 받아들여 동일한
  * TxPlatform으로 수렴시키므로, 드롭다운(키) → 저장(키) 흐름에서 별도 변환이 필요 없습니다.
  */
@@ -210,7 +210,7 @@ export const MetaFields: React.FC<{
       </Field>
       <Field>
         {/*
-         * 플랫폼은 "쿠팡/네이버쇼핑/테무" 3개 + "미지정"으로 제한합니다.
+         * 플랫폼은 "쿠팡/네이버쇼핑" 2개 + "미지정"으로 제한합니다.
          * 수동 입력은 플랫폼이 없는 곳(오프라인 결제 등)도 커버해야 하므로 "미지정"을 기본 선택지로 두고
          * 필수 값에서 빠졌습니다. 기존에는 자유 텍스트라 "쿠팡 위클리" 같은 변형이 들어오면
          * mapPlatform 기본값(coupang)으로 엉뚱하게 수렴되던 문제가 있어 드롭다운으로 제한했습니다.

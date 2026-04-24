@@ -4,6 +4,8 @@
  * 위치: src\stores\profileStore.ts
  */
 import { create } from "zustand";
+import { auth } from "../lib/firebase";
+import { saveUserProfile } from "../lib/firebaseRepository";
 
 export interface UserProfile {
   name: string;
@@ -15,7 +17,7 @@ export interface UserProfile {
 
 const STORAGE_KEY = "spendtrack:profile:v1";
 
-const DEFAULT_PROFILE: UserProfile = {
+export const DEFAULT_PROFILE: UserProfile = {
   name: "홍길동",
   nickname: "길동님",
   email: "hong@example.com",
@@ -49,6 +51,7 @@ interface ProfileState {
   profile: UserProfile;
   save: (partial: Partial<UserProfile>) => UserProfile;
   reset: () => UserProfile;
+  hydrate: (profile: UserProfile) => UserProfile;
 }
 
 const useProfileStoreBase = create<ProfileState>((set, get) => ({
@@ -57,12 +60,25 @@ const useProfileStoreBase = create<ProfileState>((set, get) => ({
     const next = { ...get().profile, ...partial };
     writeCurrent(next);
     set({ profile: next });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void saveUserProfile(uid, partial);
+    }
     return next;
   },
   reset: () => {
     writeCurrent(DEFAULT_PROFILE);
     set({ profile: DEFAULT_PROFILE });
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      void saveUserProfile(uid, DEFAULT_PROFILE);
+    }
     return DEFAULT_PROFILE;
+  },
+  hydrate: (profile) => {
+    writeCurrent(profile);
+    set({ profile });
+    return profile;
   },
 }));
 
@@ -83,6 +99,9 @@ export const profileStore = {
   },
   reset(): UserProfile {
     return useProfileStoreBase.getState().reset();
+  },
+  hydrate(profile: UserProfile): UserProfile {
+    return useProfileStoreBase.getState().hydrate(profile);
   },
   subscribe(listener: (profile: UserProfile) => void): () => void {
     return useProfileStoreBase.subscribe((state) => listener(state.profile));

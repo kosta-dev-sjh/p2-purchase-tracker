@@ -10,7 +10,7 @@
  *     - "정확도 추가 상승" 을 노린 새 regex/후처리 튜닝은 금지. 회귀가 생기면 고치고,
  *       새 OCR 변형 패턴이 한 번 관찰되는 수준에서는 AI 보정(aiService) 에 위임합니다.
  *
- *   네이버쇼핑 (parseNaverOrderText) / 테무 (parseTemuOrderText)
+ *   네이버쇼핑 (parseNaverOrderText)
  *     - **얕은 1차 파서** 로 유지. 편집 가능한 구조화 초안만 책임집니다:
  *         · 주문 단위 분리
  *         · 날짜/상태/상품명/가격의 대략적 추출
@@ -1025,128 +1025,6 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
 
   if (results.length === 0) {
     return [{ mall, itemName: null, price: null, date: null, rawText, statusText: rawText }];
-  }
-
-  return results;
-}
-
-export function parseTemuOrderText(rawText: string): PurchaseOCRResult[] {
-  // 상태 감지용 키워드 - 완료 상태만 정확하게 매칭
-  const statusKeywords = ['취소완료', '취소 완료', '주문취소완료',
-                          '환불완료', '환불 완료', '환불처리완료',
-                          '반품완료', '반품 완료', '반품처리완료',
-                          '결제완료', '결제 완료', '주문완료', '주문 완료',
-                          '배송완료', '배송 완료', '배송중',
-                          '구매확정완료', '구매확정', '구매 확정',
-                          '정기결제', '구독'];
-
-  // 제외할 안내 문구 (실제 상태가 아닌 것들)
-  const excludePatterns = ['환불 가능', '환불가능', '반품 가능', '반품가능', '취소 가능', '취소가능',
-                           '환불 정책', '반품 정책', '환불/반품', '환불·반품'];
-
-  // 원본 텍스트에서 상태 키워드가 포함된 라인 추출 (안내 문구 제외)
-  const originalLines = rawText.split('\n');
-  const statusTexts: string[] = [];
-  for (const line of originalLines) {
-    // 안내 문구가 포함된 라인은 제외
-    const isExcluded = excludePatterns.some(pattern => line.includes(pattern));
-    if (!isExcluded && statusKeywords.some(kw => line.includes(kw))) {
-      statusTexts.push(line.trim());
-    }
-  }
-
-  const lines = rawText.split('\n').map(line => line.trim()).filter(line => line.length > 0);
-  const mall = '테무';
-  const results: PurchaseOCRResult[] = [];
-  let orderDate: string | null = null;
-
-  const dateRegex = /(\d{4})년\s*(\d{1,2})월\s*(\d{1,2})일/;
-  for (const line of lines) {
-    const match = line.match(dateRegex);
-    if (match) {
-      const yyyy = match[1];
-      const mm = match[2].padStart(2, '0');
-      const dd = match[3].padStart(2, '0');
-      orderDate = `${yyyy}-${mm}-${dd}`;
-      break;
-    }
-  }
-
-  let isProductSection = false;
-  for (const line of lines) {
-    if (line.includes('상품 세부 내용')) {
-      isProductSection = true;
-      continue;
-    }
-    
-    if (isProductSection) {
-      const promoRegex = /(?:프로모|적용\s*후?)[^\d]*([\d,]+)/;
-      const promoMatch = line.match(promoRegex);
-      if (promoMatch && results.length > 0) {
-        results[results.length - 1].price = Number(promoMatch[1].replace(/[^\d]/g, ''));
-        continue;
-      }
-
-      const productRegex = /(.*?)[\.\…]+?\s*([\d,]+)[원¥89]*$/i;
-      const match = line.match(productRegex);
-      
-      if (match) {
-        let itemName = match[1].replace(/^[^가-힣a-zA-Z0-9]+/, '').trim();
-        let priceStr = match[2].replace(/[^\d]/g, '');
-        
-        if (priceStr.length >= 5 && (priceStr.endsWith('9') || priceStr.endsWith('8'))) {
-          if (!match[2].includes(',')) {
-            priceStr = priceStr.slice(0, -1);
-          }
-        }
-        
-        if (itemName.length > 2) {
-          results.push({
-            mall,
-            itemName,
-            price: priceStr ? Number(priceStr) : null,
-            date: orderDate,
-            rawText,
-            // 테무는 안내 문구가 많아 상태 자동 인식이 부정확하므로 기본값(purchase) 사용
-            statusText: undefined
-          });
-        }
-      } else {
-        const excludeKeywords = ['합계', '할인', '소계', '배송', 'Temu', '판매자', '프로모션', '환불', '적용'];
-        const isExcluded = excludeKeywords.some(kw => line.includes(kw));
-
-        if (!isExcluded) {
-           const directPriceRegex = /(.*)\s+([\d,]+)[원¥89]*$/i;
-           const match2 = line.match(directPriceRegex);
-           if (match2) {
-             let itemName = match2[1].replace(/^[^가-힣a-zA-Z0-9]+/, '').trim();
-             let priceStr = match2[2].replace(/[^\d]/g, '');
-
-             if (priceStr.length >= 5 && (priceStr.endsWith('9') || priceStr.endsWith('8'))) {
-               if (!match2[2].includes(',')) {
-                 priceStr = priceStr.slice(0, -1);
-               }
-             }
-
-             if (itemName.length > 2) {
-               results.push({
-                 mall,
-                 itemName,
-                 price: priceStr ? Number(priceStr) : null,
-                 date: orderDate,
-                 rawText,
-                 // 테무는 안내 문구가 많아 상태 자동 인식이 부정확하므로 기본값(purchase) 사용
-                 statusText: undefined
-               });
-             }
-           }
-        }
-      }
-    }
-  }
-
-  if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: orderDate, rawText, statusText: undefined }];
   }
 
   return results;

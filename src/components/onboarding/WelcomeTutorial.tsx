@@ -1,12 +1,8 @@
 /**
- * 역할: 신규 계정(목업 1111/1111) 로그인 직후 Home에서 한 번만 뜨는 온보딩 오버레이.
+ * 역할: 신규 가입 직후 Home에서 한 번만 뜨는 온보딩 오버레이.
  *       수동 입력 / OCR / CSV / 분석 4개 진입점을 슬라이드로 안내하고,
  *       닫으면 localStorage 플래그를 남겨 다음 진입부터는 자동으로 뜨지 않게 합니다.
  * 위치: src/components/onboarding/WelcomeTutorial.tsx
- *
- * TODO(auth): 실제 인증을 붙이고 목업 로그인 분기를 걷어낼 때, 이 오버레이의 표시 조건을
- *             "실제 신규 가입 이벤트 직후"로 옮겨야 합니다. 현재는 LoginForm의 1111/1111 분기가
- *             onboarding 플래그를 제거하는 것으로 트리거됩니다.
  */
 import React, { useCallback, useState } from "react";
 import { Link } from "react-router-dom";
@@ -14,7 +10,7 @@ import styled from "styled-components";
 import { Button } from "../primitives/Button";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
-import { ONBOARDING_SEEN_KEY } from "../../mocks/auth";
+import { ONBOARDING_SEEN_KEY } from "../../constants/onboarding";
 import { tourStore } from "./tourStore";
 
 interface Step {

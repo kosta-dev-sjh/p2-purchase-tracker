@@ -79,7 +79,7 @@ const HintText = styled.div`
 
 /**
  * 플랫폼별 뱃지 색상.
- * - 쿠팡(빨강 계열), 네이버(초록 계열), 테무(주황 계열)로 쇼핑몰의 브랜드 이미지를
+ * - 쿠팡(빨강 계열), 네이버(초록 계열)로 쇼핑몰의 브랜드 이미지를
  *   살짝 암시해 "이게 어느 몰 캡쳐였더라"를 색으로도 구분할 수 있게 합니다.
  * - 다만 브랜드 로고의 정확한 색을 그대로 쓰면 상표권·톤 조화 문제가 있어,
  *   서비스 팔레트와 어울리도록 톤을 낮춰 톤인톤으로 맞췄습니다.
@@ -87,9 +87,6 @@ const HintText = styled.div`
 const PLATFORM_BADGE_STYLES: Record<Platform, { bg: string; fg: string }> = {
   coupang: { bg: "#FEE2E2", fg: "#B91C1C" },
   naver: { bg: "#DCFCE7", fg: "#166534" },
-  // 테무의 브랜드 색상은 선명한 주황. 쿠팡의 빨강과 색조가 겹치지 않도록 옐로우-오렌지
-  // 축에 더 가까운 톤(#C2410C / #FFEDD5)을 써서 "빨강=쿠팡, 주황=테무"로 구분됩니다.
-  temu: { bg: "#FFEDD5", fg: "#C2410C" },
 };
 
 const PlatformBadge = styled.span<{ $platform: Platform }>`
