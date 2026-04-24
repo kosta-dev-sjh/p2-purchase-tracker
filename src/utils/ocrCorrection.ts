@@ -257,6 +257,104 @@ function removeOrphanJamoI(input: string): string {
 }
 
 /**
+ * 쿠팡 주문 카드 앞에 독립 라인으로 끼어드는 "로켓배송 리본 OCR 찌꺼기"를 제거합니다.
+ *
+ * 실측 패턴:
+ *   - `wsws ie) 도적`
+ *   - `월) 도차 :`
+ *   - `uses 30 <2개`
+ *   - `wssa a = |`
+ *
+ * 공통점:
+ *   - 길이가 짧고(대체로 20자 이하) 카드 본문 라인과 분리된 **단독 라인**
+ *   - 라틴/숫자/기호가 대부분이고, 한글이 있더라도 2~4자 짧은 토막에 그침
+ *   - 바로 앞이 주문 헤더/상태/버튼 라인이거나, 바로 뒤가 상품 본문처럼 보이는 라인
+ *
+ * 안전장치:
+ *   - 가격/날짜/상태 키워드가 있는 라인은 건드리지 않음
+ *   - "LG 프라엘", "BFL 빅사이즈" 같은 짧은 영문 브랜드+상품명은 punctuation 부족으로 제외
+ *   - **문맥(앞/뒤 라인)** 이 상품 카드 주변일 때만 제거
+ *
+ * 목표는 상품명 철자 교정이 아니라, nameBuffer 로 흘러 들어가 `도적오리온...` 같은 prefix 를
+ * 만드는 독립 노이즈 라인만 조용히 없애는 것입니다.
+ */
+function dropStandaloneRibbonNoiseLines(input: string): string {
+  const lines = input.split("\n");
+
+  const isProtectedLine = (line: string): boolean =>
+    /(?:20\d{2}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}|\d[\d,]*\s*원|배송\s*완료|상품\s*준비\s*중|결제\s*완료|주문\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|주문\s*상세보기|반품\s*상세\s*보기)/.test(
+      line,
+    );
+
+  const looksLikeStandaloneRibbonNoise = (line: string): boolean => {
+    const t = line.trim();
+    if (!t || t.length > 20 || isProtectedLine(t)) return false;
+
+    const hangulCount = (t.match(/[가-힣]/g) ?? []).length;
+    const latinDigitCount = (t.match(/[A-Za-z0-9]/g) ?? []).length;
+    const punctCount = (t.match(/[()[\]{}:;=<>|+*#@©._~/-]/g) ?? []).length;
+    const hangulChunks = t.match(/[가-힣]{2,}/g) ?? [];
+    const hasOnlyShortHangulChunks =
+      hangulChunks.length === 0 || hangulChunks.every((chunk) => chunk.length <= 2);
+
+    // `wsws ie) 도적`, `wens vi) 도적 :` 류: 앞쪽에 라틴/숫자 찌꺼기가 길게 있고 끝에 2~4자
+    // 한글 토막만 남는 경우.
+    if (
+      hangulCount >= 2 &&
+      hangulCount <= 4 &&
+      latinDigitCount >= 4 &&
+      punctCount >= 1 &&
+      /[가-힣]{2,4}\s*[:)]?\s*$/.test(t)
+    ) {
+      return true;
+    }
+
+    // `월) 도차 :` 류: 라틴은 없지만 구두점 사이에 짧은 한글 토막만 남은 경우.
+    if (
+      hangulCount >= 2 &&
+      hangulCount <= 4 &&
+      latinDigitCount === 0 &&
+      punctCount >= 2 &&
+      !/[가-힣]{3,}\s+[가-힣]{3,}/.test(t)
+    ) {
+      return true;
+    }
+
+    // `uses 30 <2개`, `wssa a = |` 류: 대부분 라틴/숫자/기호이고 한글이 없거나 1자 수준.
+    if (
+      hasOnlyShortHangulChunks &&
+      hangulCount <= 1 &&
+      latinDigitCount + punctCount >= 4 &&
+      (/^[^가-힣]+/.test(t) || /[^가-힣]+$/.test(t))
+    ) {
+      return true;
+    }
+
+    return false;
+  };
+
+  const survivesContext = (line: string, index: number): boolean => {
+    const prev = lines[index - 1]?.trim() ?? "";
+    const next = lines[index + 1]?.trim() ?? "";
+    const prevLooksCardBoundary =
+      /(?:주문\s*상세보기|반품\s*상세\s*보기|배송\s*완료|상품\s*준비\s*중|결제\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|장바구니\s*담기|리뷰\s*작성하기|판매자\s*문의)/.test(
+        prev,
+      );
+    const nextLooksProductish =
+      !isProtectedLine(next) &&
+      /(?:[가-힣]{2,}|[A-Za-z]{3,})/.test(next);
+    return prevLooksCardBoundary || nextLooksProductish;
+  };
+
+  return lines
+    .filter((line, index) => {
+      if (!looksLikeStandaloneRibbonNoise(line)) return true;
+      return !survivesContext(line, index);
+    })
+    .join("\n");
+}
+
+/**
  * 쇼핑몰 OCR 텍스트에 공통으로 걸만한 "안전한" 치환을 모두 적용합니다.
  * 호출부는 파서에 넘기기 직전에 한 번만 태우면 됩니다.
  *
@@ -282,6 +380,7 @@ export function applyOcrCorrections(rawText: string): string {
   text = normalizeHyphens(text);
   text = normalizeQuotes(text);
   text = rejoinSplitKoreanWords(text);
+  text = dropStandaloneRibbonNoiseLines(text);
   text = removeOrphanJamoI(text);
   text = recoverCommaAsPeriodInPrice(text);
   text = mergeThousandSeparator(text);
