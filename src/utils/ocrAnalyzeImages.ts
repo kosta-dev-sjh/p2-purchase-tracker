@@ -205,9 +205,17 @@ export async function analyzeUploadedImages(
   };
 
   // createWorker 시그니처는 (langs, oem, options) 순. OEM=1 은 LSTM_ONLY — tesseract.js v7 기본.
+  //
+  // 2026-04-24 진행률 재설계: 모달이 Tesseract/AI 를 **단일 바** 로 보여주도록 이미지 한 장의
+  // 진행률을 `0..1` 내부 좌표로 통일합니다.
+  //   - Tesseract 단계: `0.0 → 0.5`  (recognize 진행률을 2로 나눠 스케일)
+  //   - AI 단계:        `0.5 → 1.0`  (AI 필요하면 호출 끝날 때 1.0, 없으면 바로 1.0)
+  //   - 모달 전체 진행률 = `(currentIndex + currentProgress) / totalCount`
+  // 이 방식이면 AI 필요 없는 이미지는 0 → 0.5 → 1.0 으로 "쭉쭉 차서" 다음 이미지로 넘어가고,
+  // AI 필요한 이미지는 0.5 에서 잠시 머문 뒤 1.0 으로 차오릅니다.
   const worker = await createWorker("kor+eng", 1, {
     logger: (message) => {
-      // recognize 단계에서는 progress 를 진행률로, 그 외 단계에서는 status만 갱신합니다.
+      // recognize 단계에서는 progress 를 이미지 슬롯의 전반부(0→0.5) 에 매핑합니다.
       if (message.status === "recognizing text") {
         onProgress({
           currentIndex: currentImageMeta.index,
@@ -215,8 +223,9 @@ export async function analyzeUploadedImages(
           currentFileName: currentImageMeta.fileName,
           currentThumbUrl: currentImageMeta.thumbUrl,
           currentPlatform: currentImageMeta.platform,
-          currentProgress: message.progress,
+          currentProgress: message.progress * 0.5,
           currentStatus: message.status,
+          phase: "tesseract",
         });
       } else {
         onProgress({
@@ -227,6 +236,7 @@ export async function analyzeUploadedImages(
           currentPlatform: currentImageMeta.platform,
           currentProgress: 0,
           currentStatus: message.status,
+          phase: "tesseract",
         });
       }
     },
@@ -246,11 +256,22 @@ export async function analyzeUploadedImages(
     }
 
     const processed: OcrImageItem[] = [];
+    // AI 호출 통계 누적 — 아래 완료 요약 로깅에 사용.
+    let triggeredImages = 0;
 
+    // ───────── 이미지별 단일 파이프라인 (Tesseract → 파싱 → 필요 시 AI) ─────────
+    //
+    // 2026-04-24 구조 변경: Tesseract 전체 끝내고 AI 전체 돌리는 두 루프 → 이미지 한 장을
+    // 처음부터 끝까지(파싱·AI) 완결하고 다음 장으로 넘어가는 단일 루프. 이유:
+    //   (1) UX: 모달 진행 바가 "전체 0→100" 을 한 번만 그림. 두 번 리셋되며 "어디까지 왔지?"
+    //       혼동이 사라짐.
+    //   (2) 상관 없는 이미지(= AI 불필요) 는 `0.0→0.5→1.0` 으로 즉시 슬롯을 차고 지나감.
+    //       AI 필요한 이미지는 `0.5` 에 잠깐 머물고 `1.0` 으로 마무리.
+    //   (3) 코드: imagesNeedingAi 별도 배열 불필요, targetImages[idx] 매칭도 즉시.
     for (let i = 0; i < targetImages.length; i += 1) {
       const image = targetImages[i];
 
-      // 이미지 진입 시점 메타 갱신 + progress 0 리셋.
+      // 이미지 진입 — 슬롯 시작 0.0
       currentImageMeta = {
         index: i,
         fileName: image.fileName,
@@ -265,6 +286,7 @@ export async function analyzeUploadedImages(
         currentPlatform: image.platform,
         currentProgress: 0,
         currentStatus: "preprocessing",
+        phase: "tesseract",
       });
 
       if (!image.file) {
@@ -281,9 +303,22 @@ export async function analyzeUploadedImages(
         continue;
       }
 
+      // ── Tesseract ── 진행률은 logger 가 0→0.5 스케일로 자동 흘려보냄.
       const preprocessed = await preprocessImageForOcr(image.file);
       const result = await worker.recognize(preprocessed);
       const rawText = applyOcrCorrections(result.data.text);
+
+      // Tesseract 완료 시점 명시적 0.5 마크 (logger 가 마지막 0.5 를 쏴줄 수도 있지만 보장 목적).
+      onProgress({
+        currentIndex: i,
+        totalCount,
+        currentFileName: image.fileName,
+        currentThumbUrl: image.thumbUrl,
+        currentPlatform: image.platform,
+        currentProgress: 0.5,
+        currentStatus: "parsing",
+        phase: "tesseract",
+      });
 
       let parsedData: PurchaseOCRResult[] = [];
       if (image.platform === "coupang") {
@@ -299,7 +334,7 @@ export async function analyzeUploadedImages(
           ? buildCoupangOrders(image.id, parsedData)
           : buildFlatOrders(image.id, image.platform, parsedData);
 
-      processed.push({
+      const imageItem: OcrImageItem = {
         id: image.id,
         fileName: image.fileName,
         thumbUrl: image.thumbUrl,
@@ -319,75 +354,63 @@ export async function analyzeUploadedImages(
                   products: [],
                 },
               ],
-      });
-    }
+      };
 
-    // ───────── AI 자동 보정 단계 ─────────
-    //
-    // Tesseract 루프가 끝난 뒤 전체 처리 결과를 한 번 훑어, "파서로 복구 불가" 로 분류되는
-    // bad 카드가 **하나라도 있는 이미지만** 뽑아 Gemini 2.5 Flash Vision 을 호출합니다.
-    //
-    // 1차 필터 (bad 0장인 이미지는 AI 호출 X) 로 비용을 절약하면서, 일단 AI 호출이 발동하면
-    // 이미지 input 비용이 이미 지불되므로 그 이미지의 **전체 카드**를 한 번에 검증받습니다.
-    //   - 이미지 input: ~$0.0002 (비용의 90%)
-    //   - 카드당 출력 토큰: ~30 토큰 × $0.3/M ≈ $0.00001 (사실상 무시 가능)
-    //   → 같은 호출 안에서 5 카드 검증 vs 1 카드 검증 비용 차이 $0.00004. Clean 카드도 AI 가
-    //     미세 오류 발견하면 함께 고치고, 맞으면 원본 그대로 반환.
-    //
-    // aiApplied 플래그는 aiService 가 **실제 값이 바뀐 카드에만** 찍어 UI 배지(✨) 가 거짓말
-    // 하지 않도록 합니다.
-    const imagesNeedingAi = processed
-      .map((img, idx) => ({
-        img,
-        // targetImages[idx] 는 처리 순서가 processed 와 동일하므로 안전하게 대응.
-        file: targetImages[idx]?.file,
-        badPerOrder: img.orders.map((o) => pickBadProducts(o.products, o.statusTag)),
-      }))
-      .filter((x) => x.badPerOrder.some((arr) => arr.length > 0));
+      // ── AI 필요 여부 판단 후 호출 ──
+      //
+      // 1차 필터: bad 카드가 하나라도 있어야 AI 호출. 비용 절약 목적 유지.
+      // 호출 시에는 이미지 전체 카드(clean 포함) 를 넘겨 clean 카드도 AI 가 미세 오류 발견 시
+      // 함께 보정. aiService 가 changedIds 로 실제 변경된 카드만 aiApplied 플래그를 찍음.
+      const badPerOrder = imageItem.orders.map((o) =>
+        pickBadProducts(o.products, o.statusTag),
+      );
+      const flatBad = badPerOrder.flat();
+      const allProducts = imageItem.orders.flatMap((o) => o.products);
 
-    if (imagesNeedingAi.length > 0) {
-      // AI phase 에서는 진행 지표를 **AI 대상 이미지 부분집합** 기준으로 보냅니다. 예: 업로드 5장
-      // 중 3장만 AI 필요 → 모달에 "1/3장 · 2/3장 · 3/3장" 으로 노출. 전체 5장 기준으로 표시하면
-      // "3번 이미지는 왜 건너뛰지?" 혼동이 생깁니다(사용자 실측 보고).
-      const aiPhaseTotal = imagesNeedingAi.length;
-      for (let i = 0; i < imagesNeedingAi.length; i += 1) {
-        const { img, file, badPerOrder } = imagesNeedingAi[i];
+      if (flatBad.length > 0 && allProducts.length > 0) {
+        triggeredImages += 1;
+        // AI 시작 — progress 0.5 유지, phase "ai-fallback" 으로 전환해 모달이 subtext 를 바꿈.
         onProgress({
-          // currentIndex / totalCount 둘 다 AI 부분집합 기준. Tesseract phase 와 의미가 달라지는
-          // 것은 phase 플래그로 구분되므로 모달 단에서 헷갈리지 않습니다.
           currentIndex: i,
-          totalCount: aiPhaseTotal,
-          currentFileName: img.fileName,
-          currentThumbUrl: img.thumbUrl,
-          currentPlatform: img.platform,
-          currentProgress: i / aiPhaseTotal,
+          totalCount,
+          currentFileName: image.fileName,
+          currentThumbUrl: image.thumbUrl,
+          currentPlatform: image.platform,
+          currentProgress: 0.5,
           currentStatus: "ai-fallback",
           phase: "ai-fallback",
         });
 
-        // 이 이미지의 **전체 카드**(bad 포함) 를 allProducts 로. bad 는 badIds 힌트로 AI 에게
-        // "이 카드들은 특히 의심스러움" 을 알려줌. 토큰은 몇십 개 늘지만 비용은 무시 가능.
-        const allProducts = img.orders.flatMap((o) => o.products);
-        const badIds = badPerOrder.flat().map((p) => p.id);
-        if (allProducts.length === 0) continue;
-
         const fallback = await runAiOcrFallback({
-          imageId: img.id,
-          platform: img.platform,
-          rawText: img.rawText ?? "",
+          imageId: imageItem.id,
+          platform: imageItem.platform,
+          rawText: imageItem.rawText ?? "",
           allProducts,
-          badIds,
-          imageFile: file,
+          badIds: flatBad.map((p) => p.id),
+          imageFile: image.file,
         });
-        if (fallback.failed) continue;
-
-        // 응답은 입력과 같은 id 순서로 온다는 가정 하에 id → 보정된 product 맵으로 치환.
-        const byId = new Map(fallback.products.map((p) => [p.id, p]));
-        img.orders = img.orders.map((o) => ({
-          ...o,
-          products: o.products.map((p) => byId.get(p.id) ?? p),
-        }));
+        if (!fallback.failed) {
+          const byId = new Map(fallback.products.map((p) => [p.id, p]));
+          imageItem.orders = imageItem.orders.map((o) => ({
+            ...o,
+            products: o.products.map((p) => byId.get(p.id) ?? p),
+          }));
+        }
       }
+
+      // 이 이미지 슬롯 완료 — progress 1.0. AI 필요 없었던 이미지는 여기서 "쭉쭉 차버리는" 느낌.
+      onProgress({
+        currentIndex: i,
+        totalCount,
+        currentFileName: image.fileName,
+        currentThumbUrl: image.thumbUrl,
+        currentPlatform: image.platform,
+        currentProgress: 1.0,
+        currentStatus: "done",
+        phase: flatBad.length > 0 ? "ai-fallback" : "tesseract",
+      });
+
+      processed.push(imageItem);
     }
 
     // ───────── AI 변경 실효율 로깅 ─────────
@@ -417,7 +440,7 @@ export async function analyzeUploadedImages(
       const aiChangedImages = processed.filter((img) =>
         img.orders.some((o) => o.products.some((p) => p.aiApplied)),
       ).length;
-      const triggeredImages = imagesNeedingAi.length;
+      // triggeredImages 는 루프 중 AI 호출이 발동한 이미지 수(위에서 누적).
       const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(1) : "0.0");
       console.info(
         `[OCR] 완료 요약 · 이미지 ${processed.length}장 · 카드 ${totalCards}개\n` +

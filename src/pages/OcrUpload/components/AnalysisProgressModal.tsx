@@ -17,7 +17,6 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
-import { AiLoadingBlock } from "../../../components/primitives/AiLoadingBlock";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
 import { isAiDebugMode } from "../../../utils/aiDebug";
@@ -204,126 +203,88 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
   // 도구-독립적인 문구로 보여줍니다. aiDebug 플래그 토글 → 페이지 새로고침 또는 리렌더로 반영.
   const debugOn = isAiDebugMode();
 
-  // 전체 진행률 = 완료된 이미지 수 기준. currentIndex가 지금 처리 중인 이미지이므로
-  // "완료 = currentIndex", "전체 = totalCount". 마지막 이미지까지 끝나면 currentIndex === totalCount 가 됩니다.
-  const overallRatio = totalCount > 0 ? currentIndex / totalCount : 0;
-  const overallPercentLabel = `${currentIndex}/${totalCount}`;
+  // ── 단일 진행 바 계산 ──
+  //
+  // 2026-04-24 재설계: Tesseract/AI 를 분리 바 2개로 보여주던 것을 단일 overall 바로 통합.
+  // ocrAnalyzeImages 가 이미지 한 장을 0.0(시작) → 0.5(Tesseract 끝) → 1.0(AI 끝 또는 skip)
+  // 좌표로 송출하므로, 여기서는 그대로 `(currentIndex + currentProgress) / totalCount` 를 계산.
+  //
+  // AI 필요 없는 이미지: 0→0.5→1.0 으로 슬롯을 즉시 차고 다음 장으로 넘어감.
+  // AI 필요한 이미지: 0.5 지점에서 잠시 머물고 AI 응답이 오면 1.0 으로 마무리. rotating
+  // 메시지·서브텍스트가 "살아 있다" 신호를 채워 줌.
+  const safeProgress = Math.min(1, Math.max(0, currentProgress));
+  const overallValue = totalCount > 0
+    ? Math.min(1, (currentIndex + safeProgress) / totalCount)
+    : 0;
+  const overallPercentLabel = `${Math.min(currentIndex + 1, Math.max(1, totalCount))}/${Math.max(1, totalCount)}장`;
 
-  // 현재 이미지 진행률은 0..1 범위 안에서 clamp. Tesseract가 최종 100%를 안 쏘는 경우가 있어
-  // "거의 완료"가 오랫동안 지속돼 보일 수 있는데, 다음 이미지로 넘어갈 때 자연스럽게 풀립니다.
-  const currentPercent = Math.round(Math.min(1, Math.max(0, currentProgress)) * 100);
+  // AI phase 중에는 subtext 로 rotating 메시지를 짧게 한 줄씩 돌려 지루함 완화. 이 위치는
+  // 썸네일 우측 FileSub 에 들어가며, 사용자는 "이미지 자체를 자세히 보는 중" 정도만 인식하면 됩니다.
+  const rotatingMessages = debugOn ? DEBUG_AI_MESSAGES : NEUTRAL_PROGRESS_MESSAGES;
 
   return (
     <>
       <Overlay aria-hidden />
       <Card role="dialog" aria-modal="true" aria-label="OCR 이미지 분석 진행률">
-        <Title>
-          {isAiPhase
-            ? debugOn
-              ? "AI 보정 중 · DEBUG"
-              : "정확도 확인 중"
-            : "이미지 분석 중"}
-        </Title>
+        <Title>이미지 분석 중{debugOn && isAiPhase ? " · AI DEBUG" : ""}</Title>
         <Subtitle>
-          {isAiPhase
-            ? "글자가 흐릿한 항목을 원본 이미지와 대조해 정확도를 올리고 있어요. 조금만 더 기다려 주세요."
-            : "업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가 걸릴 수 있습니다."}
+          업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가
+          걸릴 수 있습니다.
         </Subtitle>
 
-        {isAiPhase ? (
-          // AI 단계는 응답 시간이 가변적이라 진행 바 대신 공용 AiLoadingBlock 사용:
-          //   - CSV 분석 로딩(AiLoadingIndicator) 과 동일한 스피너·메시지 로테이션 톤
-          //   - 현재 어느 이미지 처리 중인지 썸네일/파일명은 그대로 노출해 맥락 유지
-          //   - 이미지 단위 순서("N번째 / M장") 는 Section 형태로 한 줄만 보여줌
-          <>
-            <Section>
-              <SectionLabel>
-                <span>{debugOn ? "AI 보정 대상 (DEBUG)" : "정확도 확인 대상"}</span>
-                <strong>
-                  {currentIndex + 1} / {Math.max(1, totalCount)}장
-                </strong>
-              </SectionLabel>
-              <CurrentRow>
-                <Thumb $src={currentThumbUrl} aria-hidden />
-                <FileMeta>
-                  <FileName title={currentFileName}>
-                    {currentFileName || "이미지 준비 중"}
-                  </FileName>
-                  <FileSub>
-                    {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
-                    이미지와 텍스트를 대조 중
-                  </FileSub>
-                </FileMeta>
-              </CurrentRow>
-              {/*
-                1차 인식에서 깨끗하게 뽑힌 이미지는 2차 확인 대상에서 제외됩니다. 사용자에게는
-                "왜 전체 개수보다 적을 수 있는지" 만 한 줄로 알려주고, 어떤 엔진이 관여하는지는
-                숨깁니다 (디버그 모드에서만 노출).
-              */}
-              <div
-                style={{
-                  marginTop: 8,
-                  fontSize: 11.5,
-                  color: "#6b7280",
-                  lineHeight: 1.5,
-                }}
-              >
-                ✅ 이미 깔끔하게 인식된 이미지는 2차 확인을 건너뜁니다.
-                {debugOn && (
-                  <span style={{ marginLeft: 6, color: "#9ca3af" }}>
-                    (DEBUG: pickBadProducts 필터 기준)
-                  </span>
+        <Section>
+          <SectionLabel>
+            <span>진행 상황</span>
+            <strong>{overallPercentLabel}</strong>
+          </SectionLabel>
+          <CurrentRow>
+            <Thumb $src={currentThumbUrl} aria-hidden />
+            <FileMeta>
+              <FileName title={currentFileName}>
+                {currentFileName || "이미지 준비 중"}
+              </FileName>
+              <FileSub>
+                {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
+                {isAiPhase ? (
+                  <AiPhaseSub messages={rotatingMessages} />
+                ) : (
+                  humanizeStatus(currentStatus)
                 )}
-              </div>
-            </Section>
-            <AiLoadingBlock
-              messages={debugOn ? DEBUG_AI_MESSAGES : NEUTRAL_PROGRESS_MESSAGES}
-              subText="이미지 복잡도에 따라 한 장당 3~10초 정도 걸릴 수 있어요."
-            />
-          </>
-        ) : (
-          <>
-            <Section>
-              <SectionLabel>
-                <span>전체 진행</span>
-                <strong>{overallPercentLabel}</strong>
-              </SectionLabel>
-              <ProgressBar value={overallRatio} tone="neutral" size={8} />
-            </Section>
-
-            <Section>
-              <SectionLabel>
-                <span>현재 이미지</span>
-                <strong>{currentPercent}%</strong>
-              </SectionLabel>
-              <CurrentRow>
-                <Thumb $src={currentThumbUrl} aria-hidden />
-                <FileMeta>
-                  <FileName title={currentFileName}>
-                    {currentFileName || "이미지 준비 중"}
-                  </FileName>
-                  <FileSub>
-                    {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
-                    {humanizeStatus(currentStatus)}
-                  </FileSub>
-                </FileMeta>
-              </CurrentRow>
-              <ProgressBar
-                value={currentProgress}
-                tone="accent"
-                size={8}
-                indeterminate={!currentStatus.toLowerCase().includes("recognizing") && currentPercent === 0}
-              />
-            </Section>
-          </>
-        )}
+              </FileSub>
+            </FileMeta>
+          </CurrentRow>
+          <ProgressBar value={overallValue} tone="accent" size={8} />
+        </Section>
 
         <Notice>
-          {isAiPhase
-            ? "2차 확인은 놓친 상품만 골라서 처리하니 오래 걸리지 않아요. 완료되면 자동으로 편집 화면으로 이동합니다."
-            : "분석이 끝나면 자동으로 편집 화면으로 이동해요. 이 창이 닫힐 때까지 기다려 주세요."}
+          분석이 끝나면 자동으로 편집 화면으로 이동해요. 이 창이 닫힐 때까지 기다려 주세요.
         </Notice>
       </Card>
     </>
   );
+};
+
+/**
+ * AI phase 전용 서브텍스트 회전 컴포넌트. 대기 시간이 길어질 수 있는 이 구간에서 "살아 있다"
+ * 신호를 주기 위해 기존 AiLoadingBlock 의 메시지 배열을 재사용하되, 단일 바 UI 에 맞게
+ * 한 줄만 노출하도록 이 파일 안에서 mini 버전으로 인라인화했습니다.
+ *
+ * messages 배열이 props 로 바뀌면 인덱스를 리셋해 처음 메시지부터 다시 시작합니다.
+ */
+const AiPhaseSub: React.FC<{ messages: string[] }> = ({ messages }) => {
+  const [idx, setIdx] = React.useState(0);
+  React.useEffect(() => {
+    setIdx(0);
+    const intervals = [3000, 5000, 10000, 10000];
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    let accum = 0;
+    for (let i = 0; i < Math.min(intervals.length, Math.max(0, messages.length - 1)); i += 1) {
+      accum += intervals[i];
+      const step = i + 1;
+      timers.push(setTimeout(() => setIdx(step), accum));
+    }
+    return () => timers.forEach(clearTimeout);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [messages.join("|")]);
+  return <>{messages[Math.min(idx, messages.length - 1)] ?? ""}</>;
 };
