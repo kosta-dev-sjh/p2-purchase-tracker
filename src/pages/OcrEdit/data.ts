@@ -75,4 +75,10 @@ export interface OcrImageItem {
   rawText?: string;
   /** 이 캡쳐에서 추출된 주문 목록. 최소 1개 이상. */
   orders: OcrOrder[];
+  /**
+   * 이 이미지가 AI(Gemini Vision) 2차 확인을 거쳤는지. 개발 중 디버그 chip 노출용 플래그.
+   * 실제 값이 바뀐 카드가 없어도 "AI 가 이미지를 봤다" = `true`. 비용·게이트 튜닝 지표로 활용.
+   * 배포 전 DEBUG_OCR_AI 와 함께 제거되는 가지 — UI 에 이 값을 읽는 곳은 debug chip 뿐.
+   */
+  aiInvoked?: boolean;
 }

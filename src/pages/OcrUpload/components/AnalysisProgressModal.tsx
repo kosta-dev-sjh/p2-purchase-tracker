@@ -19,7 +19,6 @@ import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { OcrAnalysisProgress } from "../../../utils/ocrAnalyzeImages";
-import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 
 /**
  * 모달이 받는 진행률 이벤트 타입. 실제 생성은 analyzeUploadedImages 가 담당하므로
@@ -138,28 +137,16 @@ const Notice = styled.div`
 `;
 
 /**
- * 2차 정확도 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종 (사용자용).
+ * 2차 정확도 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종.
  *
- * UX 원칙: 사용자는 파이프라인 안에서 AI 가 돌고 있다는 사실을 알 필요가 없고, 결과 품질만
- * 관심입니다. 문구는 모두 "도구 이름 언급 없이" 중립적으로. 메시지 변화 자체로 "살아 있다"
- * 는 신호를 주어 대기 지루함만 완화합니다.
+ * UX 원칙: 사용자·개발자 모두에게 "분석 중" 정도만 보여 주면 충분합니다. 로딩 모달에서 AI 가
+ * 따로 도는지 여부는 이 자리에 드러내지 않고, 편집 화면의 DEBUG chip 에서만 표시합니다
+ * (ocrAiDebug.ts 참고).
  */
-const NEUTRAL_PROGRESS_MESSAGES = [
+const PROGRESS_MESSAGES = [
   "✨ 이미지를 자세히 다시 살펴보고 있어요...",
   "🔎 놓친 상품명과 가격을 하나씩 확인하는 중이에요...",
   "📋 글자가 흐릿한 부분은 원본 이미지와 대조 중입니다...",
-  "⏳ 조금만 더 기다려 주세요, 정확도 올리는 중이에요...",
-  "💪 거의 다 됐어요! 마지막 상품 확인 중입니다...",
-];
-
-/**
- * DEBUG-ONLY: 동일 단계지만 "AI" 단어를 드러내는 디버그용 메시지. DEBUG_OCR_AI 플래그가 켜진
- * 세션에서만 사용됩니다. 개발자가 실제로 AI 경로가 도는지 시각 확인할 때 유용.
- */
-const DEBUG_AI_MESSAGES = [
-  "✨ AI 가 이미지를 자세히 살펴보고 있어요...",
-  "🤖 놓친 상품명과 가격을 하나씩 짚어가는 중이에요...",
-  "🔎 글자가 흐릿한 부분은 원본 이미지와 대조 중입니다...",
   "⏳ 조금만 더 기다려 주세요, 정확도 올리는 중이에요...",
   "💪 거의 다 됐어요! 마지막 상품 확인 중입니다...",
 ];
@@ -177,10 +164,9 @@ interface AnalysisProgressModalProps {
  */
 function humanizeStatus(status: string): string {
   const normalized = status.toLowerCase();
-  // DEBUG_OCR_AI=true 일 때만 "AI" 노출, 평상시에는 도구-중립적 "2차 확인 중".
-  if (normalized.includes("ai-fallback")) {
-    return DEBUG_OCR_AI ? "AI 보정 중" : "2차 확인 중";
-  }
+  // 로딩 모달은 AI 언급 없음 — "이미지 분석 중" 맥락에서 사용자·개발자 모두 자연스럽게 흘려보내고,
+  // AI 관여 여부는 결과 화면의 DEBUG chip 에서 확인합니다.
+  if (normalized.includes("ai-fallback")) return "2차 확인 중";
   if (normalized.includes("recognizing")) return "글자 인식 중";
   if (normalized.includes("initializing")) return "엔진 준비 중";
   if (normalized.includes("loading language")) return "언어 데이터 불러오는 중";
@@ -199,9 +185,6 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
   const { currentIndex, totalCount, currentFileName, currentThumbUrl, currentPlatform,
     currentProgress, currentStatus, phase } = progress;
   const isAiPhase = phase === "ai-fallback";
-  // 디버그 모드에서는 파이프라인 세부를 보여주고, 실사용자 모드에서는 "2차 정확도 확인" 같은
-  // 도구-독립적인 문구로 보여줍니다. DEBUG_OCR_AI 플래그 토글 → 페이지 새로고침 또는 리렌더로 반영.
-  const debugOn = DEBUG_OCR_AI;
 
   // ── 단일 진행 바 계산 ──
   //
@@ -218,15 +201,11 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
     : 0;
   const overallPercentLabel = `${Math.min(currentIndex + 1, Math.max(1, totalCount))}/${Math.max(1, totalCount)}장`;
 
-  // AI phase 중에는 subtext 로 rotating 메시지를 짧게 한 줄씩 돌려 지루함 완화. 이 위치는
-  // 썸네일 우측 FileSub 에 들어가며, 사용자는 "이미지 자체를 자세히 보는 중" 정도만 인식하면 됩니다.
-  const rotatingMessages = debugOn ? DEBUG_AI_MESSAGES : NEUTRAL_PROGRESS_MESSAGES;
-
   return (
     <>
       <Overlay aria-hidden />
       <Card role="dialog" aria-modal="true" aria-label="OCR 이미지 분석 진행률">
-        <Title>이미지 분석 중{debugOn && isAiPhase ? " · AI DEBUG" : ""}</Title>
+        <Title>이미지 분석 중</Title>
         <Subtitle>
           업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가
           걸릴 수 있습니다.
@@ -246,7 +225,7 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
               <FileSub>
                 {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
                 {isAiPhase ? (
-                  <AiPhaseSub messages={rotatingMessages} />
+                  <RotatingSub messages={PROGRESS_MESSAGES} />
                 ) : (
                   humanizeStatus(currentStatus)
                 )}
@@ -265,13 +244,11 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
 };
 
 /**
- * AI phase 전용 서브텍스트 회전 컴포넌트. 대기 시간이 길어질 수 있는 이 구간에서 "살아 있다"
- * 신호를 주기 위해 기존 AiLoadingBlock 의 메시지 배열을 재사용하되, 단일 바 UI 에 맞게
- * 한 줄만 노출하도록 이 파일 안에서 mini 버전으로 인라인화했습니다.
- *
- * messages 배열이 props 로 바뀌면 인덱스를 리셋해 처음 메시지부터 다시 시작합니다.
+ * 2차 확인 구간에서 서브텍스트를 회전시키는 mini 컴포넌트. 대기 시간이 길어질 수 있어
+ * 짧은 안내 문구를 3~5초 간격으로 갈아 끼워 "살아 있다" 신호를 줍니다. 메시지 자체에는
+ * 도구(AI / Tesseract) 언급이 없어 사용자 화면에서 파이프라인이 드러나지 않습니다.
  */
-const AiPhaseSub: React.FC<{ messages: string[] }> = ({ messages }) => {
+const RotatingSub: React.FC<{ messages: string[] }> = ({ messages }) => {
   const [idx, setIdx] = React.useState(0);
   React.useEffect(() => {
     setIdx(0);

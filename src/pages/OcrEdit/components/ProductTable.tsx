@@ -10,7 +10,6 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import type { OcrProduct, Status } from "../data";
 import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
-import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -125,28 +124,10 @@ const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
  * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
  */
 /**
- * 2026-04-24 UX 방향 전환: 이전에는 tier 별로 "AI 재분석 권장 / 이름 확인 필요" 두 가지 배지를
- * 띄워 사용자에게 확인을 요청했지만, 자잘한 잔류까지 경고하면 "이 사이트 OCR 이 미덥지 못하다"
- * 는 인상을 주어 오히려 신뢰를 깎습니다. 이제는:
- *   1) AI 가 조용히 bad 카드를 처리 → **✨ AI 보정됨** 배지(차분한 accent 톤, 자랑거리)
- *   2) AI 도 실패한 잔류 bad → **⚠ 확인 권장** 배지 (neg 톤, 사용자 수동 확인 유도)
- *   3) borderline (짧은 이름, 자모 1~2개) → 배지 없이 조용히 저장 — 약간의 차이는 감수.
+ * 2026-04-25 UX 재정리: 카드별 "AI 보정됨" 배지는 제거. 사용자에겐 결과 품질만 관심이고,
+ * 개발자 디버깅은 EditForm ImageSummary 의 단일 "🛠 DEBUG: AI 인식됨" chip 하나로 충분.
+ * 여기 ProductTable row 에는 **기능 경고** 성격의 BadHint 와 ZeroPriceHint 만 유지합니다.
  */
-const AiAppliedBadge = styled.span`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: ${tokens.color.accentSubtle};
-  color: ${tokens.color.accentHover};
-  font-size: 10px;
-  font-weight: 700;
-  line-height: 1.4;
-  white-space: nowrap;
-`;
-
 const BadHint = styled.span`
   display: inline-flex;
   align-items: center;
@@ -366,11 +347,8 @@ export const ProductTable: React.FC<{
           priceOcrFailed: row.priceOcrFailed,
           aiApplied: row.aiApplied,
         });
-        // 배지 우선순위: aiApplied > bad > (borderline 은 표시 안 함 → UI 소음 최소화)
-        //   - aiApplied 배지는 DEBUG_OCR_AI 플래그가 true 인 개발 빌드에서만 노출. 실사용자는
-        //     AI 가 관여했는지 알 필요 없고 결과 품질만 관심 있기 때문. 정리 절차는 ocrAiDebug.ts 참고.
-        //   - bad hint 는 디버그 무관하게 사용자 확인용으로 계속 노출.
-        const showAiBadge = row.aiApplied === true && DEBUG_OCR_AI;
+        // bad hint 는 사용자 확인용으로 계속 노출. AI 보정 흔적 배지는 여기선 보여주지 않고
+        // EditForm 단의 단일 debug chip 에서만 집계해서 표시합니다(2026-04-25 UX 정리).
         const showBadHint = !row.aiApplied && quality.tier === "bad";
         return (
         <Row key={row.id}>
@@ -380,13 +358,6 @@ export const ProductTable: React.FC<{
               value={row.name}
               onChange={(e) => patch(row.id, { name: e.target.value })}
             />
-            {/* ───── DEBUG 전용 (DEBUG_OCR_AI=true 일 때만 렌더됨) ─────
-                AI 보정 흔적 배지. 배포 전 ocrAiDebug.ts 상수를 false 로 돌리면 즉시 제거. */}
-            {showAiBadge && (
-              <AiAppliedBadge title="[DEBUG] Tesseract 가 놓친 항목을 AI 가 보정">
-                ✨ AI 보정됨
-              </AiAppliedBadge>
-            )}
             {showBadHint && (
               <BadHint title={quality.reasons.join(" · ")}>
                 ⚠ 내용 확인 권장

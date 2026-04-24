@@ -369,6 +369,10 @@ export async function analyzeUploadedImages(
 
       if (flatBad.length > 0 && allProducts.length > 0) {
         triggeredImages += 1;
+        // 이 이미지가 AI 2차 확인을 거친다는 사실을 imageItem 에 기록. EditForm 의 debug
+        // chip("🛠 DEBUG: AI 인식됨") 만 이 값을 읽습니다. DEBUG_OCR_AI 가 false 인 배포
+        // 빌드에서는 읽는 쪽이 tree-shake 돼 사용자에게는 노출되지 않습니다.
+        imageItem.aiInvoked = true;
         // AI 시작 — progress 0.5 유지, phase "ai-fallback" 으로 전환해 모달이 subtext 를 바꿈.
         onProgress({
           currentIndex: i,
