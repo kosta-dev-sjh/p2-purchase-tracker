@@ -25,7 +25,7 @@
  *   - `reasons` 배열을 돌려주어 디버깅/로깅 시 "왜 이 tier 로 분류됐는지" 추적 가능.
  */
 
-import type { OcrProduct, OcrOrder, OcrImageItem } from "../pages/OcrEdit/data";
+import type { OcrOrder, OcrImageItem } from "../pages/OcrEdit/data";
 
 export type OcrCardTier = "clean" | "borderline" | "bad";
 
@@ -77,16 +77,10 @@ const WEIRD_SYMBOLS_REGEX = /[<>{}|=~`_']/g;
 const PREFIX_OCR_NOISE_REGEX = /^([가-힣]{1,3})[.:;'"_·`\[\]\-]+(?=\s|[가-힣])/;
 
 /**
- * 단위 한글 어휘 — 1~2자 한글 청크 카운트에서 제외할 "정상" 단어. OCR 분리 흔적 판정 시
- * 이들이 있으면 신호가 약해지므로 필터링합니다. 상품명에서 수량·사이즈 표시로 자주 쓰임.
- */
-const UNIT_SUFFIX_HANGUL = new Set([
-  "개", "장", "세트", "종", "병", "통", "팩", "권", "회", "매", "벌",
-  "소", "중", "대",
-]);
-
-/**
  * 단일 자모(ㄱ-ㅎ·ㅏ-ㅣ, ㆍ)는 정상 상품명에 등장하지 않습니다. 개수를 세어 품질 신호로 사용.
+ *
+ * ※ 2026-04-24 이전에 있던 UNIT_SUFFIX_HANGUL ("개/장/세트/종/..." Set) 은 B3c 철회와 함께
+ *   참조처가 사라져 삭제했습니다. 동일 개념이 필요해지면 OCR 분리 흔적 판정 로직 복원 시 재도입.
  */
 const JAMO_CHARS_REGEX = /[ㄱ-ㅎㅏ-ㅣㆍ]/g;
 const HANGUL_SYLLABLE_REGEX = /[가-힣]/g;
@@ -201,6 +195,49 @@ export function classifyOcrCardQuality(card: {
   //   끝나는 케이스. OCR 이 상품명 꼬리를 단일 글자로 잘라 뱉은 전형.
   if (/,\s*[a-zA-Z]{1,2}\.?\s*$/.test(name)) {
     badReasons.push("꼬리 단일 라틴 파편");
+  }
+
+  // B3h (2026-04-24). 선두 `짧은 한글(1~3자) + 공백? + 숫자 + 공백 + 한글 본문` 환각.
+  //   쿠팡 "로켓배송" / "배송예정일" 같은 배송 마커가 OCR 로 깨져 상품명 앞에 붙어 들어간 전형.
+  //   예:
+  //     "로케배 0 코못오리지널유아용아기물티슈캠형"      ← "로케배 0" prefix
+  //     "로캐 9 닥터포헤어탈모증상완화..."                ← "로캐 9" prefix
+  //     "흐흐1000개 !": 템포 오리지널탐폰"                ← "흐흐1000" prefix
+  //   오탐 방지: prefix match 뒤 **본문 한글 ≥ 8** 일 때만 확정. 그래야 "프로틴 5 종" (본문
+  //   거의 없음) 같은 정상 상품 앞부분을 잡지 않음.
+  //   B3b 와 비슷한 결이지만 B3b 는 `prefix + 구두점` 필수이고, B3h 는 구두점 없이 **공백만**
+  //   있는 숫자 삽입 케이스를 커버.
+  // 공백 허용 범위를 넓혀 "흐흐1000개 !": 템포..." 처럼 digit 뒤 공백 없는 환각 케이스도 포섭.
+  const prefixDigitMatch = /^([가-힣]{1,3})\s*\d+\s*([가-힣])/.exec(name);
+  if (prefixDigitMatch) {
+    const rest = name.slice(prefixDigitMatch[0].length - 1);
+    const restHangul = (rest.match(HANGUL_SYLLABLE_REGEX) ?? []).length;
+    if (restHangul >= 8) {
+      badReasons.push(`선두 한글+digit 파편 ("${prefixDigitMatch[0]}")`);
+    }
+  }
+
+  // B3i (2026-04-24). 단위 자리에 `%` 또는 `/` 가 **숫자 사이** 에 끼거나, `/` 바로 뒤에
+  //   연산자(+/-/*) 가 오는 패턴. 정상 상품명에서 `%` 는 "50%" 처럼 할인 표시로 숫자+한글/공백
+  //   뒤에 오지, 숫자 사이에 끼지 않음.
+  //   예:
+  //     "슬라이드 지퍼백중형 30%4001/ 10 개..."        ← `30%4001/`
+  //     "삼성전자 (- 타입초고속충 전기 254/ + 케이블..." ← `254/` 뒤 `+`
+  //   안전 케이스:
+  //     "500g/1개"  → `\d\/\d` 는 매칭되나, 실 상품명에서는 드물며 오탐 시 AI 가 원복 가능.
+  //     이 규칙은 공격적이되 AI 보정 레이어가 최종 방어.
+  if (/\d%\d/.test(name) || /\d\/\s*[+\-*]/.test(name)) {
+    badReasons.push("단위 자리 %·/ 파편");
+  }
+
+  // B3j (2026-04-24). 이름이 너무 짧고 한글 총량도 적은 카드.
+  //   OCR 이 상품명을 거의 완전히 잃었을 때의 마지막 그물. 정상 상품은 쿠팡 목록에서
+  //   한글 ≥ 6 이 거의 보장되므로 (짧은 브랜드도 "코지엔비 곱창머리끈" = 한글 7 이상) 이 임계 이하는
+  //   OCR 파손 확정에 가깝습니다.
+  //   예: "8티 구브 게" (nameLen=7, hangulCount=4) → ground-truth 는 "하우스오브허 미드나잇 수딩 클렌징밤".
+  //   cancel/refund 는 0원 정상 상태라 price>0 조건을 함께 걸어 오탐 방지.
+  if (price > 0 && !isCancelLike && nameLen < 12 && hangulCount < 6) {
+    badReasons.push(`짧은 이름 + 한글 부족 (len=${nameLen}, 한글=${hangulCount})`);
   }
 
   // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.
