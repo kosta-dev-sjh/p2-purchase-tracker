@@ -2,6 +2,7 @@ import {
   createUserWithEmailAndPassword,
   GoogleAuthProvider,
   onAuthStateChanged,
+  sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
@@ -107,3 +108,18 @@ export async function registerAccount(payload: {
 export async function logOut(): Promise<void> {
   await signOut(auth);
 }
+
+/**
+ * 입력한 이메일 주소로 Firebase 가 비밀번호 재설정 메일을 발송하도록 요청합니다.
+ *
+ * - Firebase 콘솔의 Authentication > Templates 에서 한국어 템플릿을 사용 중이라면
+ *   `auth.languageCode = "ko"` 를 지정해 주는 편이 안정적입니다(브라우저 언어와 무관하게
+ *   사용자에게 한국어 메일이 전달되도록 하는 보호장치).
+ * - 보안을 위해 가입되지 않은 이메일이어도 이 함수는 동일하게 성공으로 보이도록
+ *   `auth/user-not-found` 를 호출하는 쪽(폼)에서 흡수합니다.
+ */
+export async function sendPasswordReset(email: string): Promise<void> {
+  auth.languageCode = "ko";
+  await sendPasswordResetEmail(auth, email);
+}
+
