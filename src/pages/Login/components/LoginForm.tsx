@@ -120,7 +120,7 @@ export const LoginForm: React.FC = () => {
         <Remember>
           <input type="checkbox" /> 로그인 상태 유지
         </Remember>
-        <ForgotLink to="/login">비밀번호를 잊으셨나요?</ForgotLink>
+        <ForgotLink to="/forgot-password">비밀번호를 잊으셨나요?</ForgotLink>
       </Row>
       {error && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
