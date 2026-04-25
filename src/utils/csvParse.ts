@@ -66,17 +66,55 @@ function detectSeparator(text: string): string {
 export function parseCsvMatrix(text: string): string[][] {
   const cleaned = text.replace(/^\uFEFF/, "");
   const separator = detectSeparator(cleaned);
-  
-  return cleaned
-    .split(/\r?\n/)
-    .filter((line) => line.trim() !== "")
-    .map((line) => splitCsvLine(line, separator).map((cell) => cell.trim()));
+
+  // CSV RFC 4180: 따옴표로 감싸진 필드 안에는 줄바꿈이 포함될 수 있음
+  const rows: string[][] = [];
+  let currentLine = "";
+  let inQuotes = false;
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const char = cleaned[i];
+    const nextChar = cleaned[i + 1];
+
+    if (char === '"') {
+      // 연속된 따옴표("")는 이스케이프된 따옴표
+      if (inQuotes && nextChar === '"') {
+        currentLine += '""';
+        i++; // 다음 따옴표 건너뛰기
+      } else {
+        inQuotes = !inQuotes;
+        currentLine += char;
+      }
+    } else if ((char === '\n' || (char === '\r' && nextChar === '\n')) && !inQuotes) {
+      // 따옴표 밖의 줄바꿈 = 행 구분자
+      if (currentLine.trim() !== "") {
+        rows.push(splitCsvLine(currentLine, separator).map((cell) => cell.trim()));
+      }
+      currentLine = "";
+      // \r\n인 경우 \n 건너뛰기
+      if (char === '\r' && nextChar === '\n') {
+        i++;
+      }
+    } else {
+      currentLine += char;
+    }
+  }
+
+  // 마지막 행 처리
+  if (currentLine.trim() !== "") {
+    rows.push(splitCsvLine(currentLine, separator).map((cell) => cell.trim()));
+  }
+
+  return rows;
 }
 
 export function rowsToCsvRows(rows: string[][], headerIndex = 0): CsvRow[] {
   if (rows.length <= headerIndex + 1) return [];
 
-  const headers = (rows[headerIndex] ?? []).map((header) => header.trim());
+  // 헤더의 줄바꿈을 제거합니다 (NH카드 등 멀티라인 헤더 처리)
+  const headers = (rows[headerIndex] ?? []).map((header) =>
+    header.replace(/[\r\n]+/g, '').trim()
+  );
   return rows.slice(headerIndex + 1).reduce<CsvRow[]>((acc, cells) => {
     const row: CsvRow = {};
     let hasValue = false;

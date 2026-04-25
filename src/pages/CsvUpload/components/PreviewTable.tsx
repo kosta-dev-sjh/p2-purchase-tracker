@@ -62,7 +62,7 @@ const Empty = styled.div`
 `;
 
 export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
-  if (rows.length === 0) {
+  if (!rows || rows.length === 0) {
     return <Empty>반영 가능한 행이 없습니다.</Empty>;
   }
 
@@ -72,20 +72,31 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
       <HeaderCell>플랫폼</HeaderCell>
       <HeaderCell>거래명</HeaderCell>
       <HeaderCell className="right">금액</HeaderCell>
-      {rows.slice(0, 20).map((row) => (
-        <React.Fragment key={row.id}>
-          <DataCell>{row.date}</DataCell>
-          <DataCell>
-            <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
-          </DataCell>
-          <DataCell>{row.title}</DataCell>
-          <DataCell $right>
-            <Amount>
-              -{formatKRW(Math.abs(row.amount))}
-            </Amount>
-          </DataCell>
-        </React.Fragment>
-      ))}
+      {rows.slice(0, 20).map((row) => {
+        // 데이터가 불완전해도 화면이 크래시되지 않도록 보장합니다.
+        const platformKey = row.platform || "unspecified";
+        const platformLabel = PLATFORM_LABELS[platformKey] || "미지정";
+        const displayTitle = (row.title || "알 수 없음").trim();
+        const displayDate = row.date || "0000.00.00";
+        const absAmount = Math.abs(row.amount || 0);
+
+        return (
+          <React.Fragment key={row.id}>
+            <DataCell>{displayDate}</DataCell>
+            <DataCell>
+              <Tag kind={platformKey}>{platformLabel}</Tag>
+            </DataCell>
+            <DataCell style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {displayTitle}
+            </DataCell>
+            <DataCell $right>
+              <Amount>
+                -{formatKRW(absAmount)}
+              </Amount>
+            </DataCell>
+          </React.Fragment>
+        );
+      })}
       {rows.length > 20 && (
         <Empty
           style={{

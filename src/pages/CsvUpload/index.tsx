@@ -14,7 +14,7 @@ import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { transactionsStore, useTransactionsStore } from "../../stores/transactionsStore";
 import type { CsvImportResult } from "../../utils/csvImport";
-import { importFile, detectFileKind, UnsupportedFileTypeError } from "../../utils/fileImport";
+import { importFile, detectFileKind } from "../../utils/fileImport";
 import { checkDuplicates, autoResolveDuplicates, type TxItemDiff, type MergeAction } from "../../utils/duplicateCheck";
 import { formatKRW } from "../../utils/format";
 import { decodeCsvBuffer } from "../../utils/csvParse";
@@ -479,13 +479,14 @@ export const CsvUploadPage: React.FC = () => {
       } else {
         setResult(parsed);
       }
-    } catch (cause) {
-      if (cause instanceof UnsupportedFileTypeError) {
-        setError(cause.message);
-        setResult(null);
-      } else {
-        await handleAiFallback(file);
-      }
+    } catch (err) {
+      console.error("[CsvUpload] 파일 처리 중 오류:", err);
+      setError(
+        err instanceof Error
+          ? `파일을 읽는 중 오류가 발생했습니다: ${err.message}`
+          : "파일 처리 중 알 수 없는 오류가 발생했습니다."
+      );
+      setResult(null);
     }
   };
 
