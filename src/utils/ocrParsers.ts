@@ -331,7 +331,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 케이스에서, 기존 lookahead 가 `원` 뒤 한글을 거부해 가격을 놓치는 회귀가 있었습니다.
   // `\d+` 앵커가 앞에 확실해 "대원/고원" 같은 일반 명사 매칭은 일어나지 않으므로 lookahead
   // 에 `[가-힣]` 을 추가해 `5290원가장바구니...` 같은 OCR 잔류도 흡수합니다.
-  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)가-힣])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
+  const priceLineRegex = /([\d]{1,3}(?:,\d{3})+|\d+)\s*원(?=$|[\s·•.\-*,)가-힣\d])(?:[^\d\n]{0,6}(\d{1,3})\s*개)?/;
 
   // 가격 라인 (보조): `원` 키워드가 OCR 에서 완전히 증발했을 때 사용하는 fallback.
   //
@@ -349,7 +349,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   //   - 숫자 앞은 공백/라인 시작 또는 non-digit (\D) 요구 → 긴 숫자 열 일부가 매치되지 않도록 막음.
   //   - priceLineRegex 가 먼저 시도되고 match 하면 `continue` — 정상적인 "원" 가격 라인은
   //     여기 도달하지 않아 기존 경로와 충돌이 없습니다.
-  const priceLineFallbackRegex = /(?:^|\D)(\d{1,3}(?:,\d{3})+|\d{3,6})[^\d\n]{0,10}장바구니\s*담기/;
+  const priceLineFallbackRegex = /(?:^|\D)(\d{1,3}(?:,\d{3})+|\d{3,6})[^\n]{0,20}장바구니\s*담기/;
 
   // 주문일 (pre-scan): 라인 어디에 있든 날짜를 찾고, `주문` 단어는 optional.
   const orderDateRegex = new RegExp(COUPANG_DATE_CORE.source + /\s*(?:주\s*문)?/.source);

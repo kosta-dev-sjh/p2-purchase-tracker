@@ -366,6 +366,7 @@ export async function analyzeUploadedImages(
       const preprocessed = await preprocessImageForOcr(image.file);
       const result = await worker.recognize(preprocessed);
       const rawText = applyOcrCorrections(result.data.text);
+      console.log(`[OCR rawText] ${image.fileName}\n`, rawText);
 
       // Tesseract 완료 시점 명시적 0.5 마크 (logger 가 마지막 0.5 를 쏴줄 수도 있지만 보장 목적).
       onProgress({
