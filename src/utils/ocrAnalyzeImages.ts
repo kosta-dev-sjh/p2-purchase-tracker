@@ -51,6 +51,62 @@ export interface OcrAnalysisProgress {
 }
 
 /**
+ * 이름에서 끝까지 살아남은 쿠팡 우측 액션 버튼 잔류("판매자 문의", "장바구니 담기" 등) 를
+ * 마지막에 한 번 더 컷합니다.
+ *
+ * ocrParsers.ts 의 trailingButtonRegex / PHANTOM_BUTTON_PHRASES 가 1차 방어선이지만,
+ * 사용자 보고(2026-04-25) 로 OCR 이 상품명과 버튼을 한 라인에 뭉치고 그 사이에 공백/쉼표
+ * 변형을 끼워 넣을 때 1차 방어선이 비틀어진 잔류("..., 판매자 문의", "...· 판 매 자 문 의")
+ * 까지는 못 잡고 컬럼에 통째로 들어오는 케이스가 있었습니다. 마지막 단계에서 substring
+ * 으로 한 번 더 정리하면 ocrEdit 화면에서 이런 잔류가 사용자에게 노출되지 않습니다.
+ *
+ * 안전성: 정상 한국 쇼핑 상품명에 "판매자 문의", "장바구니 담기" 같은 합성어가 포함될 일이
+ * 사실상 없어, substring 컷이 정상 이름을 갉아먹을 위험이 매우 낮습니다.
+ */
+function stripResidualButtonText(name: string): string {
+  if (!name) return name;
+  let cleaned = name;
+  const PATTERNS: RegExp[] = [
+    /[\s,·.>\-|]*판\s*매\s*자\s*문\s*의\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*장\s*바\s*구\s*니\s*담\s*기\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*배\s*송\s*조\s*회\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*[교고]\s*환\s*[,.·]?\s*반\s*품\s*신\s*청\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*반\s*품\s*신\s*청\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*주\s*문\s*취\s*소\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*주\s*문\s*상\s*세\s*보\s*기\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*리\s*뷰\s*(?:작\s*성(?:하기)?|쓰기)\s*[\s,·.>\-|]*/g,
+    /[\s,·.>\-|]*바\s*로\s*구\s*매\s*[\s,·.>\-|]*/g,
+  ];
+  for (const re of PATTERNS) {
+    cleaned = cleaned.replace(re, " ");
+  }
+  cleaned = cleaned.replace(/\s+/g, " ").trim();
+  // 컷 뒤에 꼬리 구두점이 단독으로 남으면 정리.
+  cleaned = cleaned.replace(/^[\s,·.>\-|]+|[\s,·.>\-|]+$/g, "").trim();
+  return cleaned;
+}
+
+/**
+ * 가격·수량 입력값을 안전한 number 로 강제합니다.
+ *
+ * 2026-04-25: 사용자 보고로 "긴 이미지에서 전체 거래금액이 0 으로 뜬다" 회귀를 받고, AI 응답
+ * deserialization / sessionStorage rehydrate 등 외부 경로에서 price 가 "11,900" 같은 콤마
+ * 들어간 문자열로 들어와 `Number(...)` 가 NaN 으로 떨어지는 점이 직접 원인으로 좁혀졌습니다.
+ * 이 곳에서 한 번 정규화해서 OcrProduct 로 넘기면 OcrEdit/ProductTable 어느 쪽에서 봐도
+ * 항상 finite number 가 보장됩니다.
+ */
+function toFiniteAmount(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    const digits = value.replace(/[^\d.\-]/g, "");
+    if (!digits) return 0;
+    const n = Number(digits);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
+/**
  * OCR 파서 결과 한 건을 OcrOrder.products 항목으로 변환합니다.
  * 가격만 잡히고 이름을 못 뽑은 경우엔 "상품명 입력 필요" 플레이스홀더로 남겨
  * 사용자가 OcrEdit 에서 이름만 채워 저장할 수 있게 합니다.
@@ -60,14 +116,19 @@ function toProduct(
   idx: number,
   imageId: string,
 ) {
-  const unitPrice = res.price ?? 0;
-  const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
-  const hasItem = Boolean(res.itemName);
+  const unitPrice = toFiniteAmount(res.price ?? 0);
+  const rawQty = toFiniteAmount(res.quantity);
+  const qty = rawQty > 0 ? rawQty : 1;
+  // 이름이 비-문자열로 들어와도 toString 으로 흡수한 뒤 잔류 버튼 텍스트를 컷합니다.
+  const cleanedName = res.itemName != null
+    ? stripResidualButtonText(String(res.itemName))
+    : "";
+  const hasItem = cleanedName.length > 0;
   const hasPrice = unitPrice > 0;
   if (!hasItem && !hasPrice) return null;
   return {
     id: `${imageId}-product-${idx}`,
-    name: hasItem ? (res.itemName as string) : "상품명 입력 필요",
+    name: hasItem ? cleanedName : "상품명 입력 필요",
     price: unitPrice,
     quantity: qty,
     // Tesseract 단에서 가격 라인을 못 읽은 경우만 플래그를 전파 — AI 자동 보정 트리거 용도.
@@ -110,8 +171,10 @@ function buildCoupangOrders(
       .map((res, productIdx) => toProduct(res, orderIdx * 100 + productIdx, imageId))
       .filter((p): p is NonNullable<typeof p> => p !== null);
 
+    // 합계도 toFiniteAmount 로 한 번 더 정규화. toProduct 가 이미 정상화하지만, 추후 다른
+    // 경로에서 product 객체가 직접 합쳐질 가능성에 대비한 이중 방어선입니다.
     const totalAmount = products.reduce(
-      (sum, p) => sum + p.price * (p.quantity ?? 1),
+      (sum, p) => sum + toFiniteAmount(p.price) * (toFiniteAmount(p.quantity) || 1),
       0,
     );
 
@@ -137,14 +200,17 @@ function buildFlatOrders(
   return parsed.map((res, idx) => {
     const statusTag = detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase";
     const product = toProduct(res, idx, imageId);
-    const unitPrice = res.price ?? 0;
-    const qty = res.quantity && res.quantity > 0 ? res.quantity : 1;
+    // toProduct 가 이미 toFiniteAmount 로 가격/수량을 정규화한 결과를 그대로 사용합니다.
+    // 외부 res.price 를 다시 곱하면 string 으로 들어온 경우 NaN 이 생길 수 있으니,
+    // product.price·product.quantity 만 신뢰합니다.
     return {
       id: `${imageId}-order-${idx}`,
       orderDate: res.date ?? "",
       statusTag,
       statusLabel: "자동 추출됨",
-      totalAmount: product ? unitPrice * qty : 0,
+      totalAmount: product
+        ? toFiniteAmount(product.price) * (toFiniteAmount(product.quantity) || 1)
+        : 0,
       rawText: res.rawText,
       products: product ? [product] : [],
     };

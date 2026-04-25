@@ -13,7 +13,7 @@
  * 위치: src/pages/OcrUpload/components/AnalysisProgressModal.tsx
  */
 import React from "react";
-import styled from "styled-components";
+import styled, { keyframes } from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { ProgressBar } from "../../../components/primitives/ProgressBar";
@@ -123,6 +123,30 @@ const FileSub = styled.div`
   margin-top: 2px;
   font-size: 11.5px;
   color: ${tokens.color.ink4};
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+`;
+
+/**
+ * AI fallback 단계에서 회전 메시지 옆에 띄우는 작은 인라인 스피너.
+ * Gemini 호출은 단발 fetch 라 실제 progress event 가 없어, 사용자에게는 진행률 바가 50% 에서
+ * 멈춰 있는 것처럼 보일 수 있습니다. 이 스피너 + ProgressBar 의 shimmer 오버레이가 함께
+ * "백엔드가 살아 있다" 신호를 줍니다.
+ */
+const spin = keyframes`
+  to { transform: rotate(360deg); }
+`;
+
+const InlineSpinner = styled.span`
+  display: inline-block;
+  width: 11px;
+  height: 11px;
+  border: 1.5px solid ${tokens.color.line};
+  border-top-color: ${tokens.color.accent};
+  border-radius: 50%;
+  animation: ${spin} 0.9s linear infinite;
+  flex-shrink: 0;
 `;
 
 const Notice = styled.div`
@@ -223,16 +247,30 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
                 {currentFileName || "이미지 준비 중"}
               </FileName>
               <FileSub>
-                {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
-                {isAiPhase ? (
-                  <RotatingSub messages={PROGRESS_MESSAGES} />
-                ) : (
-                  humanizeStatus(currentStatus)
-                )}
+                {isAiPhase && <InlineSpinner aria-hidden />}
+                <span>
+                  {currentPlatform ? `${PLATFORM_LABELS[currentPlatform]} · ` : ""}
+                  {isAiPhase ? (
+                    <RotatingSub messages={PROGRESS_MESSAGES} />
+                  ) : (
+                    humanizeStatus(currentStatus)
+                  )}
+                </span>
               </FileSub>
             </FileMeta>
           </CurrentRow>
-          <ProgressBar value={overallValue} tone="accent" size={8} />
+          {/*
+            AI fallback 구간에서 progress 가 0.5 부근에서 정체될 수밖에 없는 이유로 (Gemini 호출은
+            단발 fetch 라 progress event 없음) 사용자에게는 막대가 멈춰 보입니다. shimmer 를 켜서
+            막대 위로 흐르는 하이라이트 + 위쪽 인라인 스피너 두 신호가 "살아 있다" 를 전달합니다.
+            Tesseract 단계는 실제 progress 가 흐르므로 shimmer 비활성.
+          */}
+          <ProgressBar
+            value={overallValue}
+            tone="accent"
+            size={8}
+            shimmer={isAiPhase}
+          />
         </Section>
 
         <Notice>
