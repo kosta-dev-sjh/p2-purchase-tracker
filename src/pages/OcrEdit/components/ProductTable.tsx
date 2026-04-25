@@ -213,8 +213,24 @@ const AddRow = styled.button`
 /** 내부 row 타입. price는 콤마 없는 digit 문자열로 관리합니다. */
 type ProductRow = Omit<OcrProduct, "price"> & { priceRaw: string };
 
+/**
+ * 외부에서 들어오는 price 가 number 가 아닌 케이스(예: AI 응답·import 경로에서 콤마
+ * 끼인 문자열) 를 안전하게 흡수합니다. Number() 가 NaN 으로 떨어지면 전체 거래금액이
+ * 0 으로 빠지는 회귀(2026-04-25)를 막기 위한 정규화입니다.
+ */
+function toPriceRaw(value: unknown): string {
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? String(value) : "0";
+  }
+  if (typeof value === "string") {
+    const digits = value.replace(/[^\d]/g, "");
+    return digits || "0";
+  }
+  return "0";
+}
+
 function toRow(p: OcrProduct): ProductRow {
-  return { ...p, priceRaw: String(p.price) };
+  return { ...p, priceRaw: toPriceRaw(p.price) };
 }
 
 /**
@@ -226,10 +242,14 @@ function toRow(p: OcrProduct): ProductRow {
  * 항상 그대로 넘겨 줍니다.
  */
 function toProduct(row: ProductRow): OcrProduct {
+  // priceRaw 는 onChange 단계에서 [^0-9] 를 strip 해 두지만, 초기 toRow 진입 직후나
+  // 외부 patch 가 직접 들어오는 케이스를 막기 위해 한 번 더 sanitize 합니다.
+  const priceDigits = row.priceRaw.replace(/[^\d]/g, "");
+  const priceNum = priceDigits ? Number(priceDigits) : 0;
   return {
     id: row.id,
     name: row.name,
-    price: row.priceRaw ? Number(row.priceRaw) : 0,
+    price: Number.isFinite(priceNum) ? priceNum : 0,
     link: row.link || undefined,
     ...(row.quantity !== undefined ? { quantity: row.quantity } : {}),
     ...(row.priceOcrFailed ? { priceOcrFailed: true } : {}),

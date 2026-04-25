@@ -50,12 +50,57 @@ import type {
  *   추가·삭제·수정하면 곧바로 totalAmount가 재계산되고, 경고 모달도 구조적으로 사라집니다.
  *
  *   quantity가 없는 상품(수동 추가 등)은 1개로 취급해 "가격 × 1"로 합산합니다.
+ *
+ * 2026-04-25 방어 강화: 사용자 보고로 "긴 이미지에서 전체 거래금액이 0 으로 뜬다" 는 회귀가
+ *   확인됐습니다. OcrProduct.price 는 타입상 number 지만, AI 응답 deserialization /
+ *   sessionStorage rehydrate / 외부 import 같은 경로에서 문자열(예: "11,900") 로 들어올 수
+ *   있고, 그 경우 `Number("11,900")` 이 NaN 이 되며 `|| 0` 으로 떨어져 카드별 합계가 통째로
+ *   0 이 되는 게 직접 원인이었습니다. price·quantity 둘 다 toFiniteAmount 로 한 번 정규화해서
+ *   "콤마/공백/원/통화기호 끼인 문자열" 도 안전하게 숫자로 흡수하도록 막습니다.
  */
+function toFiniteAmount(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  if (typeof value === "string") {
+    // 콤마/공백/원/₩/달러 기호 등 가격 표기에 흔한 비-숫자 문자를 제거하고 정수로 환원.
+    const digits = value.replace(/[^\d.\-]/g, "");
+    if (!digits) return 0;
+    const n = Number(digits);
+    return Number.isFinite(n) ? n : 0;
+  }
+  return 0;
+}
+
 function sumProductTotal(products: OcrOrder["products"]): number {
-  return products.reduce(
-    (sum, product) => sum + (Number(product.price) || 0) * (product.quantity ?? 1),
-    0,
-  );
+  return products.reduce((sum, product) => {
+    const price = toFiniteAmount(product.price);
+    const qty = toFiniteAmount(product.quantity) || 1;
+    return sum + price * qty;
+  }, 0);
+}
+
+/**
+ * 진입 시점의 OcrImageItem 배열을 받아 모든 order.totalAmount 를 products 합계로 다시 맞춰
+ * 돌려줍니다.
+ *
+ * 왜 필요한가:
+ *   ocrStore 는 in-memory 라 새로고침 시 비어 있지만, **같은 세션 안에서 OcrUpload→OcrEdit 로
+ *   넘어온 데이터** 가 분석 시점의 totalAmount 를 그대로 들고 들어옵니다. 이전에 totalAmount=0
+ *   으로 잘못 계산된 데이터가 store 에 남아 있으면, 사용자가 가격 셀을 한 번이라도 편집해
+ *   handleProductsChange 가 발동하기 전까지는 ₩0 으로 표시되는 회귀가 발생했습니다.
+ *   (2026-04-25 사용자 보고: 가격은 정상으로 보이는데 전체 거래금액만 ₩0.)
+ *
+ *   이 함수는 진입 즉시 products 합으로 재정렬해, 그 회귀와 함께 "외부에서 어떻게 들어왔는지"
+ *   에 의존하지 않도록 단일 게이트를 둡니다. handleProductsChange 와 동일한 sumProductTotal
+ *   을 쓰므로 정렬 기준이 한 곳에 모입니다.
+ */
+function normalizeImagesTotals(images: OcrImageItem[]): OcrImageItem[] {
+  return images.map((image) => ({
+    ...image,
+    orders: image.orders.map((order) => ({
+      ...order,
+      totalAmount: sumProductTotal(order.products),
+    })),
+  }));
 }
 
 const Body = styled.div`
@@ -190,7 +235,13 @@ export const OcrEditPage: React.FC = () => {
   // 초기 시드는 오직 ocrStore에서 가져옵니다. 스토어가 비어 있으면 이 페이지에
   // 보여 줄 게 아예 없는 상태이므로, 이전의 mock 폴백을 없애고 빈 상태 UI를 유지합니다.
   // (사용자 플로우: OcrUpload에서 분석을 돌리면 ocrStore.setImages로 시드가 채워집니다.)
-  const [images, setImages] = useState<OcrImageItem[]>(storeImages);
+  //
+  // 진입 직후 normalizeImagesTotals 한 번 — store 에 남아 있던 분석 시점 totalAmount(=0 으로
+  // 굳은 회귀 케이스 포함)를 products 합으로 단일 정렬해 사용자가 첫 화면에서 ₩0 을 보지 않게
+  // 만듭니다.
+  const [images, setImages] = useState<OcrImageItem[]>(() =>
+    normalizeImagesTotals(storeImages),
+  );
   const [selectedId, setSelectedId] = useState<string>(images[0]?.id ?? "");
   const selected = images.find((image) => image.id === selectedId);
 
@@ -709,7 +760,8 @@ export const OcrEditPage: React.FC = () => {
         onComplete={(newImages) => {
           // 분석 결과를 기존 images 뒤에 append. 방금 들어온 첫 이미지로 selection 을 옮겨
           // "내가 방금 추가한 이미지가 어느 건지" 바로 보이게 합니다.
-          const next = [...images, ...newImages];
+          // 신규 이미지도 normalize 한 번 거쳐 동일한 totalAmount 정렬 기준을 보장합니다.
+          const next = normalizeImagesTotals([...images, ...newImages]);
           setImages(next);
           if (newImages[0]) {
             setSelectedId(newImages[0].id);

@@ -8,7 +8,7 @@ initializeApp();
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
 
 type Status = "purchase" | "refund" | "cancel" | "sub";
-type Platform = "coupang" | "naver" | "temu";
+type Platform = "coupang" | "naver";
 
 interface CsvRow {
   이용일: string;
@@ -50,7 +50,6 @@ const FAST_GENERATION_CONFIG = {
 const PLATFORM_LABELS: Record<Platform, string> = {
   coupang: "쿠팡",
   naver: "네이버",
-  temu: "테무",
 };
 
 function getGenAI(): GoogleGenerativeAI {
@@ -208,17 +207,21 @@ async function runFallbackOcrProducts(input: FallbackOcrProductsInput) {
 
   const platformKor = PLATFORM_LABELS[input.platform] ?? "쇼핑몰";
   const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격을 이미지와 rawText 로 검증·보정하는 추출기다.
-입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 전체 카드 목록(id · 현재 이름 · 현재 가격)이 들어온다.
-"(의심)" 이 붙은 카드는 특히 주의해 이미지에서 다시 읽어내라.
+입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격) 이 들어온다.
+"(의심)" 이 붙은 카드는 Tesseract 파서가 복구 못 한 카드라 특히 신경 써서 이미지에서 다시 읽어내라.
+그렇지 않은 카드도 이미지를 확인해 **분명한 오류**가 있으면 고치되, 맞으면 현재 값을 **그대로** 반환하라.
 
 규칙을 엄격히 지킨다:
 - 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
 - 각 라인 형식: \`id|name|price|quantity\`
-- id 는 입력과 정확히 같아야 한다.
-- name 은 자연스러운 상품명으로 복원하되, 현재 값이 맞으면 그대로 둔다.
-- price 는 쉼표·원 기호 없는 정수.
+- id 는 입력과 글자 단위로 정확히 같게 복사한다(재생성 금지).
+- name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게.
+- **변경은 필요할 때만**: 현재 이름이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
+  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임 등)" 에만.
+- price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
 - quantity 는 정수, 찾을 수 없으면 1.
-- 입력된 카드 수만큼만 출력한다.
+- 입력된 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
+- 설명 문장 추가 금지. 첫 라인부터 데이터다.
 
 rawText:
 ${input.rawText.slice(0, 8000)}
@@ -289,6 +292,8 @@ export const geminiProxy = onCall(
     region: "asia-northeast3",
     timeoutSeconds: 120,
     memory: "1GiB",
+    invoker: "public",
+    cors: true,
     secrets: [geminiApiKey],
   },
   async (request) => {

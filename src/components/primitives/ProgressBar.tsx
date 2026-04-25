@@ -16,6 +16,13 @@ interface ProgressBarProps {
    * 전체 작업 완료 시간은 알 수 없지만 "뭔가 돌고 있다"는 사실만 표시하고 싶을 때 사용합니다.
    */
   indeterminate?: boolean;
+  /**
+   * true 일 때 determinate fill 위에 좌우로 흐르는 shimmer 하이라이트를 겹쳐 보여줍니다.
+   * "특정 지점(예: 50%)에서 진행이 멈춰 있지만 실제로는 백엔드가 작업 중" 인 상황 — 대표적으로
+   * AI fallback 호출 같이 progress 가 0 인 단발 요청 — 에서 사용자에게 "멈춰있지 않다" 신호를
+   * 줍니다. indeterminate 와 다른 점: value 는 그대로 유지하고 위에 effect 만 얹습니다.
+   */
+  shimmer?: boolean;
   /** 막대 두께(px). 기본 8. */
   size?: number;
   /** 막대 배경 톤을 약하게 깔지, 강조된 오프색으로 깔지 결정합니다. */
@@ -67,9 +74,42 @@ const IndeterminateFill = styled.div`
   animation: ${slide} 1.2s linear infinite;
 `;
 
+/**
+ * Shimmer 오버레이. determinate Fill 위에 얹어 "고정된 진행률 + 흐르는 하이라이트" 를 동시에
+ * 표시합니다. indeterminate 와 달리 progressbar value 는 그대로 두기 때문에 a11y 측면에서
+ * 정확한 진행률이 유지됩니다.
+ */
+const ShimmerOverlay = styled.div`
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  pointer-events: none;
+  overflow: hidden;
+  border-radius: 999px;
+
+  &::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 35%;
+    background: linear-gradient(
+      90deg,
+      transparent,
+      rgba(255, 255, 255, 0.55),
+      transparent
+    );
+    animation: ${slide} 1.6s linear infinite;
+  }
+`;
+
 export const ProgressBar: React.FC<ProgressBarProps> = ({
   value,
   indeterminate = false,
+  shimmer = false,
   size = 8,
   tone = "neutral",
   className,
@@ -87,7 +127,14 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
       aria-valuemax={100}
       aria-valuenow={indeterminate ? undefined : percent}
     >
-      {indeterminate ? <IndeterminateFill /> : <Fill $percent={percent} />}
+      {indeterminate ? (
+        <IndeterminateFill />
+      ) : (
+        <>
+          <Fill $percent={percent} />
+          {shimmer && <ShimmerOverlay aria-hidden />}
+        </>
+      )}
     </Track>
   );
 };
