@@ -38,7 +38,7 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
   // 1차: 헤더 이름이 정확히 일치하는 경우.
   for (const header of headers) {
     const value = row[header];
-    if (value) return value;
+    if (value !== undefined && value !== null && value !== "") return value;
   }
   // 2차: 키에 헤더 힌트가 포함된 경우 (예: "승인금액(원)", "이용일자(승인기준)").
   //       카드사마다 단위·부가 설명이 괄호로 붙어 오는 케이스가 많아 접미사 허용이 필요합니다.
@@ -47,7 +47,7 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
     const matchedKey = keys.find((key) => key.includes(header));
     if (matchedKey) {
       const value = row[matchedKey];
-      if (value) return value;
+      if (value !== undefined && value !== null && value !== "") return value;
     }
   }
   return "";
@@ -55,7 +55,9 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
 
 function parseAmount(raw: any): number | null {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const cleaned = String(raw || "").replace(/,/g, "").replace(/원|KRW/gi, "").trim();
+  const rawStr = String(raw || "").trim();
+  // 숫자, 마이너스 부호, 점(소수점)만 남기고 제거
+  const cleaned = rawStr.replace(/[^0-9.-]/g, "");
   if (!cleaned) return null;
 
   const value = Number(cleaned);
@@ -76,16 +78,23 @@ function normalizeDate(raw: any): string | null {
   }
   if (digits.length < 3) return null;
 
-  const year = digits[0];
-  const month = digits[1];
-  const day = digits[2];
+  // 카드사에 따라 월, 일이 앞에 오는 경우(MM/DD/YYYY)가 있으나 국내 카드사는 보통 YYYY/MM/DD입니다.
+  // 첫 번째 숫자가 4자리면 연도로 간주합니다.
+  let year = digits[0];
+  let month = digits[1];
+  let day = digits[2];
+
+  // 만약 연도가 뒤에 있다면 (예: 23.04.2026) 뒤집어줍니다.
+  if (year.length !== 4 && digits[2].length === 4) {
+    year = digits[2];
+    day = digits[0];
+  }
 
   const y = Number(year);
   const m = Number(month);
   const d = Number(day);
 
-  // Excel 일련번호(예: "46131.375")가 들어오면 regex가 연도 4613 같은 값을 뽑아낼 수 있어
-  // 현실 날짜 범위를 벗어나는 값은 모두 거부해 방어선을 하나 더 둡니다.
+  // 현실적인 날짜 범위 체크
   if (y < 1900 || y > 2100) return null;
   if (m < 1 || m > 12) return null;
   if (d < 1 || d > 31) return null;
@@ -94,8 +103,8 @@ function normalizeDate(raw: any): string | null {
 }
 
 function inferStatus(statusRaw: string, amount: number): TxStatus {
-  if (/취소/.test(statusRaw)) return "cancel";
-  if (/환불/.test(statusRaw)) return "refund";
+  if (/취소|거절/.test(statusRaw)) return "cancel";
+  if (/환불|반품/.test(statusRaw)) return "refund";
   if (amount < 0) return "refund";
   return "purchase";
 }
@@ -149,8 +158,6 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
     const date = normalizeDate(dateRaw);
     const amount = parseAmount(amountRaw);
     // 가맹점명이 비면 행을 버리지 않고 "알 수 없음"으로 대체해 import합니다.
-    // 카드사 특정 행(합계/광고 행)의 가맹점이 의도적으로 비어 있지만 날짜·금액은 유효한 경우가 있고,
-    // 실제 거래인데 가맹점 컬럼만 빈 행을 놓치지 않기 위함입니다.
     const effectiveMerchantRaw = merchantRaw || "알 수 없음";
     const { platform, cleaned } = normalizeMerchant(effectiveMerchantRaw);
 
@@ -162,13 +169,8 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       skipped.push({ index, reason: "금액 형식을 읽을 수 없습니다.", raw });
       return;
     }
-    // CSV는 카드사/가맹점 표기가 다양해서 쇼핑 3대 플랫폼 규칙에 안 맞는 행도 자주 나옵니다.
-    // 이런 경우 행 전체를 버리지 않고 "미지정" 플랫폼으로 받아, 과거의 "비지원 플랫폼이면 업로드 실패"
-    // 버그를 막습니다. 카테고리는 별도로 "기타" 폴백을 태웁니다.
+    
     const resolvedPlatform = platform ?? "unspecified";
-
-    // 사용자가 카테고리를 지정하지 않았거나 알 수 없는 값이면 "기타"로 자동 분류합니다.
-    // CSV 한 줄은 카테고리 한 개만 제공하므로 항상 길이 1짜리 배열로 저장합니다.
     const category = (CATEGORY_MAP[categoryRaw.trim()] ?? "etc") as TxCategory;
     const status = inferStatus(statusRaw, amount);
     const txShape = toTxShape(amount, status);

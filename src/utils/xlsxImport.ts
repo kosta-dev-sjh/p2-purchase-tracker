@@ -22,6 +22,16 @@ function looksLikeDataSheet(csv: string): boolean {
   return digitRatio >= 0.1;
 }
 
+/** CSV 셀 이스케이프: 쉼표/따옴표/줄바꿈이 있으면 따옴표로 감싸고, 내부 따옴표는 두 배로 */
+function escapeCSVCell(cell: unknown): string {
+  const str = String(cell ?? "");
+  // 쉼표, 따옴표, 줄바꿈이 있으면 따옴표로 감싸고, 내부 따옴표는 ""로 이스케이프
+  if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
+    return '"' + str.replace(/"/g, '""') + '"';
+  }
+  return str;
+}
+
 export async function readXlsxAsCsvText(file: File): Promise<string> {
   const XLSX = await import("xlsx");
   const buffer = await file.arrayBuffer();
@@ -32,7 +42,16 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
   const dropped: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
-    const csv = XLSX.utils.sheet_to_csv(sheet);
+    // readXlsxAsRows와 동일한 옵션으로 날짜를 제대로 포맷합니다.
+    const aoa = XLSX.utils.sheet_to_json<string[]>(sheet, {
+      header: 1,
+      defval: "",
+      raw: false,
+      dateNF: "yyyy-mm-dd",
+      blankrows: false,
+    });
+    // 2차원 배열을 CSV 텍스트로 변환 (쉼표 포함 셀은 따옴표로 감싸기)
+    const csv = aoa.map((row) => row.map(escapeCSVCell).join(",")).join("\n");
     if (!looksLikeDataSheet(csv)) {
       dropped.push(sheetName);
       continue;
@@ -43,9 +62,18 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
   // 필터링 결과 모든 시트가 사라졌다면(= 판정 기준이 너무 엄격했다면) 전체를 다시 붙여 보냅니다.
   // "AI가 볼 데이터가 아예 없는" 회귀를 막는 안전망입니다.
   if (chunks.length === 0) {
-    return workbook.SheetNames.map(
-      (name) => `--- Sheet: ${name} ---\n${XLSX.utils.sheet_to_csv(workbook.Sheets[name])}`,
-    ).join("\n\n");
+    return workbook.SheetNames.map((name) => {
+      const sheet = workbook.Sheets[name];
+      const aoa = XLSX.utils.sheet_to_json<string[]>(sheet, {
+        header: 1,
+        defval: "",
+        raw: false,
+        dateNF: "yyyy-mm-dd",
+        blankrows: false,
+      });
+      const csv = aoa.map((row) => row.map(escapeCSVCell).join(",")).join("\n");
+      return `--- Sheet: ${name} ---\n${csv}`;
+    }).join("\n\n");
   }
 
   if (dropped.length > 0) {
