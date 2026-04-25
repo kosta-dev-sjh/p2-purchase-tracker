@@ -45,7 +45,7 @@ const STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
  */
 const COUPANG_STATUS_KEYWORDS: Array<{ status: Status; keywords: string[] }> = [
   // 반품을 cancel 로 우선 분류. 환불 키워드(환불완료/환불처리) 는 여전히 refund.
-  { status: "cancel", keywords: ["반품완료", "반품", "취소완료", "취소 완료", "주문취소", "결제취소"] },
+  { status: "cancel", keywords: ["반품완료", "반품", "취소완료", "취소 완료", "주문취소", "결제취소", "취소상세보기", "취소 상세 보기"] },
   { status: "refund", keywords: ["환불완료", "환불처리", "환불"] },
   { status: "sub", keywords: ["정기결제", "정기 결제", "구독", "자동결제"] },
   { status: "purchase", keywords: ["결제완료", "주문완료", "배송완료", "배송 완료", "배송중", "상품준비중", "상품 준비중", "구매완료", "구매확정", "구매"] },
