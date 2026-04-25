@@ -362,7 +362,8 @@ export const ManualEntryPage: React.FC = () => {
    */
   const performSave = (row: TxRow) => {
     if (dupDismissed) {
-      transactionsStore.addOne(row);
+      // 수동 입력은 사용자가 카테고리를 직접 고른 결과라 자동추정을 태우지 않는다.
+      transactionsStore.addFromManual(row);
       navigate("/transactions");
       return;
     }
@@ -371,7 +372,7 @@ export const ManualEntryPage: React.FC = () => {
     const resolved = autoResolveDuplicates(dupResult);
 
     if (resolved.toSave.length > 0) {
-      transactionsStore.addOne(resolved.toSave[0]);
+      transactionsStore.addFromManual(resolved.toSave[0]);
     }
     for (const action of resolved.toMerge) {
       transactionsStore.appendItemsToTransaction(action.existingId, action.newItems, "MANUAL");

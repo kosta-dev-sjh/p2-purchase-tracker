@@ -81,14 +81,13 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 - 결과 안내 모달/배너가 실제 저장 결과와 어긋나지 않는가
 - 죽은 코드가 새로 생기지 않았는가
 
-## 7. 남아 있는 임시/차기 작업 포인트
+## 7. 현재 상태 및 차기 작업 포인트
 
-- 인증은 아직 목업이며 `src/mocks/auth.ts`에 의존
-- 저장은 localStorage 기반
-- Firestore/실 OCR/AI 실호출은 아직 차기 단계
+- 인증은 Firebase Auth 기반으로 전환됨
+- 저장은 Zustand 로컬 상태 + Firestore 동기화 구조로 전환됨
+- 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료
 - 관련 참고 문서:
   - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
-  - `docs/collaboration/SpendTrack_MockAuth_Replacement.md`
 
 ## 8. 문서 유지 규칙
 

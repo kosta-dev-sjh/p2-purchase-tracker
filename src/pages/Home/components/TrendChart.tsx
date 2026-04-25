@@ -59,6 +59,11 @@ const HeaderRow = styled.div`
 `;
 
 const ChartWrap = styled.div`
+  width: 100%;
+  /* grid/flex 부모에서 min-width 가 auto 인 탓에 Recharts ResponsiveContainer 가 첫 프레임에
+     width=-1 로 측정돼 dev 콘솔에 경고가 도배됐습니다. min-width: 0 로 측정값을 0 이상으로
+     강제합니다. */
+  min-width: 0;
   height: 212px;
   padding-top: 4px;
 `;

@@ -2,30 +2,47 @@
  * 역할: 설정 · 카테고리 섹션에서 "카테고리 추가" 버튼을 눌렀을 때 뜨는 팝업 모달입니다.
  *       사이트 전반의 Modal/FormField/Button/TextInput 공통 컴포넌트를 그대로 써서
  *       다른 화면과 톤을 일치시킵니다.
+ *
+ *       이름 입력값이 내부 개념 카탈로그의 별칭과 유사하면 "이 카테고리에 ○○ 자동 분류를
+ *       연결할까요?"를 제안해, 사용자가 새 카테고리를 만들자마자 가맹점 자동 분류를
+ *       곧바로 써먹을 수 있게 해뒀습니다.
  * 위치: src\pages\Settings\components\CategoryAddModal.tsx
  */
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
 import { TextInput } from "../../../components/form/TextInput";
 import { Modal } from "../../../components/modal/Modal";
 import { tokens } from "../../../styles/tokens";
+import {
+  CATEGORY_CONCEPTS,
+  CONCEPT_BY_ID,
+  suggestConceptByName,
+  type ConceptId,
+} from "../../../data/categoryConcepts";
 
 export interface CategoryAddPayload {
   name: string;
   color: string;
+  conceptIds: ConceptId[];
 }
 
 /**
  * 모달의 두 가지 동작 모드.
  * - "add": 새 카테고리를 만든다. 기본값은 빈 이름 + 첫 프리셋 색.
- * - "edit": 기존 카테고리의 이름/색을 수정한다. initialName/initialColor가 채워져야 한다.
+ * - "edit": 기존 카테고리의 이름/색/개념 바인딩을 수정한다. initial* 값들이 채워져야 한다.
  *   nameLocked=true면 이름 필드를 읽기 전용으로 잠가 시스템 라벨(예: 기타)을 보호한다.
  */
 type CategoryModalMode =
   | { kind: "add" }
-  | { kind: "edit"; initialName: string; initialColor: string; nameLocked?: boolean };
+  | {
+      kind: "edit";
+      initialName: string;
+      initialColor: string;
+      initialConceptIds?: ConceptId[];
+      nameLocked?: boolean;
+    };
 
 interface CategoryAddModalProps {
   isOpen: boolean;
@@ -135,6 +152,66 @@ const ErrorLine = styled.div`
   font-weight: 500;
 `;
 
+const SuggestionCard = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.accent};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink2};
+  font-size: 12.5px;
+`;
+
+const SuggestionText = styled.span`
+  strong {
+    color: ${tokens.color.ink1};
+    font-weight: 600;
+  }
+`;
+
+const ConceptChipRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+`;
+
+const ConceptChip = styled.button<{ $active: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 10px;
+  border-radius: ${tokens.radius.chip};
+  border: 1px solid
+    ${({ $active }) => ($active ? tokens.color.accent : tokens.color.line)};
+  background: ${({ $active }) => ($active ? tokens.color.tint : tokens.color.panel)};
+  color: ${({ $active }) => ($active ? tokens.color.accentHover : tokens.color.ink3)};
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background ${tokens.motion.fast} ease,
+    border-color ${tokens.motion.fast} ease,
+    color ${tokens.motion.fast} ease;
+
+  &:hover {
+    border-color: ${tokens.color.accent};
+  }
+`;
+
+/**
+ * 개념 id를 사용자에게 보여줄 짧은 레이블로 변환. 별칭의 첫 한국어 항목을 우선 표시하고,
+ * 없으면 id 자체를 대문자화해 폴백.
+ */
+function conceptLabel(id: ConceptId): string {
+  const concept = CONCEPT_BY_ID[id];
+  const koAlias = concept.aliases.find((alias) => /[가-힣]/.test(alias));
+  return koAlias ?? id;
+}
+
 /** "#RRGGBB" 형식의 hex 색상인지 검증합니다. "#" 없이 6자리만 와도 자동으로 붙여 주도록 별도 처리합니다. */
 function normalizeHex(input: string): string | null {
   const trimmed = input.trim();
@@ -166,7 +243,23 @@ export const CategoryAddModal = ({
   const [hexDraft, setHexDraft] = useState<string>(() =>
     mode.kind === "edit" ? mode.initialColor.toUpperCase() : PRESET_COLORS[0]
   );
+  const [conceptIds, setConceptIds] = useState<ConceptId[]>(() =>
+    mode.kind === "edit" ? (mode.initialConceptIds ?? []) : []
+  );
   const [error, setError] = useState<string | null>(null);
+
+  /**
+   * 이름 입력값이 어떤 개념 별칭과 매칭되는지 실시간 계산. 이미 체크돼 있거나 다른 카테고리에서
+   * 가져가지 못하는 개념이더라도, 여기서는 제안만 내고 실제 바인딩 충돌은 스토어(reassignConcepts)가
+   * 해결하므로 모달 쪽은 단순 제안에 집중한다.
+   */
+  const suggestedConceptId = useMemo(() => {
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    const hit = suggestConceptByName(trimmed);
+    if (!hit) return null;
+    return hit;
+  }, [name]);
 
   const handleSwatchClick = (preset: string) => {
     setColor(preset);
@@ -181,6 +274,20 @@ export const CategoryAddModal = ({
     }
   };
 
+  const toggleConcept = (conceptId: ConceptId) => {
+    setConceptIds((prev) =>
+      prev.includes(conceptId)
+        ? prev.filter((id) => id !== conceptId)
+        : [...prev, conceptId]
+    );
+  };
+
+  const handleAcceptSuggestion = () => {
+    if (!suggestedConceptId) return;
+    if (conceptIds.includes(suggestedConceptId)) return;
+    setConceptIds((prev) => [...prev, suggestedConceptId]);
+  };
+
   const handleSubmit = () => {
     const trimmed = name.trim();
     if (!trimmed) {
@@ -192,7 +299,7 @@ export const CategoryAddModal = ({
       return;
     }
     const normalizedColor = normalizeHex(hexDraft) ?? color;
-    onSubmit({ name: trimmed, color: normalizedColor });
+    onSubmit({ name: trimmed, color: normalizedColor, conceptIds });
     onClose();
   };
 
@@ -228,6 +335,41 @@ export const CategoryAddModal = ({
             autoFocus={!nameLocked}
           />
         </FormField>
+
+        {!nameLocked && (
+          <FormField
+            label="자동 분류 연결"
+            helpText="이 카테고리와 연결된 가맹점 규칙에 맞는 결제는 CSV/OCR로 불러올 때 자동으로 이 카테고리로 분류돼요. 수동 입력이나 거래 수정에는 영향을 주지 않아요."
+          >
+            {suggestedConceptId && !conceptIds.includes(suggestedConceptId) && (
+              <SuggestionCard>
+                <SuggestionText>
+                  <strong>{conceptLabel(suggestedConceptId)}</strong> 가맹점 규칙을 이 카테고리에 연결할까요?
+                </SuggestionText>
+                <Button variant="secondary" size="sm" onClick={handleAcceptSuggestion}>
+                  연결
+                </Button>
+              </SuggestionCard>
+            )}
+            <ConceptChipRow style={{ marginTop: suggestedConceptId ? 10 : 0 }}>
+              {CATEGORY_CONCEPTS.map((concept) => {
+                const active = conceptIds.includes(concept.id);
+                return (
+                  <ConceptChip
+                    key={concept.id}
+                    type="button"
+                    $active={active}
+                    aria-pressed={active}
+                    onClick={() => toggleConcept(concept.id)}
+                  >
+                    {active ? "✓ " : "+ "}
+                    {conceptLabel(concept.id)}
+                  </ConceptChip>
+                );
+              })}
+            </ConceptChipRow>
+          </FormField>
+        )}
 
         <FormField
           label="카테고리 색상"

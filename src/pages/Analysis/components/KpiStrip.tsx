@@ -110,7 +110,7 @@ export const KpiStrip: React.FC<{ kpis: KpiItem[] }> = ({ kpis }) => (
         <SubRow>
           {kpi.delta ? (
             <>
-              <Chip tone={kpi.delta.tone === "up" ? "up" : "down"}>
+              <Chip $tone={kpi.delta.tone === "up" ? "up" : "down"}>
                 {kpi.delta.tone === "up" ? "▲" : "▼"} {kpi.delta.text}
               </Chip>
               <span>전월 대비</span>

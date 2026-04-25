@@ -19,6 +19,7 @@ import {
   useCategoriesStore,
 } from "../../../stores/categoriesStore";
 import type { TxCategory } from "../../../pages/Transactions/components/TransactionTable";
+import type { ConceptId } from "../../../data/categoryConcepts";
 import { CategoryAddModal, type CategoryAddPayload } from "./CategoryAddModal";
 
 const HeaderBar = styled.div`
@@ -152,7 +153,14 @@ function isTxCategoryKey(id: string): id is TxCategory {
 type ModalState =
   | { kind: "closed" }
   | { kind: "add" }
-  | { kind: "edit"; id: string; name: string; color: string; locked: boolean };
+  | {
+      kind: "edit";
+      id: string;
+      name: string;
+      color: string;
+      locked: boolean;
+      conceptIds: ConceptId[];
+    };
 
 export const CategoriesSection: React.FC = () => {
   const rows = useTransactionsStore();
@@ -182,7 +190,11 @@ export const CategoriesSection: React.FC = () => {
 
   const handleSubmit = (payload: CategoryAddPayload) => {
     if (modal.kind === "edit") {
-      categoriesStore.update(modal.id, { name: payload.name, color: payload.color });
+      categoriesStore.update(modal.id, {
+        name: payload.name,
+        color: payload.color,
+        conceptIds: payload.conceptIds,
+      });
     } else if (modal.kind === "add") {
       categoriesStore.addCustom(payload);
     }
@@ -250,6 +262,7 @@ export const CategoriesSection: React.FC = () => {
                           name: category.name,
                           color: category.color,
                           locked: category.isLocked,
+                          conceptIds: category.conceptIds,
                         })
                       }
                     >
@@ -287,6 +300,7 @@ export const CategoriesSection: React.FC = () => {
                 kind: "edit",
                 initialName: modal.name,
                 initialColor: modal.color,
+                initialConceptIds: modal.conceptIds,
                 nameLocked: modal.locked,
               }
             : { kind: "add" }

@@ -74,7 +74,7 @@ export const SubscriptionList: React.FC<{ items: SubscriptionItem[]; total: numb
   <Card>
     <CardHd>
       <CardTitle>정기결제 감지</CardTitle>
-      <Chip tone="info">자동 감지됨</Chip>
+      <Chip $tone="info">자동 감지됨</Chip>
     </CardHd>
     <CardBd>
       <List>

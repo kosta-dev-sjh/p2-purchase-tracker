@@ -13,7 +13,6 @@
 import React, { useMemo, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import styled from "styled-components";
-import { createWorker } from "tesseract.js";
 import { AppShell } from "../../components/layout/AppShell";
 import { Button } from "../../components/primitives/Button";
 import { PLATFORM_LABELS } from "../../constants/labels";
@@ -23,17 +22,14 @@ import { PlatformSelect, type Platform } from "./components/PlatformSelect";
 import { UploadZone } from "./components/UploadZone";
 import { UploadedGrid } from "./components/UploadedGrid";
 import { GuideCard } from "./components/GuideCard";
-import { ocrUploadMockData, type UploadedImage } from "./data";
-import { ocrStore } from "../../stores/ocrStore";
+import { PlatformConfirmModal } from "./components/PlatformConfirmModal";
 import {
-  parseCoupangOrderText,
-  parseNaverOrderText,
-  parseAuctionOrderText,
-  parseTemuOrderText,
-  type PurchaseOCRResult,
-} from "../../utils/ocrParsers";
-import { detectStatusFromOcrText } from "../../utils/ocrParse";
-import type { OcrOrder, OcrImageItem } from "../OcrEdit/data";
+  AnalysisProgressModal,
+  type AnalysisProgress,
+} from "./components/AnalysisProgressModal";
+import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
+import { ocrStore } from "../../stores/ocrStore";
+import { analyzeUploadedImages } from "../../utils/ocrAnalyzeImages";
 
 const Wrap = styled.div`
   display: grid;
@@ -116,9 +112,16 @@ export const OcrUploadPage: React.FC = () => {
   // 여기서의 platform은 "다음에 올릴 이미지에 찍힐 태그"입니다.
   // 업로드를 실행할 때마다 새 이미지의 UploadedImage.platform에 스냅샷으로 복사됩니다.
   const [platform, setPlatform] = useState<Platform>("coupang");
-  
-  // append 모드일 때는 빈 상태로 시작하여 이전에 올린 이미지와 혼동되지 않게 합니다.
-  const [images, setImages] = useState<UploadedImage[]>(isAppendMode ? [] : ocrUploadMockData.images);
+
+  // 실제 OCR 흐름에서는 사용자가 직접 업로드하기 전에는 이미지가 비어 있어야 합니다.
+  // append 모드(기존 결과에 이어 붙이기)든 새 세션이든 초기 상태는 항상 빈 배열로 시작합니다.
+  const [images, setImages] = useState<UploadedImage[]>([]);
+
+  /**
+   * "분석 시작하기" → 플랫폼 확인 모달(PlatformConfirmModal)의 개폐 상태.
+   * 모달에서 확인을 누르면 수정된 이미지 배열이 내려와 실제 OCR 파이프(runAnalysis)가 돕니다.
+   */
+  const [isConfirmOpen, setIsConfirmOpen] = useState(false);
 
   React.useEffect(() => {
     // 새로운 세션 시작일 경우에만 스토어를 초기화합니다.
@@ -158,90 +161,63 @@ export const OcrUploadPage: React.FC = () => {
 
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  const handleAnalyze = async () => {
+  /**
+   * OCR 진행률 모달에 전달할 상태. runAnalysis가 시작될 때 전체 이미지 수와
+   * 첫 번째 이미지 정보로 초기화되고, 이후 Tesseract logger와 이미지 루프가
+   * currentIndex / currentProgress / currentStatus를 갱신합니다.
+   */
+  const [analysisProgress, setAnalysisProgress] = useState<AnalysisProgress>({
+    currentIndex: 0,
+    totalCount: 0,
+    currentFileName: "",
+    currentThumbUrl: undefined,
+    currentPlatform: undefined,
+    currentProgress: 0,
+    currentStatus: "",
+  });
+
+  /**
+   * "분석 시작하기" 진입점.
+   * 분석 자체는 이미지 장수만큼 Tesseract를 돌리는 무거운 작업이라, 실행 전
+   * PlatformConfirmModal을 먼저 띄워 사용자에게 태그를 재확인할 기회를 줍니다.
+   * 모달에서 "확인하고 분석 시작"을 누르면 handleConfirmAnalyze가 실제 파이프를 돌립니다.
+   */
+  const handleAnalyze = () => {
     if (images.length === 0) return;
+    if (isAnalyzing) return;
+    setIsConfirmOpen(true);
+  };
+
+  /**
+   * 모달에서 확정된 최종 이미지 배열로 OCR 파이프를 실행합니다.
+   * 여기서 받은 updatedImages는 사용자가 모달에서 플랫폼 태그를 수정한 결과이므로,
+   * 상위 images state에도 그대로 반영해 UploadedGrid의 뱃지가 같이 바뀌도록 합니다.
+   */
+  const handleConfirmAnalyze = async (updatedImages: UploadedImage[]) => {
+    setIsConfirmOpen(false);
+    setImages(updatedImages);
+    await runAnalysis(updatedImages);
+  };
+
+  const runAnalysis = async (targetImages: UploadedImage[]) => {
+    if (targetImages.length === 0) return;
     setIsAnalyzing(true);
-    
+
     try {
-      const worker = await createWorker('kor+eng');
-      const processedImages: OcrImageItem[] = [];
+      // 실제 OCR 파이프라인은 utils/ocrAnalyzeImages 로 분리됐습니다.
+      // 이 페이지는 진행률을 모달 상태로만 매핑해 두고, 이미지 추가(OcrEdit) 경로와
+      // 같은 구현체를 공유합니다.
+      const processedImages = await analyzeUploadedImages(targetImages, (event) => {
+        setAnalysisProgress(event);
+      });
 
-      for (let i = 0; i < images.length; i++) {
-        const image = images[i];
-        if (!image.file) {
-          // v1 목업 이미지 대응 폴백
-          processedImages.push({
-            id: image.id,
-            fileName: image.fileName,
-            thumbUrl: image.thumbUrl,
-            status: "analyzed" as const,
-            platform: image.platform,
-            orders: []
-          });
-          continue;
-        }
-
-        const result = await worker.recognize(image.file);
-        const rawText = result.data.text;
-
-        let parsedData: PurchaseOCRResult[] = [];
-        if (image.platform === 'coupang') {
-          parsedData = parseCoupangOrderText(rawText);
-        } else if (image.platform === 'naver') {
-          parsedData = parseNaverOrderText(rawText);
-        } else if (image.platform === 'auction') {
-          parsedData = parseAuctionOrderText(rawText);
-        } else if (image.platform === 'temu') {
-          parsedData = parseTemuOrderText(rawText);
-        }
-
-        const orders: OcrOrder[] = parsedData.map((res, idx) => {
-          // 테무는 안내 문구가 많아 rawText 사용 시 오인식이 심하므로 statusText만 사용
-          // 다른 플랫폼(네이버/쿠팡/옥션)은 기존처럼 rawText를 fallback으로 사용
-          const statusTag = image.platform === 'temu'
-            ? (res.statusText ? (detectStatusFromOcrText(res.statusText) ?? "purchase") : "purchase")
-            : (detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase");
-          return {
-            id: `${image.id}-order-${idx}`,
-            orderDate: res.date ?? "",
-            statusTag,
-            statusLabel: "자동 추출됨",
-            totalAmount: res.price ?? 0,
-            rawText: res.rawText,
-            products: res.itemName ? [{
-              id: `${image.id}-product-${idx}`,
-              name: res.itemName,
-              price: res.price ?? 0,
-              quantity: 1,
-            }] : []
-          };
-        });
-
-        processedImages.push({
-          id: image.id,
-          fileName: image.fileName,
-          thumbUrl: image.thumbUrl,
-          status: "analyzed" as const,
-          platform: image.platform,
-          rawText: rawText,
-          orders: orders.length > 0 ? orders : [{
-             id: `${image.id}-empty`,
-             orderDate: "",
-             statusTag: "purchase",
-             totalAmount: 0,
-             rawText,
-             products: []
-          }]
-        });
-      }
-
-      await worker.terminate();
-      
-      ocrStore.setImages(isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages);
+      ocrStore.setImages(
+        isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages,
+      );
       navigate("/ocr-edit");
     } catch (error) {
-      console.error('OCR 파싱 실패:', error);
-      alert('이미지 분석 중 오류가 발생했습니다.');
+      console.error("OCR 파싱 실패:", error);
+      alert("이미지 분석 중 오류가 발생했습니다.");
     } finally {
       setIsAnalyzing(false);
     }
@@ -264,7 +240,7 @@ export const OcrUploadPage: React.FC = () => {
   return (
     <AppShell activeNav="upload" crumb="입력 · OCR" title="OCR 업로드">
       <Wrap>
-        <GuideCard items={ocrUploadMockData.guide} />
+        <GuideCard items={OCR_UPLOAD_GUIDE} />
 
         {/* 플랫폼 선택과 업로드 구역은 "한 번의 배치"를 구성하므로 시각적으로 붙여 보여 줍니다. */}
         <UploadStack>
@@ -277,6 +253,7 @@ export const OcrUploadPage: React.FC = () => {
               maxCount={MAX_IMAGES}
               activePlatformLabel={PLATFORM_LABELS[platform]}
               disabled={atCapacity}
+              currentCount={images.length}
               onPick={handleFileSelect}
             />
           </div>
@@ -311,6 +288,13 @@ export const OcrUploadPage: React.FC = () => {
           </Actions>
         </Footer>
       </Wrap>
+      <PlatformConfirmModal
+        isOpen={isConfirmOpen}
+        onClose={() => setIsConfirmOpen(false)}
+        images={images}
+        onConfirm={handleConfirmAnalyze}
+      />
+      <AnalysisProgressModal isOpen={isAnalyzing} progress={analysisProgress} />
     </AppShell>
   );
 };

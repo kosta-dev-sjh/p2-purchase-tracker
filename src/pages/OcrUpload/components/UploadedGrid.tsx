@@ -5,9 +5,10 @@
  *       같은 파일명이 이미 목록에 있으면 "중복" 배지를 표시해 실수로 재업로드하는 것을 방지합니다.
  * 위치: src\pages\OcrUpload\components\UploadedGrid.tsx
  */
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import styled from "styled-components";
 import { Card, CardBd, CardHd, CardTitle } from "../../../components/primitives/Card";
+import { ImageLightbox } from "../../../components/primitives/ImageLightbox";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import { tokens } from "../../../styles/tokens";
 import type { UploadedImage } from "../data";
@@ -45,8 +46,40 @@ const Thumb = styled.div`
 `;
 
 /**
+ * 썸네일 위에 올라가는 투명 버튼. 썸네일 전체를 클릭 영역으로 삼아 라이트박스를 띄웁니다.
+ * Remove 버튼과 영역이 겹치지만, Remove 버튼은 z-index 가 더 높고 stopPropagation 으로
+ * 같이 열리지 않게 막습니다. cursor: zoom-in 으로 "확대 가능"이라는 힌트를 줍니다.
+ */
+const ThumbOpenButton = styled.button`
+  position: absolute;
+  inset: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  cursor: zoom-in;
+  z-index: 1;
+
+  &:focus-visible {
+    outline: 2px solid ${tokens.color.accent};
+    outline-offset: -2px;
+  }
+`;
+
+/**
+ * CardHd 의 타이틀 아래 살짝 작은 톤으로 "클릭하면 확대된다"는 힌트를 줍니다.
+ * UI 를 산만하게 만들지 않기 위해 기본 색상은 ink4 이고, 카드 타이틀과 같은 라인이 아니라
+ * 아래로 흘려 넣습니다.
+ */
+const HintText = styled.div`
+  margin-top: 4px;
+  color: ${tokens.color.ink4};
+  font-size: 11.5px;
+  line-height: 1.5;
+`;
+
+/**
  * 플랫폼별 뱃지 색상.
- * - 쿠팡(빨강 계열), 네이버(초록 계열), 무신사(흑백 계열)로 쇼핑몰의 브랜드 이미지를
+ * - 쿠팡(빨강 계열), 네이버(초록 계열)로 쇼핑몰의 브랜드 이미지를
  *   살짝 암시해 "이게 어느 몰 캡쳐였더라"를 색으로도 구분할 수 있게 합니다.
  * - 다만 브랜드 로고의 정확한 색을 그대로 쓰면 상표권·톤 조화 문제가 있어,
  *   서비스 팔레트와 어울리도록 톤을 낮춰 톤인톤으로 맞췄습니다.
@@ -54,9 +87,6 @@ const Thumb = styled.div`
 const PLATFORM_BADGE_STYLES: Record<Platform, { bg: string; fg: string }> = {
   coupang: { bg: "#FEE2E2", fg: "#B91C1C" },
   naver: { bg: "#DCFCE7", fg: "#166534" },
-  musinsa: { bg: "#1F2937", fg: "#F9FAFB" },
-  auction: { bg: "#FEF08A", fg: "#166534" }, // 옥션 느낌의 노란색
-  temu: { bg: "#FCE7F3", fg: "#15803D" }, // 테무 느낌의 색
 };
 
 const PlatformBadge = styled.span<{ $platform: Platform }>`
@@ -71,6 +101,8 @@ const PlatformBadge = styled.span<{ $platform: Platform }>`
   font-weight: 700;
   letter-spacing: 0.01em;
   pointer-events: none;
+  /* 확대 트리거 버튼 위에 얹혀야 하므로 z-index 를 명시합니다. */
+  z-index: 2;
   /* 썸네일 이미지가 뒤에 깔려도 뱃지가 묻히지 않도록 살짝 그림자를 둡니다. */
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
 `;
@@ -90,6 +122,8 @@ const Remove = styled.button`
   cursor: pointer;
   font-size: 12px;
   transition: background ${tokens.motion.fast};
+  /* ThumbOpenButton 위에 올라가 삭제 버튼 클릭이 확대 동작에 가려지지 않게 합니다. */
+  z-index: 2;
 
   &:hover {
     background: rgba(11, 18, 32, 0.95);
@@ -164,10 +198,21 @@ export const UploadedGrid: React.FC<{
     return dups;
   }, [images]);
 
+  /**
+   * 라이트박스 상태: 어떤 이미지의 id 로 열려 있는지. null 이면 닫힘.
+   * images 배열에서 id 로 찾아 src/alt 를 넘기기 때문에, 열린 상태에서 해당 이미지가
+   * 목록에서 제거되면(예: 삭제) 자연스럽게 아무것도 렌더하지 않게 됩니다.
+   */
+  const [zoomedId, setZoomedId] = useState<string | null>(null);
+  const zoomedImage = zoomedId
+    ? images.find((image) => image.id === zoomedId)
+    : undefined;
+
   return (
     <Card>
       <CardHd>
         <CardTitle>업로드한 이미지 ({images.length})</CardTitle>
+        <HintText>썸네일을 클릭하면 이미지가 확대됩니다.</HintText>
       </CardHd>
       <CardBd>
         <Grid>
@@ -184,8 +229,27 @@ export const UploadedGrid: React.FC<{
                   <PlatformBadge $platform={image.platform}>
                     {PLATFORM_LABELS[image.platform]}
                   </PlatformBadge>
+                  {/*
+                    투명한 확대 트리거. 썸네일 전체를 덮지만 Remove 버튼은 z-index 가
+                    더 높아 그대로 눌립니다. 썸네일이 아직 준비되지 않은 placeholder
+                    상태에서는 확대할 이미지가 없으니 렌더하지 않습니다.
+                  */}
+                  {image.thumbUrl && (
+                    <ThumbOpenButton
+                      type="button"
+                      aria-label={`${image.fileName} 확대해서 보기`}
+                      onClick={() => setZoomedId(image.id)}
+                    />
+                  )}
                   {isDup && <DupOverlay />}
-                  <Remove type="button" onClick={() => onRemove(image.id)}>
+                  <Remove
+                    type="button"
+                    onClick={(event) => {
+                      // 트리거와 영역이 겹치므로 삭제 시 라이트박스가 같이 열리지 않도록 버블링을 막습니다.
+                      event.stopPropagation();
+                      onRemove(image.id);
+                    }}
+                  >
                     ×
                   </Remove>
                 </Thumb>
@@ -199,6 +263,12 @@ export const UploadedGrid: React.FC<{
           })}
         </Grid>
       </CardBd>
+      <ImageLightbox
+        isOpen={Boolean(zoomedImage?.thumbUrl)}
+        src={zoomedImage?.thumbUrl}
+        alt={zoomedImage?.fileName}
+        onClose={() => setZoomedId(null)}
+      />
     </Card>
   );
 };

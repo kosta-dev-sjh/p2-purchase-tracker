@@ -129,8 +129,12 @@ const Sub = styled.div`
 const Spark: React.FC<{ data: number[] }> = ({ data }) => {
   const chartData = data.map((value, index) => ({ index, value }));
 
+  // 2026-04-24: ResponsiveContainer 최초 렌더 시 부모 width 가 아직 측정되지 않아 Recharts 가
+  //   `width(-1) height(-1)` 경고를 쏟아내는 회귀가 있었습니다. grid cell 안에서 flex item 의
+  //   기본 `min-width: auto` 때문인데, wrap 에 `width: 100%; min-width: 0` 를 직접 박아
+  //   첫 프레임부터 0 이상의 측정값을 돌려주도록 고정합니다.
   return (
-    <div style={{ height: 32, marginTop: 10 }}>
+    <div style={{ width: "100%", minWidth: 0, height: 32, marginTop: 10 }}>
       <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
           <defs>
@@ -161,7 +165,7 @@ export const KpiStrip: React.FC<{ kpis: KpiItem[] }> = ({ kpis }) => (
         <LabelRow>
           {kpi.dotColor && <Dot $color={kpi.dotColor} />}
           <span>{kpi.label}</span>
-          {kpi.neuChip && <Chip tone="neu">{kpi.neuChip}</Chip>}
+          {kpi.neuChip && <Chip $tone="neu">{kpi.neuChip}</Chip>}
         </LabelRow>
         <Value
           className="tnum"
@@ -174,7 +178,7 @@ export const KpiStrip: React.FC<{ kpis: KpiItem[] }> = ({ kpis }) => (
         <MetaTail $pushDown={!kpi.primary}>
           {kpi.delta && (
             <MetaRow>
-              <Chip tone={kpi.delta.tone === "up" ? "up" : "down"}>
+              <Chip $tone={kpi.delta.tone === "up" ? "up" : "down"}>
                 {kpi.delta.tone === "up" ? "상승" : "하락"} {kpi.delta.text}
               </Chip>
             </MetaRow>

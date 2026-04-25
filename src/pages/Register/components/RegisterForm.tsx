@@ -10,6 +10,8 @@ import { FormField } from "../../../components/form/FormField";
 import { TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
 import { PasswordStrength } from "./PasswordStrength";
+import { registerAccount, signInWithGoogle } from "../../../lib/firebaseSync";
+import { ONBOARDING_SEEN_KEY } from "../../../constants/onboarding";
 
 const Agree = styled.label`
   display: flex;
@@ -41,23 +43,91 @@ const PasswordInput = styled(TextInput)`
   letter-spacing: 0.08em;
 `;
 
+const Divider = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: ${tokens.color.ink4};
+  font-size: 12px;
+
+  &::before,
+  &::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: ${tokens.color.line2};
+  }
+`;
+
+const GoogleMark = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+    <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.5 3.9-5.4 3.9-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.6 3.6 14.6 2.8 12 2.8 6.9 2.8 2.8 7 2.8 12s4.1 9.2 9.2 9.2c5.3 0 8.8-3.7 8.8-8.9 0-.6-.1-1.1-.2-1.6H12z" />
+    <path fill="#34A853" d="M2.8 12c0 5 4.1 9.2 9.2 9.2 2.5 0 4.6-.8 6.2-2.2l-3-2.4c-.8.6-1.9 1-3.2 1-3.2 0-5.9-2.2-6.8-5.2H2.8z" />
+    <path fill="#4A90E2" d="M18.2 19c1.8-1.7 2.6-4.1 2.6-6.7 0-.6-.1-1.1-.2-1.6H12v3.9h5.4c-.2 1-.8 2.4-2.2 3.4l3 2.4z" />
+    <path fill="#FBBC05" d="M5.2 12c0-.8.1-1.5.4-2.2L2.6 7.4C1.9 8.8 1.5 10.4 1.5 12s.4 3.2 1.1 4.6l3-2.4c-.2-.7-.4-1.4-.4-2.2z" />
+  </svg>
+);
+
 export const RegisterForm: React.FC = () => {
   const navigate = useNavigate();
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <form
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-        navigate("/");
+        setError(null);
+        if (!name.trim()) {
+          setError("이름을 입력해 주세요.");
+          return;
+        }
+        if (password.length < 8) {
+          setError("비밀번호는 8자 이상이어야 해요.");
+          return;
+        }
+        setSubmitting(true);
+        try {
+          try {
+            localStorage.removeItem(ONBOARDING_SEEN_KEY);
+          } catch {
+            // ignore
+          }
+          await registerAccount({
+            name: name.trim(),
+            email: email.trim(),
+            password,
+          });
+          navigate("/", { state: { showTutorial: true } });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "회원가입에 실패했어요.";
+          setError(message);
+        } finally {
+          setSubmitting(false);
+        }
       }}
     >
       <div style={{ display: "grid", gap: 14 }}>
         <FormField label="이름">
-          <TextInput placeholder="홍길동" autoComplete="name" />
+          <TextInput
+            placeholder="홍길동"
+            autoComplete="name"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
         </FormField>
         <FormField label="이메일">
-          <TextInput type="email" placeholder="you@example.com" autoComplete="email" />
+          <TextInput
+            type="email"
+            placeholder="you@example.com"
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+          />
         </FormField>
         <FormField label="비밀번호" helpText="8자 이상, 숫자를 포함해 주세요.">
           <PasswordInput
@@ -77,10 +147,43 @@ export const RegisterForm: React.FC = () => {
           <Link to="/register">개인정보 처리방침</Link>에 동의합니다. (필수)
         </span>
       </Agree>
-      <Button variant="primary" size="lg" block type="submit">
+      {error && (
+        <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
+      <Button variant="primary" size="lg" block type="submit" disabled={submitting}>
         계정 만들기
+      </Button>
+      <Divider>또는</Divider>
+      <Button
+        variant="secondary"
+        size="lg"
+        block
+        type="button"
+        icon={<GoogleMark />}
+        disabled={submitting}
+        onClick={async () => {
+          setError(null);
+          setSubmitting(true);
+          try {
+            try {
+              localStorage.removeItem(ONBOARDING_SEEN_KEY);
+            } catch {
+              // ignore
+            }
+            await signInWithGoogle();
+            navigate("/", { state: { showTutorial: true } });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Google 회원가입에 실패했어요.";
+            setError(message);
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        Google로 시작하기
       </Button>
     </form>
   );
 };
-

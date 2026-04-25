@@ -18,8 +18,8 @@ import { media } from "../../tokens/breakpoints";
 import { ImageList } from "./components/ImageList";
 import { ImagePreview } from "./components/ImagePreview";
 import { EditForm } from "./components/EditForm";
+import { AddImagesModal } from "./components/AddImagesModal";
 import {
-  ocrEditMockData,
   type OcrImageItem,
   type OcrOrder,
 } from "./data";
@@ -32,15 +32,31 @@ import { findMatches } from "../../utils/matchTransaction";
 import { checkDuplicates, autoResolveDuplicates, type SkippedItem, type MergeAction } from "../../utils/duplicateCheck";
 import { combinePatches, planEnrichment } from "../../utils/mergeEnrichment";
 import { SaveResultModal } from "../../components/modal/SaveResultModal";
-import {
-  ProductTotalWarningModal,
-  type ProductTotalWarningEntry,
-} from "../../components/modal/ProductTotalWarningModal";
-import { checkProductTotal } from "../../utils/productTotalCheck";
 import type {
   TxCategory,
   TxRow,
 } from "../Transactions/components/TransactionTable";
+
+/**
+ * 주문의 "상품 합계"를 계산합니다. totalAmount의 단일 공급원이자,
+ * OCR 편집 화면의 일관성 보장을 담당하는 함수입니다.
+ *
+ * 정책 배경:
+ *   기존에는 totalAmount와 상품 합계를 별개로 관리해서, "상품합계 > 총 금액"이면 저장을
+ *   막고 "상품합계 < 총 금액"이면 사용자에게 "이대로 등록(partial)"을 확인받는 경고 모달이
+ *   붙어 있었습니다. 쿠팡 파서 개선으로 결제 섹션(총 상품가격/할인/총 결제금액)을 상품으로
+ *   오인식하던 문제가 사라졌고, 파서가 수량(quantity)까지 뽑기 시작했기 때문에 이제
+ *   totalAmount는 "입력값"이 아니라 "파생값"으로 둘 수 있게 됐습니다. 사용자가 상품을
+ *   추가·삭제·수정하면 곧바로 totalAmount가 재계산되고, 경고 모달도 구조적으로 사라집니다.
+ *
+ *   quantity가 없는 상품(수동 추가 등)은 1개로 취급해 "가격 × 1"로 합산합니다.
+ */
+function sumProductTotal(products: OcrOrder["products"]): number {
+  return products.reduce(
+    (sum, product) => sum + (Number(product.price) || 0) * (product.quantity ?? 1),
+    0,
+  );
+}
 
 const Body = styled.div`
   display: grid;
@@ -82,7 +98,6 @@ const Footer = styled.div`
 function buildCandidateFromOrder(
   image: OcrImageItem,
   order: OcrOrder,
-  opts?: { itemsCoverage?: "partial" | "full" }
 ): TxRow {
   const categories: TxCategory[] = ["etc"];
   const title = order.products[0]?.name ?? "OCR 거래";
@@ -111,9 +126,8 @@ function buildCandidateFromOrder(
       // 편집 페이지로 이동시키지 않고 이미지만 보여 주는 쪽으로 단순화하면서 추가된 필드로,
       // mock 데이터에서는 빈 문자열이 들어갈 수 있고 그럴 때 모달은 플레이스홀더로 떨어집니다.
       sourceImageUrl: image.thumbUrl,
-      // "상품합계 < 총 금액"으로 사용자가 "이대로 등록"을 선택했을 때만 partial 플래그가 붙습니다.
-      // 기본값(없음)은 "full"과 동치로 취급해 화면에서는 아무 힌트도 표시하지 않습니다.
-      ...(opts?.itemsCoverage ? { itemsCoverage: opts.itemsCoverage } : {}),
+      // totalAmount를 상품 합계로 강제 동기화하면서, "상품 일부만 입력된" 상태가 구조적으로
+      // 발생하지 않게 됐기 때문에 itemsCoverage 플래그는 OCR 경로에서 더 이상 붙지 않습니다.
     },
   };
 }
@@ -125,7 +139,6 @@ function buildCandidateFromOrder(
  */
 function buildCandidatesFromImages(
   images: OcrImageItem[],
-  partialOrderIds?: Set<string>
 ): Array<{
   image: OcrImageItem;
   order: OcrOrder;
@@ -135,9 +148,7 @@ function buildCandidatesFromImages(
     image.orders.map((order) => ({
       image,
       order,
-      candidate: buildCandidateFromOrder(image, order, {
-        itemsCoverage: partialOrderIds?.has(order.id) ? "partial" : undefined,
-      }),
+      candidate: buildCandidateFromOrder(image, order),
     }))
   );
 }
@@ -176,10 +187,10 @@ export const OcrEditPage: React.FC = () => {
   const allRows = useTransactionsStore();
   const storeImages = useOcrStore();
 
-  // 초기 시드는 ocrStore에서 가져오고, 없으면 mock 데이터를 사용해 개발/테스트 시 화면이 깨지지 않게 합니다.
-  const [images, setImages] = useState<OcrImageItem[]>(
-    storeImages.length > 0 ? storeImages : ocrEditMockData.images
-  );
+  // 초기 시드는 오직 ocrStore에서 가져옵니다. 스토어가 비어 있으면 이 페이지에
+  // 보여 줄 게 아예 없는 상태이므로, 이전의 mock 폴백을 없애고 빈 상태 UI를 유지합니다.
+  // (사용자 플로우: OcrUpload에서 분석을 돌리면 ocrStore.setImages로 시드가 채워집니다.)
+  const [images, setImages] = useState<OcrImageItem[]>(storeImages);
   const [selectedId, setSelectedId] = useState<string>(images[0]?.id ?? "");
   const selected = images.find((image) => image.id === selectedId);
 
@@ -205,11 +216,19 @@ export const OcrEditPage: React.FC = () => {
   } | null>(null);
 
   /**
-   * 주문 필드(주문일자·상태 태그·전체 금액) 변경을 이미지 상태에 반영합니다.
+   * "+ 이미지 추가" 모달 오픈 상태. 과거에는 OcrUpload 로 navigate 해 append 모드로
+   * 재분석을 돌리고 돌아왔지만, 편집 도중 페이지가 갈아엎히는 UX 가 별로라 모달 인라인으로 바꿨습니다.
+   */
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+
+  /**
+   * 주문 필드(주문일자·상태 태그) 변경을 이미지 상태에 반영합니다.
+   * totalAmount는 더 이상 사용자가 직접 수정하지 않고 handleProductsChange에서
+   * 상품 합계로 자동 동기화되므로 이 patch 타입에서는 제외했습니다.
    */
   const handleOrderPatch = (
     orderId: string,
-    patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag" | "totalAmount">>
+    patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>
   ) => {
     setImages((prev) =>
       prev.map((image) => {
@@ -226,8 +245,15 @@ export const OcrEditPage: React.FC = () => {
 
   /**
    * ProductTable에서 상품 추가·수정·삭제 시 images 상태에 반영합니다.
-   * 이 핸들러가 없으면 ProductTable의 변경이 로컬 state에만 머물러
-   * 저장 시 buildCandidatesFromImages가 원본 products를 읽어 변경사항이 날아갑니다.
+   *
+   * 정책: totalAmount는 "상품 합계의 파생값"이므로, 상품이 바뀔 때마다 여기서
+   *       `sumProductTotal(products)`로 함께 갱신합니다. 이렇게 두면:
+   *         - OCR 단계에서 총액을 못 뽑아낸 캡쳐라도 상품만 있으면 총액이 자동으로 계산되고,
+   *         - 사용자가 상품을 추가/삭제/가격 수정할 때마다 카드 상단의 "전체 거래금액"이
+   *           즉시 반영돼 상품 합계 ≠ 총액 상태가 구조적으로 발생하지 않습니다.
+   *
+   * 참고: 이 핸들러가 없으면 ProductTable의 변경이 로컬 state에만 머물러
+   *       저장 시 buildCandidatesFromImages가 원본 products를 읽어 변경사항이 날아갑니다.
    */
   const handleProductsChange = (orderId: string, products: OcrOrder["products"]) => {
     setImages((prev) =>
@@ -236,7 +262,9 @@ export const OcrEditPage: React.FC = () => {
         return {
           ...image,
           orders: image.orders.map((order) =>
-            order.id === orderId ? { ...order, products } : order
+            order.id === orderId
+              ? { ...order, products, totalAmount: sumProductTotal(products) }
+              : order
           ),
         };
       })
@@ -375,19 +403,6 @@ export const OcrEditPage: React.FC = () => {
     });
   };
 
-  /**
-   * 상품 합계 경고 모달 상태.
-   * - mode="exceeds"는 블로킹. 어느 주문 하나라도 상품합계가 총 금액을 초과하면 전체 저장이
-   *   중단됩니다. 잘못 입력된 OCR 결과를 그대로 가계부에 흘려 보내지 않도록 한 것입니다.
-   * - mode="under"는 경고. pendingPartialOrderIds를 함께 담아 "이대로 등록"이면 해당 주문들에
-   *   itemsCoverage:"partial" 플래그를 붙여 performSaveFlow를 다시 돌립니다.
-   */
-  const [totalWarning, setTotalWarning] = useState<{
-    mode: "exceeds" | "under";
-    entries: ProductTotalWarningEntry[];
-    pendingPartialOrderIds?: Set<string>;
-  } | null>(null);
-
   const handleSave = () => {
     // 저장은 "현재 보고 있는 이미지"가 아니라 업로드해 둔 이미지 전체가 대상입니다.
     if (images.length === 0) return;
@@ -399,62 +414,21 @@ export const OcrEditPage: React.FC = () => {
       return;
     }
 
-    // ── 선행: 상품 합계 vs 총 금액 일치 검증 ──────────────────────
-    // 수동 입력과 달리 OCR은 배치라 한 번의 확인으로 여러 주문의 상태를 모아 보여 줍니다.
-    // 하나라도 exceeds가 있으면 전체 저장을 막고, under만 있으면 "이대로 등록" 선택지를 띄웁니다.
-    const exceedsEntries: ProductTotalWarningEntry[] = [];
-    const underEntries: ProductTotalWarningEntry[] = [];
-    const underOrderIds = new Set<string>();
-    for (const image of images) {
-      for (let orderIdx = 0; orderIdx < image.orders.length; orderIdx += 1) {
-        const order = image.orders[orderIdx];
-        if (order.products.length === 0) continue;
-        const check = checkProductTotal({
-          totalAmount: order.totalAmount,
-          products: order.products,
-        });
-        if (check.status === "exceeds") {
-          exceedsEntries.push({
-            label: `${image.fileName} · 주문 ${orderIdx + 1}`,
-            totalAmount: order.totalAmount,
-            productsSum: check.productsSum,
-            diff: check.diff,
-          });
-        } else if (check.status === "under") {
-          underEntries.push({
-            label: `${image.fileName} · 주문 ${orderIdx + 1}`,
-            totalAmount: order.totalAmount,
-            productsSum: check.productsSum,
-            diff: check.diff,
-          });
-          underOrderIds.add(order.id);
-        }
-      }
-    }
-    if (exceedsEntries.length > 0) {
-      // exceeds는 블로킹 — under 건이 함께 있어도 잘못된 입력을 먼저 교정해 달라는 메시지만 띄웁니다.
-      setTotalWarning({ mode: "exceeds", entries: exceedsEntries });
-      return;
-    }
-    if (underEntries.length > 0) {
-      setTotalWarning({
-        mode: "under",
-        entries: underEntries,
-        pendingPartialOrderIds: underOrderIds,
-      });
-      return;
-    }
+    // totalAmount가 상품 합계의 파생값으로 바뀌면서 "상품합계 ≠ 총액" 상태가
+    // 구조적으로 발생하지 않게 됐기 때문에, 기존 ProductTotalWarningModal 게이트는 제거했습니다.
+    // validateBeforeSave가 "totalAmount > 0"을 이미 체크하므로 상품이 하나도 없거나
+    // 전부 0원인 주문은 여기에 도달하지 않습니다.
 
     performSaveFlow();
   };
 
   /**
-   * 상품 합계 검사를 통과했거나 사용자가 under 경고를 승인한 뒤 실제 저장 흐름을 돌립니다.
-   * partialOrderIds에 담긴 주문 id는 결과 TxRow의 detail.itemsCoverage="partial"이 붙어
-   * 저장 이후 상세 뷰에서 "상품 내역이 일부만 입력됨" 힌트로 이어집니다.
+   * 필수값 검증을 통과한 뒤 실제 저장 흐름을 돌립니다.
+   * totalAmount가 products의 파생값으로 동기화되면서 "부분 저장(itemsCoverage)"
+   * 분기도 함께 사라졌습니다.
    */
-  const performSaveFlow = (partialOrderIds?: Set<string>) => {
-    const flat = buildCandidatesFromImages(images, partialOrderIds);
+  const performSaveFlow = () => {
+    const flat = buildCandidatesFromImages(images);
     const allCandidates = flat.map((f) => f.candidate);
 
     // ── 0단계: 침묵 자동 보강(silent auto-fill) ─────────────────
@@ -524,7 +498,8 @@ export const OcrEditPage: React.FC = () => {
     const changedItemsToSave = resolved.toSave.filter((r) => !freshIds.has(r.id));
 
     if (changedItemsToSave.length > 0) {
-      transactionsStore.addMany(changedItemsToSave);
+      // OCR 파생 거래는 카테고리가 비거나 etc로 들어오므로 자동추정 경계를 태운다.
+      transactionsStore.addFromImport(changedItemsToSave);
     }
 
     proceedSave(freshToMatch, resolved.skipped, resolved.toMerge, flat);
@@ -562,7 +537,7 @@ export const OcrEditPage: React.FC = () => {
     const autoSaved = canAutoSave.map((entry) => entry.candidate);
 
     if (autoSaved.length > 0) {
-      transactionsStore.addMany(autoSaved);
+      transactionsStore.addFromImport(autoSaved);
     }
 
     if (needsModal.length === 0) {
@@ -620,7 +595,8 @@ export const OcrEditPage: React.FC = () => {
   const handleSaveAsNew = () => {
     const [current, ...rest] = matchQueue;
     if (!current) return;
-    transactionsStore.addOne(current.candidate);
+    // OCR 경로에서 새로 저장하는 한 건도 자동추정 대상.
+    transactionsStore.addFromImport([current.candidate]);
     advanceQueue(rest, current.candidate);
   };
 
@@ -644,10 +620,7 @@ export const OcrEditPage: React.FC = () => {
           images={images}
           selectedId={selectedId}
           onSelect={setSelectedId}
-          onAdd={() => {
-            ocrStore.setImages(images);
-            navigate("/ocr-upload", { state: { append: true } });
-          }}
+          onAdd={() => setIsAddModalOpen(true)}
           onDelete={handleDeleteImage}
         />
         <ImagePreview image={selected} />
@@ -725,19 +698,28 @@ export const OcrEditPage: React.FC = () => {
           </div>
         </Modal>
       )}
-      {totalWarning && (
-        <ProductTotalWarningModal
-          isOpen
-          mode={totalWarning.mode}
-          entries={totalWarning.entries}
-          onConfirm={() => {
-            const pendingIds = totalWarning.pendingPartialOrderIds;
-            setTotalWarning(null);
-            if (pendingIds) performSaveFlow(pendingIds);
-          }}
-          onCancel={() => setTotalWarning(null)}
-        />
-      )}
+      <AddImagesModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        // 편집 화면에 이미 들어와 있는 이미지 개수를 함께 넘겨, 모달 내부의 업로드 상한이
+        // "이번 배치"가 아니라 "OCR 결과 전체 기준"으로 잡히도록 합니다. 기존에는 모달이
+        // 로컬 버퍼 5장까지 받아 버려, 이미 5장이 있는 상태에서도 5장을 더 올릴 수 있어
+        // MAX_IMAGES 상한이 실질적으로 깨지는 문제가 있었습니다.
+        existingCount={images.length}
+        onComplete={(newImages) => {
+          // 분석 결과를 기존 images 뒤에 append. 방금 들어온 첫 이미지로 selection 을 옮겨
+          // "내가 방금 추가한 이미지가 어느 건지" 바로 보이게 합니다.
+          const next = [...images, ...newImages];
+          setImages(next);
+          if (newImages[0]) {
+            setSelectedId(newImages[0].id);
+          }
+          // 다음에 저장 버튼을 눌렀을 때 ocrStore 에서 원본이 꺼내지는 일이 없도록
+          // 스토어에도 최신 스냅샷을 반영해 둡니다.
+          ocrStore.setImages(next);
+          setIsAddModalOpen(false);
+        }}
+      />
       {confirmState && (
         <Modal
           isOpen

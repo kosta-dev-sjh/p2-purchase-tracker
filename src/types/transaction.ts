@@ -12,7 +12,7 @@ export type StatusTag =
   | "recurring"
   | "sub";
 
-export type PlatformId = "coupang" | "naver" | "musinsa" | "other";
+export type PlatformId = "coupang" | "naver" | "other";
 
 export type InputSource = "ocr" | "manual";
 
@@ -37,4 +37,3 @@ export interface Transaction {
   memo?: string;
   products?: Product[];
 }
-

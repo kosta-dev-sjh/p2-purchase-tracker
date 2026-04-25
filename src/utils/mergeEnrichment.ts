@@ -70,9 +70,6 @@ function sameCategorySet(a: TxCategory[], b: TxCategory[]): boolean {
 const PLATFORM_LABEL_MAP: Record<TxPlatform, string> = {
   coupang: "쿠팡",
   naver: "네이버쇼핑",
-  musinsa: "무신사",
-  auction: "옥션",
-  temu: "테무",
   unspecified: "미지정",
 };
 

@@ -10,6 +10,7 @@ import { TopHeader } from "./TopHeader";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { useProfile } from "../../stores/profileStore";
+import { logOut } from "../../lib/firebaseSync";
 
 export type NavKey = "home" | "upload" | "transactions" | "analysis" | "settings";
 
@@ -301,6 +302,11 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
   const profile = useProfile();
   const initial = profile.name.trim().charAt(0) || "?";
 
+  const handleLogout = async () => {
+    await logOut();
+    navigate("/login", { replace: true });
+  };
+
   return (
     <Shell>
       <SidebarWrapper>
@@ -328,7 +334,7 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
               <MobileAvatar $bg={profile.avatarDataUrl ? `url(${profile.avatarDataUrl})` : undefined}>
                 {!profile.avatarDataUrl && initial}
               </MobileAvatar>
-              <MobileLogout type="button" onClick={() => navigate("/login")}>
+              <MobileLogout type="button" onClick={() => void handleLogout()}>
                 로그아웃
               </MobileLogout>
             </MobileMeta>

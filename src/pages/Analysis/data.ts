@@ -96,9 +96,6 @@ function buildPlatform(rows: TxRow[]): {
   const totals: Record<TxPlatform, { value: number; count: number }> = {
     coupang: { value: 0, count: 0 },
     naver: { value: 0, count: 0 },
-    musinsa: { value: 0, count: 0 },
-    auction: { value: 0, count: 0 },
-    temu: { value: 0, count: 0 },
     // "미지정"도 하나의 막대로 구분해 보여줍니다. 값이 0이면 아래 filter에서 빠지므로
     // 실제 데이터가 없으면 차트에 등장하지 않습니다.
     unspecified: { value: 0, count: 0 },
@@ -112,7 +109,6 @@ function buildPlatform(rows: TxRow[]): {
   const entries: Array<{ key: TxPlatform; label: string; color: string }> = [
     { key: "coupang", label: PLATFORM_LABELS.coupang, color: tokens.color.cat3 },
     { key: "naver", label: PLATFORM_LABELS.naver, color: tokens.color.cat2 },
-    { key: "musinsa", label: PLATFORM_LABELS.musinsa, color: tokens.color.cat1 },
     // "미지정" 버킷은 중립 회색으로 — 브랜드 톤과 충돌하지 않고 "플랫폼 없음"을 시각적으로도 암시합니다.
     { key: "unspecified", label: PLATFORM_LABELS.unspecified, color: "#9CA3AF" },
   ];

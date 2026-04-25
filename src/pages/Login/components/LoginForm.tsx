@@ -9,14 +9,7 @@ import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
 import { TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
-// TODO(auth): src/mocks/auth.ts 제거 시 아래 import 와 onSubmit 내 분기 통째로 교체
-import {
-  ONBOARDING_SEEN_KEY,
-  isNewAccountCredential,
-  isSeededDemoCredential,
-} from "../../../mocks/auth";
-import { transactionsStore } from "../../../stores/transactionsStore";
-import { profileStore } from "../../../stores/profileStore";
+import { signIn, signInWithGoogle } from "../../../lib/firebaseSync";
 
 const Row = styled.div`
   display: flex;
@@ -53,58 +46,54 @@ const PasswordInput = styled(TextInput)`
   letter-spacing: 0.08em;
 `;
 
+const Divider = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 14px 0;
+  color: ${tokens.color.ink4};
+  font-size: 12px;
+
+  &::before,
+  &::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: ${tokens.color.line2};
+  }
+`;
+
+const GoogleMark = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden>
+    <path fill="#EA4335" d="M12 10.2v3.9h5.4c-.2 1.3-1.5 3.9-5.4 3.9-3.2 0-5.9-2.7-5.9-6s2.7-6 5.9-6c1.8 0 3 .8 3.7 1.5l2.5-2.4C16.6 3.6 14.6 2.8 12 2.8 6.9 2.8 2.8 7 2.8 12s4.1 9.2 9.2 9.2c5.3 0 8.8-3.7 8.8-8.9 0-.6-.1-1.1-.2-1.6H12z" />
+    <path fill="#34A853" d="M2.8 12c0 5 4.1 9.2 9.2 9.2 2.5 0 4.6-.8 6.2-2.2l-3-2.4c-.8.6-1.9 1-3.2 1-3.2 0-5.9-2.2-6.8-5.2H2.8z" />
+    <path fill="#4A90E2" d="M18.2 19c1.8-1.7 2.6-4.1 2.6-6.7 0-.6-.1-1.1-.2-1.6H12v3.9h5.4c-.2 1-.8 2.4-2.2 3.4l3 2.4z" />
+    <path fill="#FBBC05" d="M5.2 12c0-.8.1-1.5.4-2.2L2.6 7.4C1.9 8.8 1.5 10.4 1.5 12s.4 3.2 1.1 4.6l3-2.4c-.2-.7-.4-1.4-.4-2.2z" />
+  </svg>
+);
+
 export const LoginForm: React.FC = () => {
   const navigate = useNavigate();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <form
-      onSubmit={(event) => {
+      onSubmit={async (event) => {
         event.preventDefault();
-
-        // TODO(auth): src/mocks/auth.ts 제거 시 이 분기 통째로 실제 auth SDK 호출로 교체.
-        // 현재는 프런트엔드만 있는 MVP라서 아래 두 시나리오를 입력값으로 흉내 냅니다.
-        //   1) 1111@test.com / 1111 → "비어있는 신규 계정" (0건 + 튜토리얼 무조건 표시)
-        //   2) 그 외 이메일/비밀번호 모두 입력 → "데이터 있는 데모 계정" (시드 강제 복원)
-        //   3) 둘 다 비어있음 → 현재 세션 상태 그대로 유지
-        //
-        // 테스트 결정성(determinism)을 위해 "튜토리얼을 무조건 띄운다"는 신호는
-        // localStorage 플래그가 아니라 React Router navigation state로 Home에 직접 전달합니다.
-        // 이렇게 해야 여러 번 1111로 재로그인해도 항상 "0건 + 튜토리얼"이 뜨고,
-        // 다른 계정 로그인은 항상 "시드 로드"로 떨어집니다.
-        if (isNewAccountCredential(email, password)) {
-          // 신규 계정: 거래/프로필을 전부 초기화
-          transactionsStore.replaceAll([]);
-          profileStore.reset();
-          // 이메일만 입력값으로 덮어써서 헤더/설정에서 "1111" 계정인 게 자연스럽게 보이게 함
-          profileStore.save({ email });
-          // localStorage 플래그도 함께 제거해 두어, 혹시 forceOpen 전달이 유실되더라도
-          // WelcomeTutorial의 기본 자동 표시 로직이 백업으로 동작하게 합니다.
-          try {
-            localStorage.removeItem(ONBOARDING_SEEN_KEY);
-          } catch {
-            // localStorage 접근 불가 환경(예: 서버 렌더)은 무시
-          }
-          // 핵심: Home에 "이번 진입에서 튜토리얼 무조건 띄워"를 명시적으로 전달
-          navigate("/", { state: { showTutorial: true } });
-          return;
+        setError(null);
+        setSubmitting(true);
+        try {
+          await signIn(email.trim(), password);
+          navigate("/");
+        } catch (err) {
+          const message = err instanceof Error ? err.message : "로그인에 실패했어요.";
+          setError(message);
+        } finally {
+          setSubmitting(false);
         }
-        if (isSeededDemoCredential(email, password)) {
-          // 데이터 있는 데모 계정: 시드 거래를 강제로 복원해 "쌓여 있는 계정" 화면을 바로 보여줍니다.
-          // 이전 세션에 1111@test.com으로 거래를 비워둔 적이 있어도 이 경로로 다시 채워집니다.
-          transactionsStore.resetToSeed();
-          profileStore.reset();
-          profileStore.save({ email });
-          try {
-            // 데모 계정은 튜토리얼을 띄우지 않습니다. (신규 계정 전용 가이드라서)
-            localStorage.setItem(ONBOARDING_SEEN_KEY, "1");
-          } catch {
-            // localStorage 접근 불가 환경(예: 서버 렌더)은 무시
-          }
-        }
-
-        navigate("/");
       }}
     >
       <div style={{ display: "grid", gap: 14 }}>
@@ -133,8 +122,37 @@ export const LoginForm: React.FC = () => {
         </Remember>
         <ForgotLink to="/login">비밀번호를 잊으셨나요?</ForgotLink>
       </Row>
-      <Button variant="primary" size="lg" block type="submit">
+      {error && (
+        <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
+          {error}
+        </div>
+      )}
+      <Button variant="primary" size="lg" block type="submit" disabled={submitting}>
         로그인
+      </Button>
+      <Divider>또는</Divider>
+      <Button
+        variant="secondary"
+        size="lg"
+        block
+        type="button"
+        icon={<GoogleMark />}
+        disabled={submitting}
+        onClick={async () => {
+          setError(null);
+          setSubmitting(true);
+          try {
+            await signInWithGoogle();
+            navigate("/");
+          } catch (err) {
+            const message = err instanceof Error ? err.message : "Google 로그인에 실패했어요.";
+            setError(message);
+          } finally {
+            setSubmitting(false);
+          }
+        }}
+      >
+        Google로 계속하기
       </Button>
     </form>
   );

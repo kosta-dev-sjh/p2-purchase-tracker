@@ -501,7 +501,8 @@ export const CsvUploadPage: React.FC = () => {
     const resolved = autoResolveDuplicates(dupCheck, forceIncludeIds);
 
     if (resolved.toSave.length > 0) {
-      transactionsStore.addMany(resolved.toSave);
+      // CSV 경로: 가맹점명 기반 카테고리 자동추정을 저장 경계에서 태운다.
+      transactionsStore.addFromImport(resolved.toSave);
     }
     for (const action of resolved.toMerge) {
       transactionsStore.appendItemsToTransaction(action.existingId, action.newItems, "MANUAL");

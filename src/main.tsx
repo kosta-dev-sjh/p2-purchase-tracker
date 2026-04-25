@@ -5,8 +5,11 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { GlobalStyle } from "./styles/global";
+import { startFirebaseSync } from "./lib/firebaseSync";
 
 // 전역 스타일을 먼저 적용한 뒤 실제 앱 라우팅을 렌더링합니다.
+startFirebaseSync();
+
 createRoot(document.getElementById("root")!).render(
   <>
     <GlobalStyle />

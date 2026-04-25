@@ -11,6 +11,13 @@ node_modules
 dist
 dist-ssr
 *.local
+
+# OCR development artifacts — harnesses, caches, samples, reports.
+# Git 에 안 올라가는 "개발용 측정 자원". 제품 기능 아님.
+ocr-scripts/
+.ocr-raw-cache/
+.local-samples/
+ocr-*.txt
 # Local env files must stay out of git.
 .env
 .env.*

@@ -4,14 +4,30 @@
  *       최대 매수에 도달했을 때는 disabled 상태로 렌더해 상위 상태와 싱크를 맞춥니다.
  * 위치: src\pages\OcrUpload\components\UploadZone.tsx
  */
-import React, { useRef } from "react";
+import React, { useRef, useState } from "react";
 import styled, { css } from "styled-components";
 import { tokens } from "../../../styles/tokens";
 
-const Zone = styled.div<{ $disabled?: boolean }>`
+/**
+ * 이미지 드래그앤드랍 수용 MIME/확장자 화이트리스트.
+ * accept 속성과 일치시켜 파일 선택/드롭에서 동일 기준으로 필터링합니다.
+ */
+const ACCEPTED_IMAGE_MIME = ["image/png", "image/jpeg", "image/webp"];
+const ACCEPTED_IMAGE_EXT = [".png", ".jpg", ".jpeg", ".webp"];
+
+const isImageFile = (file: File): boolean => {
+  if (ACCEPTED_IMAGE_MIME.includes(file.type)) return true;
+  // 일부 브라우저/운영체제에서 file.type이 비어 오는 경우가 있어 확장자로도 한번 더 판정.
+  const lower = file.name.toLowerCase();
+  return ACCEPTED_IMAGE_EXT.some((ext) => lower.endsWith(ext));
+};
+
+const Zone = styled.div<{ $disabled?: boolean; $active?: boolean }>`
   padding: 40px 24px;
-  background: ${tokens.color.foot};
-  border: 1.5px dashed ${tokens.color.line};
+  background: ${({ $active }) =>
+    $active ? tokens.color.accentSubtle : tokens.color.foot};
+  border: 1.5px dashed
+    ${({ $active }) => ($active ? tokens.color.accent : tokens.color.line)};
   border-radius: ${tokens.radius.card};
   text-align: center;
   cursor: pointer;
@@ -82,6 +98,35 @@ const PlatformHint = styled.div`
   font-weight: 600;
 `;
 
+/**
+ * 쿠팡 캡쳐 전용 보조 안내.
+ *
+ * 2026-04-24: 쿠팡 주문 상세 화면은 스크롤 위치에 따라 "2026. 4. 22 주문" 같은 주문일자
+ * 줄이 화면에서 잘리는 경우가 많고, 그러면 OCR 파서가 날짜를 붙이지 못해 편집 화면에서
+ * 사용자가 수동으로 날짜를 다시 입력해야 합니다. 플랫폼을 쿠팡으로 고른 상태일 때만
+ * 이 팁을 노출해, 캡쳐 전에 주문일자 줄을 포함시키도록 유도합니다.
+ *
+ * PlatformHint 바로 아래에 붙여, "이 플랫폼 태그로 저장 + 이 플랫폼만의 캡쳐 주의사항"이
+ * 시각적으로 한 묶음으로 읽히도록 배치했습니다.
+ */
+const PlatformTip = styled.div`
+  margin: -8px auto 14px;
+  max-width: 420px;
+  padding: 8px 12px;
+  border: 1px dashed ${tokens.color.accentBorder};
+  border-radius: 10px;
+  background: ${tokens.color.foot};
+  color: ${tokens.color.ink2};
+  font-size: 11.5px;
+  line-height: 1.55;
+  text-align: left;
+
+  strong {
+    color: ${tokens.color.accentHover};
+    font-weight: 700;
+  }
+`;
+
 const PickButton = styled.button<{ $disabled?: boolean }>`
   padding: 8px 16px;
   border: none;
@@ -133,22 +178,108 @@ export const UploadZone: React.FC<{
   activePlatformLabel?: string;
   /** 최대 매수 도달 시 상위에서 true로 넘겨 클릭을 차단합니다. */
   disabled?: boolean;
+  /** 현재까지 업로드된 장수. 드롭 시 "남은 슬롯" 계산에 사용합니다. */
+  currentCount?: number;
   onPick: (files: File[]) => void;
-}> = ({ acceptedTypes, maxSize, maxCount, activePlatformLabel, disabled, onPick }) => {
+}> = ({
+  acceptedTypes,
+  maxSize,
+  maxCount,
+  activePlatformLabel,
+  disabled,
+  currentCount = 0,
+  onPick,
+}) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // 드래그 중인지 상태 — Zone 테두리/배경을 강조해 "여기에 놓으면 됩니다" 단서를 줍니다.
+  const [isDragging, setIsDragging] = useState(false);
+  // 드래그앤드랍 시 슬롯 초과·비이미지 같은 일회성 안내를 위한 로컬 경고.
+  const [dropNotice, setDropNotice] = useState<string | null>(null);
 
   const handleClick = () => {
     if (disabled) return;
     fileInputRef.current?.click();
   };
 
+  /**
+   * FileList → File[] 로 정규화하면서 다음을 한 번에 처리합니다.
+   *  - 이미지가 아닌 파일은 제외하고 notice로 남김
+   *  - 남은 슬롯(maxCount - currentCount) 만큼만 잘라 onPick에 전달
+   *  - 초과한 파일 수는 사용자에게 보이도록 notice로 남김
+   */
+  const normalizeAndPick = (rawFiles: File[]) => {
+    if (disabled) return;
+
+    const notices: string[] = [];
+
+    // 1) 이미지 MIME/확장자 필터
+    const imageFiles = rawFiles.filter(isImageFile);
+    const droppedNonImage = rawFiles.length - imageFiles.length;
+    if (droppedNonImage > 0) {
+      notices.push(`이미지가 아닌 파일 ${droppedNonImage}개는 제외됐어요`);
+    }
+    if (imageFiles.length === 0) {
+      if (notices.length > 0) setDropNotice(notices.join(" · "));
+      return;
+    }
+
+    // 2) 남은 슬롯만큼만 수용
+    const remainingSlots = Math.max(0, maxCount - currentCount);
+    const accepted = imageFiles.slice(0, remainingSlots);
+    const overflow = imageFiles.length - accepted.length;
+    if (overflow > 0) {
+      notices.push(`최대 ${maxCount}장까지만 올릴 수 있어요 (${overflow}장 제외)`);
+    }
+
+    if (accepted.length > 0) {
+      onPick(accepted);
+    }
+    setDropNotice(notices.length > 0 ? notices.join(" · ") : null);
+  };
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files.length > 0) {
-      onPick(Array.from(e.target.files));
+      normalizeAndPick(Array.from(e.target.files));
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     }
+  };
+
+  // ── 드래그앤드랍 핸들러 ────────────────────────────────────────
+  // preventDefault가 없으면 브라우저가 이미지를 새 탭으로 열어버리므로 dragover/drop 둘 다 차단.
+  const handleDragOver = (e: React.DragEvent) => {
+    if (disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!isDragging) setIsDragging(true);
+  };
+
+  const handleDragEnter = (e: React.DragEvent) => {
+    if (disabled) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // dragleave가 자식 요소 전환에도 발동하므로, currentTarget 바깥으로 나갔을 때만 해제.
+    const related = e.relatedTarget as Node | null;
+    if (!related || !e.currentTarget.contains(related)) {
+      setIsDragging(false);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    if (disabled) return;
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
+    normalizeAndPick(files);
   };
 
   return (
@@ -161,34 +292,64 @@ export const UploadZone: React.FC<{
         accept=".png,.jpg,.jpeg,.webp"
         onChange={handleFileChange}
       />
-      <Zone $disabled={disabled} onClick={handleClick}>
-        <IconBox>
-        <UpIcon />
-      </IconBox>
-      <Title>
-        {disabled
-          ? `이미 ${maxCount}장까지 올렸어요`
-          : "여러 장의 주문내역 캡처를 한 번에 업로드해 보세요"}
-      </Title>
-      <Sub>
-        {acceptedTypes} · 최대 {maxSize} · 한 번에 {maxCount}장까지 분석할 수 있어요
-      </Sub>
-      {activePlatformLabel && !disabled && (
-        <PlatformHint>
-          이번 업로드는 <strong>{activePlatformLabel}</strong> 태그로 저장돼요
-        </PlatformHint>
-      )}
-      <PickButton
-        type="button"
+      <Zone
         $disabled={disabled}
-        onClick={(event) => {
-          event.stopPropagation();
-          handleClick();
-        }}
+        $active={isDragging}
+        onClick={handleClick}
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
       >
-        {disabled ? "더 올리려면 기존 이미지를 먼저 지워주세요" : "파일 선택하기"}
-      </PickButton>
-    </Zone>
+        <IconBox>
+          <UpIcon />
+        </IconBox>
+        <Title>
+          {disabled
+            ? `이미 ${maxCount}장까지 올렸어요`
+            : isDragging
+              ? "여기에 놓으면 바로 업로드돼요"
+              : "여러 장의 주문내역 캡처를 한 번에 업로드해 보세요"}
+        </Title>
+        <Sub>
+          {acceptedTypes} · 최대 {maxSize} · 한 번에 {maxCount}장까지 분석할 수 있어요
+          <br />
+          파일을 끌어다 놓거나 아래 버튼으로 선택하세요.
+        </Sub>
+        {activePlatformLabel && !disabled && (
+          <PlatformHint>
+            이번 업로드는 <strong>{activePlatformLabel}</strong> 태그로 저장돼요
+          </PlatformHint>
+        )}
+        {activePlatformLabel === "쿠팡" && !disabled && (
+          <PlatformTip>
+            쿠팡은 <strong>주문일자</strong>가 화면에 보이게 캡쳐해 주세요. 주문 상세 위쪽의
+            <strong> "2026. 4. 22 주문"</strong> 같은 줄이 잘리면 날짜 인식이 빠질 수 있어요.
+          </PlatformTip>
+        )}
+        <PickButton
+          type="button"
+          $disabled={disabled}
+          onClick={(event) => {
+            event.stopPropagation();
+            handleClick();
+          }}
+        >
+          {disabled ? "더 올리려면 기존 이미지를 먼저 지워주세요" : "파일 선택하기"}
+        </PickButton>
+        {dropNotice && (
+          <div
+            style={{
+              marginTop: 10,
+              color: tokens.color.warn,
+              fontSize: 12,
+              lineHeight: 1.6,
+            }}
+          >
+            {dropNotice}
+          </div>
+        )}
+      </Zone>
     </>
   );
 };

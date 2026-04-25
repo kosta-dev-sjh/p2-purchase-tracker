@@ -19,7 +19,6 @@ import { getMonthOption } from "../../constants/months";
 import { useTransactionsStore } from "../../stores/transactionsStore";
 import { useAiInsightsStore } from "../../stores/aiInsightsStore";
 import { generateInsight } from "../../utils/aiService";
-// TODO(auth): 목업 로그인 분기를 걷어낼 때, 이 오버레이의 표시 조건도 실제 신규 가입 이벤트로 옮겨야 합니다.
 import { WelcomeTutorial } from "../../components/onboarding/WelcomeTutorial";
 
 const HeaderRight = styled.div`
@@ -170,4 +169,3 @@ export const HomePage: React.FC = () => {
     </AppShell>
   );
 };
-

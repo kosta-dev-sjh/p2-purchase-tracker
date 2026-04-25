@@ -5,9 +5,6 @@
 export const PLATFORM_LABELS = {
   coupang: "쿠팡",
   naver: "네이버쇼핑",
-  musinsa: "무신사",
-  auction: "옥션",
-  temu: "테무",
   // 플랫폼을 지정하지 않았거나 오프라인 결제처럼 플랫폼이 없는 거래의 라벨입니다.
   // 입력 폼의 "미지정" 선택지와 동일한 텍스트를 써서 사용자 멘탈 모델을 일치시킵니다.
   unspecified: "미지정",
@@ -22,9 +19,6 @@ export const PLATFORM_OPTIONS = [
   { key: "unspecified", label: "미지정" },
   { key: "coupang", label: "쿠팡" },
   { key: "naver", label: "네이버쇼핑" },
-  { key: "musinsa", label: "무신사" },
-  { key: "auction", label: "옥션" },
-  { key: "temu", label: "테무" },
 ] as const;
 
 export const STATUS_LABELS = {
@@ -70,4 +64,3 @@ export const DEFAULT_CATEGORY_KEY = "etc" as const;
  *   그래서 이 값을 넘기지 못하도록 수동 입력/OCR 편집 UI에서 체크박스를 비활성화합니다.
  */
 export const MAX_CATEGORIES_PER_TX = 3;
-

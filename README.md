@@ -7,7 +7,6 @@
 - AI 프로젝트 요약: `docs/AI_PROJECT_GUIDE.md`
 - 차기 구현 참고:
   - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
-  - `docs/collaboration/SpendTrack_MockAuth_Replacement.md`
 
 ## Requirements
 
@@ -29,6 +28,11 @@ npm run dev
 - Create `.env.local` manually on each machine when local env values are needed
 - Never commit API keys or service-account JSON files
 - Frontend code must not use `VITE_` secrets for direct third-party AI calls
+- Firebase client config only goes in `.env.local`
+- Gemini API key must be stored as a Firebase Functions secret: `GEMINI_API_KEY`
+- Local Functions emulator can be connected with:
+  - `VITE_FIREBASE_FUNCTIONS_EMULATOR_HOST`
+  - `VITE_FIREBASE_FUNCTIONS_EMULATOR_PORT`
 
 ## Branch workflow
 
@@ -50,7 +54,8 @@ See also: `CONTRIBUTING.md`
 
 - The app now uses `BrowserRouter`
 - Production hosting must rewrite unknown routes back to `index.html`
-- This fits EC2, Firebase Hosting, and Docker-based SPA deployment better than GitHub Pages hash routing
+- This fits Firebase Hosting-based SPA deployment better than GitHub Pages hash routing
+- Firebase Hosting / Functions deploy config lives in `firebase.json`
 
 ## Current stack
 
@@ -64,6 +69,7 @@ See also: `CONTRIBUTING.md`
 - SheetJS `xlsx`
 - ESLint
 - rollup-plugin-visualizer
+- Firebase Auth / Firestore / Functions
 
 ## State management
 
