@@ -11,13 +11,12 @@ import { tokens } from "../../../styles/tokens";
 import { formatKRW } from "../../../utils/format";
 import type { TxRow } from "./TransactionTable";
 import {
-  CATEGORY_LABELS,
   PLATFORM_LABELS,
   SOURCE_LABELS,
   STATUS_LABELS,
   TYPE_LABELS,
 } from "../../../constants/labels";
-import { useCategoryColorMap } from "../../../stores/categoriesStore";
+import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
 
 const HeaderRow = styled.div`
   display: flex;
@@ -258,8 +257,11 @@ const DetailPanelInner = ({
   onDelete,
   onOpenSource,
 }: DetailPanelProps) => {
-  // 카테고리 색은 설정 화면에서 사용자가 바꿀 수 있으므로 스토어에서 구독해 실시간으로 반영합니다.
+  // 카테고리 색상과 이름은 설정 화면에서 변경할 수 있으므로 스토어에서 구독해 실시간으로 반영합니다.
   const categoryColorMap = useCategoryColorMap();
+  const storeCategories = useCategoriesStore();
+  const getCategoryName = (id: string): string =>
+    storeCategories.find((c) => c.id === id)?.name ?? id;
   // 메모는 빈 문자열/공백만 있는 경우 섹션을 숨겨, 불필요한 빈 박스가 패널을 지저분하게 만들지 않게 합니다.
   const memoText = row.memo?.trim() ?? "";
   const hasMemo = memoText.length > 0;
@@ -297,7 +299,7 @@ const DetailPanelInner = ({
             <CategoryList>
               {row.categories.map((cat) => (
                 <CategoryChip key={cat} $color={categoryColorMap[cat]}>
-                  {CATEGORY_LABELS[cat]}
+                  {getCategoryName(cat)}
                 </CategoryChip>
               ))}
             </CategoryList>

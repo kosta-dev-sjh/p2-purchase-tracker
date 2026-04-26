@@ -110,6 +110,8 @@ export interface SaveResultModalProps {
   skipped: SkippedItem[];
   /** "거래내역 보기" 클릭 시 호출 */
   onConfirm: () => void;
+  /** X 버튼으로 닫을 때 호출. 미전달 시 onConfirm 사용 */
+  onClose?: () => void;
 }
 
 const MAX_LIST = 6;
@@ -121,6 +123,7 @@ export const SaveResultModal: React.FC<SaveResultModalProps> = ({
   allRows,
   skipped,
   onConfirm,
+  onClose,
 }) => {
   const totalAdded = savedRows.length + mergedActions.length;
 
@@ -131,7 +134,7 @@ export const SaveResultModal: React.FC<SaveResultModalProps> = ({
       : "추가된 내역이 없어요";
 
   return (
-    <Modal isOpen={isOpen} onClose={onConfirm} title={title}>
+    <Modal isOpen={isOpen} onClose={onClose ?? onConfirm} title={title}>
       {/* ── 새로 저장된 거래 ── */}
       {savedRows.length > 0 && (
         <Section>

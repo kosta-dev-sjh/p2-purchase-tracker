@@ -164,7 +164,7 @@ export const TransactionsPage: React.FC = () => {
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "income">("all");
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
-  const [category, setCategory] = useState<"all" | "living" | "fashion" | "digital" | "food" | "etc">("all");
+  const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
@@ -264,7 +264,7 @@ export const TransactionsPage: React.FC = () => {
   );
 
   const handleCategoryChange = useCallback(
-    (nextCategory: "all" | "living" | "fashion" | "digital" | "food" | "etc") => {
+    (nextCategory: "all" | string) => {
       setCategory(nextCategory);
       resetVisibleCount();
     },
@@ -391,8 +391,20 @@ export const TransactionsPage: React.FC = () => {
    * 다시 뜨지 않게 합니다.
    */
   useEffect(() => {
-    const state = location.state as { editTransactionId?: string } | null;
+    const state = location.state as { editTransactionId?: string; targetDate?: string } | null;
     const targetId = state?.editTransactionId;
+
+    // OCR/CSV 저장 후 넘어올 때 해당 날짜의 월로 자동 전환합니다.
+    const targetDate = state?.targetDate;
+    if (!targetId && targetDate) {
+      const key = toMonthKey(targetDate);
+      if (key) {
+        setMonth(key);
+        resetVisibleCount();
+      }
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
     if (!targetId) return;
     const target = allRows.find((row) => row.id === targetId);
     const timer = window.setTimeout(() => {

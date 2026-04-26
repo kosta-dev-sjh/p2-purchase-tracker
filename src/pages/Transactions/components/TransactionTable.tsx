@@ -10,12 +10,11 @@ import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import {
-  CATEGORY_LABELS,
   PLATFORM_LABELS,
   STATUS_LABELS,
   TYPE_LABELS,
 } from "../../../constants/labels";
-import { useCategoryColorMap } from "../../../stores/categoriesStore";
+import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
 
 export type TxType = "expense" | "income";
 /**
@@ -37,10 +36,11 @@ export type TxPlatform = "coupang" | "naver" | "unspecified";
  */
 export type TxStatus = "purchase" | "cancel" | "refund" | "sub" | "etc";
 /**
- * "etc"(기타)는 사용자가 카테고리를 지정하지 않은 모든 거래의 안전한 기본값입니다.
- * CSV/OCR/수동 입력 모든 경로에서 카테고리가 비었거나 알 수 없으면 "etc"로 수렴시킵니다.
+ * 거래에 붙는 카테고리 ID. 표준 5종(living/fashion/digital/food/etc) 외에
+ * 사용자가 설정에서 추가한 커스텀 카테고리 ID(custom_xxxx)도 허용합니다.
+ * categoriesStore가 유효 ID의 단일 진실원입니다.
  */
-export type TxCategory = "living" | "fashion" | "digital" | "food" | "etc";
+export type TxCategory = string;
 
 export type TxSource = "mock" | "csv" | "ocr" | "manual";
 
@@ -485,8 +485,11 @@ export const TransactionTable = memo<Props>(({
 }) => {
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [hoveredId, setHoveredId] = useState<string>("");
-  // 카테고리 색상은 설정 화면에서 사용자가 편집할 수 있으므로, 직접 스토어를 구독해 즉시 반영합니다.
+  // 카테고리 색상과 이름은 설정 화면에서 변경할 수 있으므로, 스토어를 구독해 즉시 반영합니다.
   const categoryColorMap = useCategoryColorMap();
+  const storeCategories = useCategoriesStore();
+  const getCategoryName = (id: string): string =>
+    storeCategories.find((c) => c.id === id)?.name ?? id;
   const hasMore = rows.length < totalCount;
   const loadMoreRef = useRef(onLoadMore);
   useEffect(() => {
@@ -593,10 +596,10 @@ export const TransactionTable = memo<Props>(({
                       <SquareWrap key={cat}>
                         <ColorSquare
                           $color={categoryColorMap[cat]}
-                          aria-label={CATEGORY_LABELS[cat]}
+                          aria-label={getCategoryName(cat)}
                         />
                         <CategoryTooltip role="tooltip" $color={categoryColorMap[cat]}>
-                          {CATEGORY_LABELS[cat]}
+                          {getCategoryName(cat)}
                         </CategoryTooltip>
                       </SquareWrap>
                     ))}
@@ -653,7 +656,7 @@ export const TransactionTable = memo<Props>(({
                       <ColorSquare
                         key={cat}
                         $color={categoryColorMap[cat]}
-                        aria-label={CATEGORY_LABELS[cat]}
+                        aria-label={getCategoryName(cat)}
                       />
                     ))}
                   </MobileCategories>

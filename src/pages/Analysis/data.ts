@@ -139,39 +139,35 @@ function buildPlatform(rows: TxRow[]): {
  */
 function buildCategory(
   rows: TxRow[],
-  colorMap?: Record<TxCategory, string>
+  colorMap?: Record<string, string>,
+  nameMap?: Record<string, string>
 ): CategoryBarItem[] {
-  const resolvedColors: Record<TxCategory, string> = colorMap ?? {
+  const DEFAULT_COLORS: Record<string, string> = {
     living: tokens.color.cat2,
     fashion: tokens.color.cat1,
     digital: tokens.color.cat4,
     food: tokens.color.cat3,
-    // "기타"는 의도적으로 중립적인 회색 계열 cat5를 씁니다 — 차트에서 다른 카테고리를 더 두드러지게 하기 위함입니다.
     etc: tokens.color.cat5,
   };
-  const totals: Record<TxCategory, number> = {
-    living: 0,
-    fashion: 0,
-    digital: 0,
-    food: 0,
-    etc: 0,
-  };
+  const resolvedColors: Record<string, string> = colorMap ?? DEFAULT_COLORS;
+  // 카테고리별 합계를 동적으로 누적. 커스텀 카테고리도 처음 등장 시 0으로 초기화됩니다.
+  const totals: Record<string, number> = {};
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
     // 다중 카테고리 거래는 "중복 카운트" 정책: 카테고리 N개에 속하면 N개 모두에 전액을 더합니다.
-    // 비율 합이 100%를 초과할 수 있지만, 화면에서는 각 카테고리의 절대 금액과 단일 카테고리 비율을 보여주므로
-    // 사용자가 "이 카테고리에 얼마나 썼는지"를 직관적으로 파악하기에 더 적합합니다.
     for (const cat of row.categories) {
-      totals[cat] += Math.abs(row.amount);
+      totals[cat] = (totals[cat] ?? 0) + Math.abs(row.amount);
     }
   }
   const total = Object.values(totals).reduce((sum, value) => sum + value, 0);
-  const entries = (Object.entries(totals) as Array<[TxCategory, number]>)
+  const entries = Object.entries(totals)
     .map(([key, amount]) => ({
-      label: CATEGORY_LABELS[key],
+      label: nameMap?.[key]
+        ?? CATEGORY_LABELS[key as keyof typeof CATEGORY_LABELS]
+        ?? key,
       amount,
       percent: total > 0 ? Math.round((amount / total) * 100) : 0,
-      color: resolvedColors[key],
+      color: resolvedColors[key] ?? tokens.color.cat5,
     }))
     .sort((a, b) => b.amount - a.amount);
   return entries;
@@ -210,7 +206,7 @@ function buildRepeat(rows: TxRow[]): RepeatItem[] {
       rank: (index + 1) as 1 | 2 | 3,
       title: entry.title,
       platform: PLATFORM_LABELS[entry.platform],
-      category: CATEGORY_LABELS[entry.category],
+      category: CATEGORY_LABELS[entry.category as keyof typeof CATEGORY_LABELS] ?? entry.category,
       count: entry.count,
       amount: entry.amount,
     }));

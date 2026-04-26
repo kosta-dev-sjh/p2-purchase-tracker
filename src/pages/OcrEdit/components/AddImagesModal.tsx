@@ -36,6 +36,7 @@ import {
 import type { UploadedImage } from "../../OcrUpload/data";
 import type { OcrImageItem } from "../data";
 import { analyzeUploadedImages } from "../../../utils/ocrAnalyzeImages";
+import { createThumbDataUrl } from "../../../utils/createThumbDataUrl";
 
 /**
  * 한 OCR 세션(= OcrUpload 초기 배치 + OcrEdit 에서 추가한 것까지) 누적 이미지 상한.
@@ -145,24 +146,28 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
     }
   }, [isOpen]);
 
-  const handleFileSelect = (files: File[]) => {
-    setImages((current) => {
-      // MAX_IMAGES 가 아니라 remainingCapacity 기준 — 이번 모달 버퍼가 아니라
-      // 세션 전체 상한에서 남은 슬롯만큼만 받습니다.
-      const remainingSlots = remainingCapacity - current.length;
-      if (remainingSlots <= 0) return current;
+  const handleFileSelect = async (files: File[]) => {
+    const remainingSlots = remainingCapacity - images.length;
+    if (remainingSlots <= 0) return;
+    const filesToAdd = files.slice(0, remainingSlots);
 
-      const filesToAdd = files.slice(0, remainingSlots);
-      const newImages = filesToAdd.map((file, index) => ({
+    const newImages = await Promise.all(
+      filesToAdd.map(async (file, index) => ({
         id: `add-${Date.now()}-${index}`,
         thumbUrl: URL.createObjectURL(file),
+        sourceDataUrl: await createThumbDataUrl(file),
         fileName: file.name,
         sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
         status: "ready" as const,
         platform,
         file,
-      }));
-      return [...current, ...newImages];
+      }))
+    );
+
+    setImages((current) => {
+      const remaining = Math.max(0, remainingCapacity - current.length);
+      if (remaining === 0) return current;
+      return [...current, ...newImages.slice(0, remaining)];
     });
   };
 
