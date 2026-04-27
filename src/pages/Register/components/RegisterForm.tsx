@@ -92,8 +92,8 @@ export const RegisterForm: React.FC = () => {
           setError("이름을 입력해 주세요.");
           return;
         }
-        if (name !== name.trim()) {
-          setError("이름 앞뒤에 공백이 있어요. 공백을 제거해 주세요.");
+        if (/\s/.test(name)) {
+          setError("이름에 공백을 포함할 수 없어요.");
           return;
         }
         if (name.trim().length < 2) {
