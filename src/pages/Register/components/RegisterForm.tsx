@@ -88,7 +88,7 @@ export const RegisterForm: React.FC = () => {
           setAgreeError(true);
           return;
         }
-        if (!name.trim()) {
+        if (!name) {
           setError("이름을 입력해 주세요.");
           return;
         }
@@ -96,7 +96,7 @@ export const RegisterForm: React.FC = () => {
           setError("이름에 공백을 포함할 수 없어요.");
           return;
         }
-        if (name.trim().length < 2) {
+        if (name.length < 2) {
           setError("이름은 2자 이상 입력해 주세요.");
           return;
         }
@@ -104,12 +104,16 @@ export const RegisterForm: React.FC = () => {
           setError("이메일을 입력해 주세요.");
           return;
         }
+        if (/\s/.test(email)) {
+          setError("이메일에 공백을 포함할 수 없어요.");
+          return;
+        }
         if (!password) {
           setError("비밀번호를 입력해 주세요.");
           return;
         }
-        if (password !== password.trim()) {
-          setError("비밀번호 앞뒤에 공백을 포함할 수 없어요.");
+        if (/\s/.test(password)) {
+          setError("비밀번호에 공백을 포함할 수 없어요.");
           return;
         }
         if (password.length < 8) {
