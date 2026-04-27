@@ -110,10 +110,44 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
     if (aoa.length === 0) return;
 
     const matrix = aoa.map((cells) => cells.map((cell) => String(cell ?? "").trim()));
-    const sheetRows = rowsToCsvRows(matrix, findHeaderRowIndex(matrix), {
+    const headerIdx = findHeaderRowIndex(matrix);
+    const mainHeader = (matrix[headerIdx] ?? []).map((h) =>
+      h.replace(/[\r\n]+/g, "").trim()
+    );
+    const subRow = (matrix[headerIdx + 1] ?? []).map((h) =>
+      h.replace(/[\r\n]+/g, "").trim()
+    );
+    const hasSubHeader = mainHeader.some((h, i) => h === "" && subRow[i] !== "");
+
+    // 기본 경로는 rowsToCsvRows의 범용 2행 헤더 처리로 태웁니다.
+    // 다만 BC카드처럼 병합셀 상위헤더(row N) + 서브헤더(row N+1) 구조가 강한 파일은
+    // subHeader 패턴이 명확해도 hints가 약하면 놓칠 수 있어, 0건일 때만 명시적 fallback을 탑니다.
+    let sheetRows = rowsToCsvRows(matrix, headerIdx, {
       sheetName,
       sheetIndex,
     });
+
+    if (sheetRows.length === 0 && hasSubHeader) {
+      // 서브헤더가 있는 컬럼은 서브헤더 우선, 없으면 주 헤더 사용
+      const mergedHeader = mainHeader.map((h, i) => (subRow[i] !== "" ? subRow[i] : h));
+      sheetRows = matrix.slice(headerIdx + 2).reduce<CsvRow[]>((acc, cells, rowOffset) => {
+        const row: CsvRow = {};
+        let hasValue = false;
+        mergedHeader.forEach((header, index) => {
+          if (!header) return;
+          const value = (cells[index] ?? "").trim();
+          row[header] = value;
+          if (value !== "") hasValue = true;
+        });
+        if (hasValue) {
+          row.__sheetName = sheetName;
+          row.__sheetIndex = String(sheetIndex);
+          row.__rowIndex = String(headerIdx + 2 + rowOffset + 1);
+          acc.push(row);
+        }
+        return acc;
+      }, []);
+    }
     if (sheetRows.length > 0) {
       allRows.push(...sheetRows);
     }

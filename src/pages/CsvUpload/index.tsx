@@ -827,7 +827,20 @@ export const CsvUploadPage: React.FC = () => {
           mergedActions={saveResult.mergedActions}
           allRows={allRows}
           skipped={saveResult.skipped}
-          onConfirm={() => navigate("/transactions")}
+          onConfirm={() => {
+            // 저장된 거래 중 가장 많은 년월의 대표 날짜를 targetDate로 전달합니다.
+            const source = result?.imported ?? saveResult.savedRows;
+            const counts: Record<string, { count: number; date: string }> = {};
+            for (const row of source) {
+              const match = row.date.match(/(\d{4})[./-](\d{1,2})/);
+              if (!match) continue;
+              const key = `${match[1]}-${match[2].padStart(2, "0")}`;
+              if (!counts[key]) counts[key] = { count: 0, date: row.date };
+              counts[key].count += 1;
+            }
+            const dominant = Object.values(counts).sort((a, b) => b.count - a.count)[0];
+            navigate("/transactions", dominant ? { state: { targetDate: dominant.date } } : undefined);
+          }}
         />
       )}
     </AppShell>
