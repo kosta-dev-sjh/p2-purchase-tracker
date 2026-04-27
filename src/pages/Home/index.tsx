@@ -105,9 +105,14 @@ export const HomePage: React.FC = () => {
     if (!cached || cached.hash !== hash) {
       setIsAiLoading(true);
       const rulesText = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
-      
+
+      // 실패하면 null 이 돌아옵니다. 그 경우 캐시에 쓰지 않아야
+      // 다음 hash 변동 때 자연스럽게 재시도됩니다.
+      // (에러 문자열을 정상 인사이트로 캐시해 그 달 내내 에러가 박히던 버그 방지)
       generateInsight(rulesText).then(insightText => {
-        setInsight(month, hash, insightText);
+        if (insightText) {
+          setInsight(month, hash, insightText);
+        }
       }).finally(() => {
         setIsAiLoading(false);
       });

@@ -83,11 +83,23 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 
 ## 7. 현재 상태 및 차기 작업 포인트
 
-- 인증은 Firebase Auth 기반으로 전환됨
-- 저장은 Zustand 로컬 상태 + Firestore 동기화 구조로 전환됨
-- 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료
+- 인증은 Firebase Auth 기반으로 전환됨 (`src/lib/firebase.ts`, `authStore.ts`).
+- 저장은 Zustand 로컬 상태 + Firestore 동기화 구조 (`src/lib/firebaseSync.ts`,
+  `firebaseRepository.ts`).
+- AI 호출은 Firebase Functions `geminiProxy` 단일 경로로 통일됨
+  (`functions/src/index.ts`, `src/utils/aiService.ts`). 키는 Functions secret
+  `GEMINI_API_KEY` 에 보관, 프론트 번들에 직접 노출되지 않음. 요금제는 paid
+  Gemini 2.5 Flash.
+- 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료. 추가 정확도 튜닝은
+  동결, 회귀 대응만 (`docs/OCR_Architecture_Decision.md` §9.1).
+- 네이버 OCR은 얕은 1차 파서 + AI 보정 정책으로 진행 중
+  (`docs/Naver_OCR_Parsing_Strategy.md`).
+- 홈 화면 AI 인사이트는 월별 캐시(`src/stores/aiInsightsStore.ts`) + hash 무효화로
+  거래 변동 시에만 재호출. 호출 실패는 캐시에 쓰지 않음.
 - 관련 참고 문서:
   - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
+  - `docs/OCR_Architecture_Decision.md`
+  - `docs/Naver_OCR_Parsing_Strategy.md`
 
 ## 8. 문서 유지 규칙
 

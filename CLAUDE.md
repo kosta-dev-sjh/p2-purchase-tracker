@@ -88,13 +88,17 @@
 - `aiApplied` 플래그는 **실제로 값이 바뀐 카드에만** 찍힙니다(사용자에게 "AI 가 손댄
   것처럼 보여주는 거짓말" 금지).
 
-### 9.3 배포 전 필수 (현재 미완)
+### 9.3 배포 인프라 현황
 
-- **API 키 노출**: `VITE_GEMINI_API_KEY` 가 프론트엔드 번들에 박히는 구조는 개발용만
-  허용. 실 배포 전 반드시 서버 프록시(Vercel Functions / Cloudflare Workers /
-  Next.js Route) 로 키 은닉 필요.
-- **Rate limit**: Gemini 2.5 Flash free tier 는 10 RPM / 250 RPD. 동시 사용자 10명만
-  몰려도 free tier 초과 가능. 서버화 시 per-user / per-IP rate limit 같이 설계.
+- **API 키 노출**: 해결됨. Gemini 호출은 Firebase Functions `geminiProxy`(`functions/src/index.ts`)
+  경유로 통일했고, 키는 Functions secret(`GEMINI_API_KEY`)에 저장. 프론트엔드 번들에
+  `VITE_GEMINI_API_KEY` 같은 직접 키를 넣지 않습니다. 새 AI 호출을 추가할 때도
+  `aiService.ts` 의 `geminiProxy` 경로를 따릅니다.
+- **요금제**: 현재 Gemini 2.5 Flash **paid(후불제)** 사용. 비용은 호출당 매우 작아
+  실 사용 패턴(거래 추가마다 인사이트 재호출 등)에서 비용이 의사결정 변수가 되지
+  않습니다. 비용 자체보다 **rate limit / 호출 실효율** 을 모니터링 대상으로 둡니다.
+- **Rate limit**: 유료 tier 에서도 RPM 한도는 존재. 실 사용자 폭증 시 per-user /
+  per-IP 쿨다운을 Functions 단에 추가할 수 있게 여지를 남겨둡니다(아직 구현 전).
 
 ### 9.4 측정 지표
 

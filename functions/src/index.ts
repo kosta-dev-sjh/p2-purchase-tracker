@@ -103,11 +103,40 @@ function compressInputText(text: string, maxChars = 60_000): string {
   return cleaned.slice(0, head) + "\n...[생략]...\n" + cleaned.slice(cleaned.length - tail);
 }
 
+function normalizeInsightText(text: string): string {
+  const singleLine = text
+    .replace(/\r?\n+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!singleLine) return "";
+
+  const sentenceMatches = singleLine.match(/[^.!?]+[.!?]?/g) ?? [singleLine];
+  const firstTwoSentences = sentenceMatches
+    .map((sentence) => sentence.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .join(" ");
+
+  const clipped = firstTwoSentences || singleLine;
+  return clipped.length <= 120 ? clipped : clipped.slice(0, 120).trimEnd() + "...";
+}
+
 async function runGenerateInsight(rulesText: string): Promise<{ text: string }> {
   const model = createModel();
-  const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:\n\n${rulesText}\n\n위 내용을 바탕으로 사용자에게 도움이 되는 1~2문장의 친근하고 짧은 소비 인사이트를 만들어주세요.`;
+  const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:
+
+${rulesText}
+
+아래 규칙을 반드시 지켜 사용자에게 보여줄 소비 인사이트를 작성하세요.
+- 한국어로만 작성합니다.
+- 정확히 1~2문장만 작성합니다.
+- 문장은 짧고 친근하게 씁니다.
+- 불릿, 번호, 제목, 줄바꿈, 따옴표를 쓰지 않습니다.
+- 120자 안팎으로 끝냅니다.
+- 입력에 없는 수치나 사실은 만들지 않습니다.`;
   const result = await model.generateContent(prompt);
-  return { text: (await result.response.text()).trim() };
+  return { text: normalizeInsightText(await result.response.text()) };
 }
 
 async function runFallbackOcr(text: string): Promise<{ status: Status | null }> {
@@ -201,25 +230,32 @@ async function runFallbackOcrProducts(input: FallbackOcrProductsInput) {
   const productsBlock = input.allProducts
     .map((p, i) => {
       const flag = badIdSet.has(p.id) ? " (의심)" : "";
-      return `${i + 1}. id=${p.id}${flag} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}`;
+      const currentDate = (p as OcrProduct & { date?: string }).date;
+      const dateHint = currentDate ? ` · 현재날짜=${currentDate}` : " · 현재날짜=(없음)";
+      return `${i + 1}. id=${p.id}${flag} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}${dateHint}`;
     })
     .join("\n");
 
   const platformKor = PLATFORM_LABELS[input.platform] ?? "쇼핑몰";
-  const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격을 이미지와 rawText 로 검증·보정하는 추출기다.
-입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격) 이 들어온다.
+  const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격·날짜를 이미지와 rawText 로 검증·보정하는 추출기다.
+입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격 · 현재 날짜) 이 들어온다.
 "(의심)" 이 붙은 카드는 Tesseract 파서가 복구 못 한 카드라 특히 신경 써서 이미지에서 다시 읽어내라.
 그렇지 않은 카드도 이미지를 확인해 **분명한 오류**가 있으면 고치되, 맞으면 현재 값을 **그대로** 반환하라.
 
 규칙을 엄격히 지킨다:
 - 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
-- 각 라인 형식: \`id|name|price|quantity\`
+- 각 라인 형식: \`id|name|price|quantity|date\`
 - id 는 입력과 글자 단위로 정확히 같게 복사한다(재생성 금지).
 - name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게.
-- **변경은 필요할 때만**: 현재 이름이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
-  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임 등)" 에만.
+- **변경은 필요할 때만**: 현재 값이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
+  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임, 날짜 비었는데 이미지엔 보임 등)" 에만.
 - price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
 - quantity 는 정수, 찾을 수 없으면 1.
+- **date** 는 ISO 형식 \`YYYY-MM-DD\`. 이미지의 "주문/결제" 라벨 옆 날짜를 읽는다.
+  - ${platformKor} 에서 흔한 형식: \`2025.7.3. 19:04 주문\`, \`4. 7. 11:29 결제\`, \`1.26. 15:09 주문\`.
+  - 단축 형식(연도 누락) 이면 현재 연도를 가정하되, 추출 월이 현재 월보다 크면 작년으로.
+  - 정말 안 보이면 빈 문자열(\`\`).
+  - 같은 결제(같은 카드 그룹)의 다른 카드와 다르면 그쪽을 따라가라(같은 결제 → 같은 날짜).
 - 입력된 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
 - 설명 문장 추가 금지. 첫 라인부터 데이터다.
 
@@ -253,19 +289,22 @@ ${productsBlock}`;
     if (!line || line.startsWith("```") || line.startsWith("#")) continue;
     const cols = line.split("|").map((c) => c.trim());
     if (cols.length < 3) continue;
-    const [id, name, priceStr, qtyStr] = cols;
+    const [id, name, priceStr, qtyStr, dateStr] = cols;
     if (!inputIds.has(id)) continue;
     const price = parseInt(priceStr.replace(/[^0-9-]/g, ""), 10);
     if (!Number.isFinite(price)) continue;
     const orig = idToInput.get(id);
     if (!orig) continue;
     const quantity = qtyStr ? parseInt(qtyStr.replace(/[^0-9]/g, ""), 10) : undefined;
+    // date — ISO YYYY-MM-DD. 빈 문자열이면 미상으로 간주. 형식 검증 후 통과한 것만 보존.
+    const date = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : undefined;
     recovered.set(id, {
       id,
       name: name || orig.name || "",
       price: Math.max(0, price),
       ...(quantity && quantity > 0 ? { quantity } : {}),
-    });
+      ...(date ? { date } : {}),
+    } as OcrProduct & { date?: string });
   }
 
   if (recovered.size === 0) {
@@ -276,10 +315,13 @@ ${productsBlock}`;
   const products = input.allProducts.map((p) => {
     const r = recovered.get(p.id);
     if (!r) return p;
+    const pDate = (p as OcrProduct & { date?: string }).date;
+    const rDate = (r as OcrProduct & { date?: string }).date;
     const changed =
       (p.name ?? "").trim() !== r.name.trim() ||
       (p.price ?? 0) !== r.price ||
-      (p.quantity ?? 1) !== (r.quantity ?? 1);
+      (p.quantity ?? 1) !== (r.quantity ?? 1) ||
+      (pDate ?? "") !== (rDate ?? "");
     if (changed) changedIds.add(p.id);
     return r;
   });

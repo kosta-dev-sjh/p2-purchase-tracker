@@ -64,6 +64,10 @@ export interface AiOcrFallbackResult {
 async function callRealAi(
   request: AiOcrFallbackRequest,
 ): Promise<AiOcrFallbackResult | null> {
+  // 입력 product 들이 어느 OcrOrder 에 속하는지 알기 위해 caller(ocrAnalyzeImages) 가 product
+  // 에 _date hint 를 임시 주입할 수 있음(아래 ocrAnalyzeImages 구현 참고).
+  // 여기서는 date 를 옵셔널로 통과시키고, 응답의 date 는 결과 product 객체에 보존해 caller 가
+  // OcrOrder.orderDate 보강에 사용하게 합니다.
   const recovered = await fallbackOcrProducts({
     platform: request.platform,
     rawText: request.rawText,
@@ -72,6 +76,9 @@ async function callRealAi(
       name: p.name,
       price: p.price,
       quantity: p.quantity,
+      ...((p as OcrProduct & { date?: string }).date
+        ? { date: (p as OcrProduct & { date?: string }).date }
+        : {}),
     })),
     badIds: request.badIds,
     imageFile: request.imageFile,
@@ -79,12 +86,18 @@ async function callRealAi(
   if (!recovered) return null;
   // aiApplied 플래그는 **실제로 값이 변경된 카드에만** 찍습니다. AI 가 clean 카드를 그대로
   // 돌려줬다면 사용자 화면에 ✨ 배지가 뜨지 않도록 해 UI 소음을 최소화.
+  // date 는 OcrProduct 타입엔 없는 필드지만, 결과 객체에 있으면 caller 가 OcrOrder.orderDate
+  // 로 끌어다 쓸 수 있게 그대로 보존(타입 어설션).
   return {
     provider: "gemini",
     products: recovered.products.map((p) => ({
-      ...p,
+      id: p.id,
+      name: p.name,
+      price: p.price,
+      ...(p.quantity !== undefined ? { quantity: p.quantity } : {}),
+      ...(p.date ? { date: p.date } : {}),
       ...(recovered.changedIds.has(p.id) ? { aiApplied: true } : {}),
-    })),
+    })) as OcrProduct[],
   };
 }
 

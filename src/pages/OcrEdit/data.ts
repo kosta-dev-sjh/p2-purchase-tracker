@@ -117,4 +117,14 @@ export interface OcrImageItem {
    * 배포 전 DEBUG_OCR_AI 와 함께 제거되는 가지 — UI 에 이 값을 읽는 곳은 debug chip 뿐.
    */
   aiInvoked?: boolean;
+  /**
+   * Tesseract rawText 기반으로 자동 감지된 platform. 사용자가 platform 을 잘못 골랐을 가능성이
+   * 있으면 OcrUpload 가 분석 후 confirm 모달을 띄움.
+   *
+   * 정책: literal UI 라벨/배지 시그널만 사용 — wordlist 하드코딩(상품명) 아님.
+   * 자세한 알고리즘은 src/utils/ocrPlatformDetect.ts 참고.
+   */
+  detectedPlatform?: Platform | null;
+  /** 0~1 — 자동 감지 confidence. < 0.55 이거나 detectedPlatform === null 이면 mismatch 판정 안 함. */
+  detectionConfidence?: number;
 }

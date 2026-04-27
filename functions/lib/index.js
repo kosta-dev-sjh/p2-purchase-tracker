@@ -67,11 +67,37 @@ function compressInputText(text, maxChars = 60_000) {
     const tail = maxChars - head;
     return cleaned.slice(0, head) + "\n...[생략]...\n" + cleaned.slice(cleaned.length - tail);
 }
+function normalizeInsightText(text) {
+    const singleLine = text
+        .replace(/\r?\n+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!singleLine)
+        return "";
+    const sentenceMatches = singleLine.match(/[^.!?]+[.!?]?/g) ?? [singleLine];
+    const firstTwoSentences = sentenceMatches
+        .map((sentence) => sentence.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" ");
+    const clipped = firstTwoSentences || singleLine;
+    return clipped.length <= 120 ? clipped : clipped.slice(0, 120).trimEnd() + "...";
+}
 async function runGenerateInsight(rulesText) {
     const model = createModel();
-    const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:\n\n${rulesText}\n\n위 내용을 바탕으로 사용자에게 도움이 되는 1~2문장의 친근하고 짧은 소비 인사이트를 만들어주세요.`;
+    const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:
+
+${rulesText}
+
+아래 규칙을 반드시 지켜 사용자에게 보여줄 소비 인사이트를 작성하세요.
+- 한국어로만 작성합니다.
+- 정확히 1~2문장만 작성합니다.
+- 문장은 짧고 친근하게 씁니다.
+- 불릿, 번호, 제목, 줄바꿈, 따옴표를 쓰지 않습니다.
+- 120자 안팎으로 끝냅니다.
+- 입력에 없는 수치나 사실은 만들지 않습니다.`;
     const result = await model.generateContent(prompt);
-    return { text: (await result.response.text()).trim() };
+    return { text: normalizeInsightText(await result.response.text()) };
 }
 async function runFallbackOcr(text) {
     const model = createModel();

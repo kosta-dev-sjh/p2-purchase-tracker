@@ -4,7 +4,7 @@
  */
 import { httpsCallable } from "firebase/functions";
 import type { CsvRow } from "./csvParse";
-import type { Status, OcrProduct, Platform } from "../pages/OcrEdit/data";
+import type { Status, Platform } from "../pages/OcrEdit/data";
 import { functions } from "../lib/firebase";
 
 const geminiProxy = httpsCallable(functions, "geminiProxy");
@@ -22,17 +22,23 @@ async function fileToBase64(file: File): Promise<string> {
   });
 }
 
-export async function generateInsight(rulesText: string): Promise<string> {
+/**
+ * 성공 시 인사이트 텍스트, 실패/빈 응답 시 null 을 돌려줍니다.
+ * 호출부에서 null 을 캐시에 쓰지 않아야 에러 메시지가 그 달의 인사이트로
+ * 영구히 박히는 사고를 막을 수 있습니다.
+ */
+export async function generateInsight(rulesText: string): Promise<string | null> {
   try {
     const result = await geminiProxy({
       action: "generateInsight",
       payload: { rulesText },
     });
     const data = result.data as { text?: string };
-    return data.text?.trim() || "AI 분석을 불러오는 중 오류가 발생했습니다.";
+    const text = data.text?.trim();
+    return text ? text : null;
   } catch (error) {
     console.error("AI Insight Generation Failed:", error);
-    return "AI 분석을 불러오는 중 오류가 발생했습니다.";
+    return null;
   }
 }
 
@@ -64,16 +70,42 @@ export async function fallbackCsv(text: string): Promise<CsvRow[]> {
   }
 }
 
+/**
+ * AI fallback 입력에 들어가는 product 의 부분 형태. OcrProduct 의 핵심 필드에 더해 현재 추출된
+ * 날짜(date, ISO YYYY-MM-DD)를 같이 넘겨 Gemini 가 검증·보정할 수 있게 합니다.
+ *
+ * 2026-04-27: 사용자 보고 — AI 보정이 itemName/price 만 다루고 date 컬럼은 비워두는 회귀.
+ * Functions 의 prompt 와 응답 파싱이 date 를 흡수하도록 동기 보강(서버측)되었고, 클라이언트도
+ * input/output 에 date 를 일관 전달하도록 확장.
+ */
+export interface AiOcrProductInput {
+  id: string;
+  name: string | null;
+  price: number;
+  quantity?: number;
+  /** 이미지에서 읽은 ISO 날짜 — 1차 파서가 채우지 못했으면 비워둠. AI 가 이미지에서 회복. */
+  date?: string;
+}
+
+export interface AiOcrProductOutput {
+  id: string;
+  name: string;
+  price: number;
+  quantity?: number;
+  /** Gemini 가 이미지에서 회복한 날짜. 형식 검증(YYYY-MM-DD) 통과한 것만 들어옴. */
+  date?: string;
+}
+
 export interface FallbackOcrProductsInput {
   platform: Platform;
   rawText: string;
-  allProducts: Pick<OcrProduct, "id" | "name" | "price" | "quantity">[];
+  allProducts: AiOcrProductInput[];
   badIds?: string[];
   imageFile?: File;
 }
 
 export interface FallbackOcrProductsResult {
-  products: OcrProduct[];
+  products: AiOcrProductOutput[];
   changedIds: Set<string>;
 }
 
@@ -84,7 +116,7 @@ export async function fallbackOcrProducts(
     const payload: {
       platform: Platform;
       rawText: string;
-      allProducts: Pick<OcrProduct, "id" | "name" | "price" | "quantity">[];
+      allProducts: AiOcrProductInput[];
       badIds?: string[];
       imageBase64?: string;
       imageMimeType?: string;
@@ -104,7 +136,7 @@ export async function fallbackOcrProducts(
       action: "fallbackOcrProducts",
       payload,
     });
-    const data = result.data as { products?: OcrProduct[]; changedIds?: string[] } | null;
+    const data = result.data as { products?: AiOcrProductOutput[]; changedIds?: string[] } | null;
 
     if (!data || !Array.isArray(data.products)) return null;
     return {

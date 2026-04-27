@@ -30,6 +30,8 @@ import {
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
 import { analyzeUploadedImages } from "../../utils/ocrAnalyzeImages";
+import type { OcrImageItem } from "../OcrEdit/data";
+import { Modal } from "../../components/modal/Modal";
 import { createThumbDataUrl } from "../../utils/createThumbDataUrl";
 
 const Wrap = styled.div`
@@ -203,6 +205,14 @@ export const OcrUploadPage: React.FC = () => {
     await runAnalysis(updatedImages);
   };
 
+  /**
+   * Platform mismatch 후속 모달 상태. analyzeUploadedImages 결과에서 detectedPlatform 이
+   * 사용자가 고른 platform 과 다르고 confidence ≥ 0.7 인 이미지를 모은다. 비어 있으면
+   * 곧바로 OcrEdit 으로 이동, 있으면 사용자에게 "rerun with detected" / "그대로 진행" 선택지.
+   * 자세한 알고리즘 정책은 src/utils/ocrPlatformDetect.ts.
+   */
+  const [pendingMismatchImages, setPendingMismatchImages] = useState<OcrImageItem[] | null>(null);
+
   const runAnalysis = async (targetImages: UploadedImage[]) => {
     if (targetImages.length === 0) return;
     setIsAnalyzing(true);
@@ -215,6 +225,24 @@ export const OcrUploadPage: React.FC = () => {
         setAnalysisProgress(event);
       });
 
+      // ── Platform mismatch 감지 ─────────────────────────────────────────────
+      // 사용자 선택 platform 과 detectedPlatform 이 다르고 confidence ≥ 0.7 이면 mismatch.
+      // OCR 손상이 큰 이미지는 detectedPlatform 이 null 또는 confidence 낮음 → 알람 안 띄움.
+      const mismatched = processedImages.filter(
+        (img) =>
+          img.detectedPlatform &&
+          img.detectedPlatform !== img.platform &&
+          (img.detectionConfidence ?? 0) >= 0.7,
+      );
+
+      if (mismatched.length > 0) {
+        // 진행 모달 닫고 mismatch 모달로 사용자 선택을 받음. processedImages 는 store 에 아직
+        // 안 넣음 — 사용자 결정 후에 반영.
+        setIsAnalyzing(false);
+        setPendingMismatchImages(processedImages);
+        return;
+      }
+
       ocrStore.setImages(
         isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages,
       );
@@ -225,6 +253,50 @@ export const OcrUploadPage: React.FC = () => {
     } finally {
       setIsAnalyzing(false);
     }
+  };
+
+  /**
+   * Mismatch 모달에서 "감지된 platform 으로 다시 분석" 선택 시.
+   * 1) processedImages 의 platform 만 detectedPlatform 으로 바꾼 새 UploadedImage 배열을 만듦
+   * 2) runAnalysis 재실행
+   *
+   * UploadedImage 와 OcrImageItem 은 다른 형식이라 변환 필요. file/thumbUrl/sourceDataUrl 은 원본
+   * targetImages 에서 그대로 끌어와야 하므로 stem id 매칭으로 lookup.
+   */
+  const handleMismatchRerun = async () => {
+    const processed = pendingMismatchImages;
+    if (!processed) return;
+    const replacements: UploadedImage[] = processed.map((p) => {
+      const orig = images.find((i) => i.id === p.id);
+      const targetPlatform =
+        p.detectedPlatform &&
+        p.detectionConfidence !== undefined &&
+        p.detectionConfidence >= 0.7 &&
+        p.detectedPlatform !== p.platform
+          ? p.detectedPlatform
+          : p.platform;
+      return {
+        ...(orig ?? ({} as UploadedImage)),
+        id: p.id,
+        platform: targetPlatform,
+      };
+    });
+    setPendingMismatchImages(null);
+    setImages(replacements);
+    await runAnalysis(replacements);
+  };
+
+  /**
+   * Mismatch 모달에서 "그대로 진행" 선택 시. processedImages 그대로 store 에 반영하고 OcrEdit 이동.
+   */
+  const handleMismatchKeep = () => {
+    const processed = pendingMismatchImages;
+    if (!processed) return;
+    setPendingMismatchImages(null);
+    ocrStore.setImages(
+      isAppendMode ? [...ocrStore.getImages(), ...processed] : processed,
+    );
+    navigate("/ocr-edit");
   };
 
   /**
@@ -299,6 +371,48 @@ export const OcrUploadPage: React.FC = () => {
         onConfirm={handleConfirmAnalyze}
       />
       <AnalysisProgressModal isOpen={isAnalyzing} progress={analysisProgress} />
+      {/*
+       * Platform mismatch 모달 — 분석 후 사용자 선택과 자동 감지 결과가 다른 이미지 발견 시.
+       * 시그널 알고리즘은 src/utils/ocrPlatformDetect.ts 의 literal UI 라벨/배지 카운트.
+       */}
+      {pendingMismatchImages && (() => {
+        const mismatched = pendingMismatchImages.filter(
+          (img) =>
+            img.detectedPlatform &&
+            img.detectedPlatform !== img.platform &&
+            (img.detectionConfidence ?? 0) >= 0.7,
+        );
+        return (
+          <Modal
+            isOpen
+            onClose={handleMismatchKeep}
+            title="플랫폼이 다른 것 같아요"
+          >
+            <div style={{ color: tokens.color.ink2, fontSize: 13, lineHeight: 1.6, marginBottom: 16 }}>
+              아래 이미지들은 OCR 분석 결과 다른 플랫폼 캡쳐로 보입니다.
+              실제 플랫폼이 맞는지 확인해 주세요.
+              <ul style={{ marginTop: 10, paddingLeft: 20 }}>
+                {mismatched.map((img) => (
+                  <li key={img.id} style={{ marginBottom: 4 }}>
+                    <strong>{img.fileName}</strong>:
+                    선택 <code>{PLATFORM_LABELS[img.platform]}</code>,
+                    감지 <code>{PLATFORM_LABELS[img.detectedPlatform!]}</code>
+                    {" "}({Math.round((img.detectionConfidence ?? 0) * 100)}% 확신)
+                  </li>
+                ))}
+              </ul>
+            </div>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Button variant="secondary" size="md" onClick={handleMismatchKeep}>
+                선택대로 진행
+              </Button>
+              <Button variant="primary" size="md" onClick={handleMismatchRerun}>
+                감지된 플랫폼으로 다시 분석
+              </Button>
+            </div>
+          </Modal>
+        );
+      })()}
     </AppShell>
   );
 };

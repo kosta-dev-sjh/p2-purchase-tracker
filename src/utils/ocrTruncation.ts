@@ -31,6 +31,18 @@ export interface TruncationSignal {
 /**
  * 한 이미지에 대해 잘림 신호를 추정합니다. OCR 결과만 보고 판단하므로 실제 이미지 픽셀 분석은
  * 하지 않습니다(브라우저에서 추가 비용 회피).
+ *
+ * 플랫폼 분기 (2026-04-27 추가):
+ *   topCut 신호 정의는 **쿠팡 데스크톱 캡쳐 가정**으로 만들어졌습니다 — 화면 상단에 큰
+ *   "YYYY. M. DD 주문" 헤더가 한 번 있고 그 아래로 그 날짜의 카드들이 깔리는 구조라, 캡쳐
+ *   위가 잘려 헤더가 사라지면 첫 카드의 orderDate 가 빈 채로 들어옵니다.
+ *
+ *   네이버는 단일 헤더가 없고 주문마다 자체 날짜 라인을 가지므로, "첫 주문 orderDate 결측
+ *   = 캡쳐 잘림" 이 성립하지 않습니다. 단순히 그 카드의 날짜 OCR 이 실패했거나 파서가 못
+ *   잡은 것일 수 있어요. 따라서 네이버에서는 topCut 을 강제로 false 로 둡니다(strategy doc
+ *   §10 — UI drift 대응 전략 / Codex 후속 작업으로 네이버 전용 신호 정의 예정).
+ *
+ *   bottomCut(마지막 카드 priceOcrFailed) 은 두 플랫폼 모두에서 의미가 있어 그대로 유지.
  */
 export function detectTruncation(image: OcrImageItem): TruncationSignal {
   if (image.orders.length === 0) {
@@ -40,12 +52,15 @@ export function detectTruncation(image: OcrImageItem): TruncationSignal {
   const firstOrder = image.orders[0];
   const lastOrder = image.orders[image.orders.length - 1];
 
-  // topCut: 첫 주문에 orderDate 가 비어 있으면 헤더 잘림 의심.
-  //   파서가 prescan/inline 헤더를 둘 다 못 찾으면 orderDate = "" 가 됩니다.
-  const topCut = (firstOrder.orderDate ?? "").trim() === "";
+  // topCut: 쿠팡 데스크톱 한정. 네이버에서는 신호 의미가 달라 강제로 false.
+  const topCut =
+    image.platform === "coupang"
+      ? (firstOrder.orderDate ?? "").trim() === ""
+      : false;
 
   // bottomCut: 마지막 주문의 마지막 상품이 priceOcrFailed (Tesseract 가 가격 라인을 못 읽음).
-  //   가격이 캡쳐 영역을 넘어 잘린 경우의 전형적 신호.
+  //   가격이 캡쳐 영역을 넘어 잘린 경우의 전형적 신호. 두 플랫폼 모두에서 동일하게 의미가
+  //   있어 platform 분기 없이 유지합니다.
   //   AI 보정 후에도 priceOcrFailed 플래그 자체는 유지되므로(원본 시그널), 보수적으로 마지막
   //   카드가 aiApplied=false (= AI 가 못 살림) 일 때만 잘림으로 봅니다.
   const lastProduct = lastOrder.products[lastOrder.products.length - 1];
