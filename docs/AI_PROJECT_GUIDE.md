@@ -27,6 +27,7 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 
 - `/transactions`: 월별 거래 목록, 상세, 수정, 삭제
 - `/analysis`: 플랫폼/카테고리/반복구매/요일 패턴 등 분석
+- `/subscriptions`: 정기결제 전용 페이지 — `Analysis/data.ts` 의 `buildSubscriptions` 결과 재사용
 
 ## 4. 핵심 도메인 규칙
 
@@ -105,9 +106,11 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 - 홈 화면 AI 인사이트는 월별 캐시(`src/stores/aiInsightsStore.ts`) + hash 무효화로
   거래 변동 시에만 재호출. 호출 실패는 캐시에 쓰지 않음.
 - 관련 참고 문서:
+  - `docs/SpendTrack_Feature_Spec_From_Code_v1.md` (현재 빌드 동작의 코드 기준 인덱스)
   - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
   - `docs/OCR_Architecture_Decision.md`
   - `docs/Naver_OCR_Parsing_Strategy.md`
+  - `docs/Naver_OCR_Pattern_Catalog.md`
 
 ## 8. 문서 유지 규칙
 

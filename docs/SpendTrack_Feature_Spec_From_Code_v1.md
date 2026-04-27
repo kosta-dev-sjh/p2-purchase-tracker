@@ -26,6 +26,7 @@ SpendTrack 는 React 19 + Vite + Firebase 기반 SPA로, 쇼핑 주문내역 OCR
 | `/csv-upload` | Protected | CsvUploadPage | 카드 CSV/XLSX(XLS) 벌크 업로드 |
 | `/transactions` | Protected | TransactionsPage | 월별 거래 목록·필터·상세·수정·삭제 |
 | `/analysis` | Protected | AnalysisPage | 월별 심층 분석 (플랫폼/카테고리/반복/요일/구독) |
+| `/subscriptions` | Protected | SubscriptionsPage | 정기결제 전용 페이지 — Analysis 의 buildSubscriptions 결과를 펼쳐 표시 |
 | `/settings` | Protected | SettingsPage | 프로필 / 계정 / 카테고리 / 위험구역(탈퇴·전체삭제) |
 | `*` | — | Redirect | 정의되지 않은 경로 → `/` |
 
@@ -170,7 +171,14 @@ SpendTrack 는 React 19 + Vite + Firebase 기반 SPA로, 쇼핑 주문내역 OCR
 - CategoryBars: "지난 달" 탭에서 비교 표시 (`prevData`).
 - 색상: 카테고리 색은 `useCategoryColorMap` 으로 설정 변경 즉시 반영.
 
-### 4-12. Settings (`/settings`)
+### 4-12. Subscriptions (`/subscriptions`)
+
+- 컴포넌트: `src/pages/Subscriptions/index.tsx`.
+- 본문: KPI strip(이번 달 합계 / 전월 대비 / 항목 수) + 정기결제 전체 목록.
+- 데이터: Analysis 의 `buildSubscriptions(rows, month, Infinity)` 단일 진실원을 그대로 재사용. Analysis 카드의 미니 리스트가 더 풍성하게 펼쳐진 형태.
+- MonthPicker 로 월 변경 가능, 거래가 있는 달에 marked 점 표시.
+
+### 4-13. Settings (`/settings`)
 
 - 좌: SettingsNav (4개 섹션). 우: 본문.
 - ProfileSection: 이름/닉네임/이메일/아바타 표시 + 편집.
