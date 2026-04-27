@@ -157,7 +157,7 @@ const TriggerCaret = styled.span<{ $open: boolean }>`
 const Popover = styled.div`
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
   z-index: 40;
   min-width: 248px;
   padding: ${tokens.space[3]};
