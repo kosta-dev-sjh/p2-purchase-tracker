@@ -16,7 +16,11 @@ import { FilterBar } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { buildTransactionSummary, getPrevMonthKey } from "./data";
-import { getMonthOption } from "../../constants/months";
+import {
+  computeMinYear,
+  getCurrentMonthKey,
+  getMonthOption,
+} from "../../constants/months";
 import {
   transactionsStore,
   useTransactionsStore,
@@ -160,7 +164,8 @@ export const TransactionsPage: React.FC = () => {
   // 필터 상태는 모두 페이지 상단에서 관리해서 표와 상세 패널이 같은 기준을 보게 합니다.
   const location = useLocation();
   const navigate = useNavigate();
-  const [month, setMonth] = useState("2026-04");
+  // 진입 시 디폴트 월은 "오늘 시점의 현재 월". 과거 목업처럼 특정 월에 고정되지 않습니다.
+  const [month, setMonth] = useState(() => getCurrentMonthKey());
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "income">("all");
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
@@ -180,6 +185,11 @@ export const TransactionsPage: React.FC = () => {
     return allRows.filter((row) => toMonthKey(row.date) === prevKey);
   }, [allRows, month]);
   const monthOption = getMonthOption(month);
+  // MonthPicker 셀렉터의 가장 오래된 년도 — 거래 데이터에 옛날 거래가 있으면 자동 확장.
+  const pickerMinYear = useMemo(
+    () => computeMinYear(allRows.map((row) => row.date)),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
@@ -464,7 +474,13 @@ export const TransactionsPage: React.FC = () => {
       activeNav="transactions"
       crumb={`거래 · ${monthOption.label}`}
       title="수입·지출 내역"
-      headerRight={<MonthPicker value={month} onChange={handleMonthChange} />}
+      headerRight={
+        <MonthPicker
+          value={month}
+          onChange={handleMonthChange}
+          minYear={pickerMinYear}
+        />
+      }
     >
       <Grid>
         <SummaryStrip summary={summary} />

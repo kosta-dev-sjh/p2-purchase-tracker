@@ -15,7 +15,11 @@ import { TrendChart } from "./components/TrendChart";
 import { RecentTransactions } from "./components/RecentTransactions";
 import { InsightCards } from "./components/InsightCards";
 import { buildHomeData } from "./data";
-import { getMonthOption } from "../../constants/months";
+import {
+  computeMinYear,
+  getCurrentMonthKey,
+  getMonthOption,
+} from "../../constants/months";
 import { useTransactionsStore } from "../../stores/transactionsStore";
 import { useAiInsightsStore } from "../../stores/aiInsightsStore";
 import { generateInsight } from "../../utils/aiService";
@@ -76,10 +80,16 @@ const Row2 = styled.div`
 export const HomePage: React.FC = () => {
   // 월을 바꾸면 같은 화면 구조 안에서 해당 월의 집계만 교체됩니다.
   // 거래 데이터는 transactionsStore에서 구독해 가져오고, 추가/삭제가 즉시 반영됩니다.
-  const [month, setMonth] = useState("2026-04");
+  // 디폴트 월은 "오늘 시점의 현재 월". 페이지를 재방문해도 항상 최신 월에서 출발합니다.
+  const [month, setMonth] = useState(() => getCurrentMonthKey());
   const rows = useTransactionsStore();
   const data = useMemo(() => buildHomeData(rows, month), [rows, month]);
   const monthOption = getMonthOption(month);
+  // MonthPicker 셀렉터의 가장 오래된 년도 — 거래 데이터에 옛날 거래가 있으면 자동으로 뒤로 확장.
+  const pickerMinYear = useMemo(
+    () => computeMinYear(rows.map((row) => row.date)),
+    [rows]
+  );
 
   const { getInsight, setInsight } = useAiInsightsStore();
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -131,7 +141,7 @@ export const HomePage: React.FC = () => {
       title="최신 소비 요약"
       headerRight={
         <HeaderRight>
-          <MonthPicker value={month} onChange={setMonth} />
+          <MonthPicker value={month} onChange={setMonth} minYear={pickerMinYear} />
           <DateStamp>{monthOption.stamp}</DateStamp>
         </HeaderRight>
       }
