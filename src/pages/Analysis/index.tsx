@@ -18,7 +18,7 @@ import { WeeklyPattern } from "./components/WeeklyPattern";
 import { buildAnalysisData } from "./data";
 import { getMonthOption, getPrevMonthKey, LATEST_MONTH_KEY } from "../../constants/months";
 import { useTransactionsStore } from "../../stores/transactionsStore";
-import { useCategoryColorMap } from "../../stores/categoriesStore";
+import { useCategoryColorMap, useCategoryNameMap } from "../../stores/categoriesStore";
 
 const Grid = styled.div`
   display: grid;
@@ -52,14 +52,15 @@ export const AnalysisPage: React.FC = () => {
   const rows = useTransactionsStore();
   // 설정에서 바꾼 색이 카테고리별 지출 차트에 즉시 반영되도록 스토어 구독 결과를 그대로 흘려보냅니다.
   const categoryColorMap = useCategoryColorMap();
+  const categoryNameMap = useCategoryNameMap();
   const data = useMemo(
-    () => buildAnalysisData(rows, month, categoryColorMap),
-    [rows, month, categoryColorMap]
+    () => buildAnalysisData(rows, month, categoryColorMap, categoryNameMap),
+    [rows, month, categoryColorMap, categoryNameMap]
   );
   // CategoryBars의 "지난 달" 탭에서 쓸 전달 참조 데이터.
   const prevData = useMemo(
-    () => buildAnalysisData(rows, getPrevMonthKey(month), categoryColorMap),
-    [rows, month, categoryColorMap]
+    () => buildAnalysisData(rows, getPrevMonthKey(month), categoryColorMap, categoryNameMap),
+    [rows, month, categoryColorMap, categoryNameMap]
   );
   const monthOption = getMonthOption(month);
 

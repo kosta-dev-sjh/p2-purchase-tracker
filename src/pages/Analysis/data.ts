@@ -173,7 +173,7 @@ function buildCategory(
   return entries;
 }
 
-function buildRepeat(rows: TxRow[]): RepeatItem[] {
+function buildRepeat(rows: TxRow[], nameMap?: Record<string, string>): RepeatItem[] {
   // 같은 상품을 여러 번 구매한 경향을 잡기 위해 제목을 키로 집계합니다.
   // 반복구매 카드는 카테고리 라벨을 한 개만 표시하므로 대표 카테고리(categories[0])를 사용합니다.
   const byTitle = new Map<
@@ -206,7 +206,9 @@ function buildRepeat(rows: TxRow[]): RepeatItem[] {
       rank: (index + 1) as 1 | 2 | 3,
       title: entry.title,
       platform: PLATFORM_LABELS[entry.platform],
-      category: CATEGORY_LABELS[entry.category as keyof typeof CATEGORY_LABELS] ?? entry.category,
+      category: nameMap?.[entry.category]
+        ?? CATEGORY_LABELS[entry.category as keyof typeof CATEGORY_LABELS]
+        ?? entry.category,
       count: entry.count,
       amount: entry.amount,
     }));
@@ -401,14 +403,16 @@ export const buildAnalysisData = (
    * 표준 카테고리 키 → 색상 맵. 설정 화면에서 사용자가 지정한 색을 그대로 쓰기 위해
    * 페이지에서 categoriesStore 구독 결과를 주입합니다. 미전달 시 기본 팔레트로 폴백합니다.
    */
-  categoryColorMap?: Record<TxCategory, string>
+  categoryColorMap?: Record<TxCategory, string>,
+  /** 카테고리 키 → 표시 이름 맵. 커스텀 카테고리 이름을 분석 화면에 반영하기 위해 주입합니다. */
+  categoryNameMap?: Record<string, string>
 ): AnalysisMockData => {
   const thisMonth = rows.filter((row) => toMonthKey(row.date) === monthKey);
   const prevMonth = rows.filter((row) => toMonthKey(row.date) === getPrevMonthKey(monthKey));
 
   const platform = buildPlatform(thisMonth);
-  const category = buildCategory(thisMonth, categoryColorMap);
-  const repeat = buildRepeat(thisMonth);
+  const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap);
+  const repeat = buildRepeat(thisMonth, categoryNameMap);
   const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(thisMonth, monthKey);
   const trend = buildTrend(rows, monthKey);
   const weekly = buildWeekly(thisMonth);

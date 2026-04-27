@@ -286,3 +286,12 @@ export function useCategoryColorMap(): Record<string, string> {
   }
   return map;
 }
+
+export function useCategoryNameMap(): Record<string, string> {
+  const items = useCategoriesStore();
+  const map: Record<string, string> = {};
+  for (const entry of items) {
+    map[entry.id] = entry.name;
+  }
+  return map;
+}
