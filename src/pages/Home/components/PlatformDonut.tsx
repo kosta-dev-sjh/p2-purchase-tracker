@@ -206,7 +206,9 @@ export const PlatformDonut: React.FC<{
       <CardBd>
         <Body>
           <DonutWrap>
-            <ResponsiveContainer width="100%" height="100%">
+            {/* minHeight/minWidth 200 — DonutWrap 의 명시 크기와 동일하게 둬서 첫 prepass
+                측정값 -1 일 때 안전한 fallback 으로 사용. 시각 변화 없음. */}
+            <ResponsiveContainer width="100%" height="100%" minHeight={200} minWidth={200}>
               <PieChart>
                 <Pie
                   data={chartItems}

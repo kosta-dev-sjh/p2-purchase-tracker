@@ -124,7 +124,8 @@ export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note, subtit
       </CardHd>
       <CardBd>
         <ChartWrap>
-          <ResponsiveContainer width="100%" height="100%">
+          {/* 첫 prepass 측정 -1 워닝 방지: ChartWrap 명시 height 180 과 같은 fallback. */}
+          <ResponsiveContainer width="100%" height="100%" minHeight={180} minWidth={1}>
             <BarChart
               data={days}
               margin={{ top: 16, right: 8, left: 8, bottom: 0 }}
