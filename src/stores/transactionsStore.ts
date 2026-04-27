@@ -420,6 +420,20 @@ export const transactionsStore = {
   clearAll(): TxRow[] {
     return useTransactionsStoreBase.getState().clearAll();
   },
+  /**
+   * 로그아웃/계정 전환 시 호출. 가맹점→카테고리 학습 캐시와 가맹점 템플릿 캐시는
+   * 직전 사용자의 거래 패턴이 함축돼 있어 다음 사용자에게 그대로 노출되면 의도치 않은
+   * 자동 분류/자동 채우기가 발생합니다. 인메모리 캐시는 없고 localStorage 만 비우면 됩니다.
+   */
+  clearLearnedCaches(): void {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.removeItem(LEARNED_STORAGE_KEY);
+      window.localStorage.removeItem(LEARNED_TEMPLATE_STORAGE_KEY);
+    } catch {
+      /* localStorage 접근 거부는 보안 차원에서 무시 가능 */
+    }
+  },
   hydrate(rows: TxRow[]): TxRow[] {
     return useTransactionsStoreBase.getState().hydrate(rows);
   },

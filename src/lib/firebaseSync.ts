@@ -19,6 +19,7 @@ import { authStore } from "../stores/authStore";
 import { categoriesStore, DEFAULT_CATEGORIES } from "../stores/categoriesStore";
 import { profileStore, DEFAULT_PROFILE } from "../stores/profileStore";
 import { transactionsStore } from "../stores/transactionsStore";
+import { aiInsightsStore } from "../stores/aiInsightsStore";
 import {
   bootstrapCategories,
   bootstrapUserProfile,
@@ -81,6 +82,10 @@ function resetLocalState(): void {
   profileStore.hydrate({ ...DEFAULT_PROFILE });
   categoriesStore.hydrate([...DEFAULT_CATEGORIES]);
   transactionsStore.hydrate([]);
+  // 직전 사용자의 거래 패턴이 함축된 AI 인사이트 캐시와 학습 캐시도 비웁니다.
+  // 같은 단말에서 다른 계정으로 로그인하는 경우 이전 사용자 데이터가 새 화면에 새지 않게 하는 게 목적.
+  aiInsightsStore.clear();
+  transactionsStore.clearLearnedCaches();
 }
 
 async function ensureBootstrap(user: User): Promise<void> {

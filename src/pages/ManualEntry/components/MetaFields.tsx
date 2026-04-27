@@ -19,6 +19,7 @@ import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { useCategoriesStore } from "../../../stores/categoriesStore";
 import { todayAsDotDate } from "../../../utils/date";
+import { MAX_MEMO_LENGTH, MAX_TITLE_LENGTH } from "../../../constants/inputLimits";
 
 export type CategoryKey = keyof typeof CATEGORY_LABELS;
 
@@ -252,6 +253,7 @@ export const MetaFields: React.FC<{
             placeholder="예: 쿠팡 주문, 네이버 환불"
             value={value.title}
             onChange={(event) => patch({ title: event.target.value })}
+            maxLength={MAX_TITLE_LENGTH}
           />
         </FormField>
       </Field>
@@ -445,6 +447,7 @@ export const MetaFields: React.FC<{
             placeholder="거래에 대한 메모를 남겨보세요."
             value={value.memo}
             onChange={(event) => patch({ memo: event.target.value })}
+            maxLength={MAX_MEMO_LENGTH}
           />
         </FormField>
       </Field>

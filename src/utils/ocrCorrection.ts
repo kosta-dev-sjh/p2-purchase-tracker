@@ -216,7 +216,7 @@ function normalizeQuotes(input: string): string {
  * 영향을 주지 않습니다. 멱등 — 두 번 태워도 "1개" → "1개" 로 유지됩니다.
  */
 function recoverTrailingGaeUnit(input: string): string {
-  return input.replace(/(\d{1,3})\s*[}\)\|]\s*(?=$|[\s,.·])/gm, "$1개");
+  return input.replace(/(\d{1,3})\s*[})|]\s*(?=$|[\s,.·])/gm, "$1개");
 }
 
 /**
@@ -319,7 +319,7 @@ function dropStandaloneRibbonNoiseLines(input: string): string {
   const lines = input.split("\n");
 
   const isProtectedLine = (line: string): boolean =>
-    /(?:20\d{2}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}|\d[\d,]*\s*원|배송\s*완료|상품\s*준비\s*중|결제\s*완료|주문\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|주문\s*상세보기|반품\s*상세\s*보기)/.test(
+    /(?:20\d{2}\s*[.-]\s*\d{1,2}\s*[.-]\s*\d{1,2}|\d[\d,]*\s*원|배송\s*완료|상품\s*준비\s*중|결제\s*완료|주문\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|주문\s*상세보기|반품\s*상세\s*보기)/.test(
       line,
     );
 

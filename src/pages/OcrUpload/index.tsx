@@ -28,6 +28,7 @@ import {
   type AnalysisProgress,
 } from "./components/AnalysisProgressModal";
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
+import { ALLOWED_IMAGE_MIME_TYPES, MAX_IMAGE_BYTES } from "../../constants/inputLimits";
 import { ocrStore } from "../../stores/ocrStore";
 import { analyzeUploadedImages } from "../../utils/ocrAnalyzeImages";
 import type { OcrImageItem } from "../OcrEdit/data";
@@ -141,7 +142,34 @@ export const OcrUploadPage: React.FC = () => {
     // 남은 슬롯을 현재 state 스냅샷으로 계산합니다.
     const remainingSlots = MAX_IMAGES - images.length;
     if (remainingSlots <= 0) return;
-    const filesToAdd = files.slice(0, remainingSlots);
+    // MIME 타입 화이트리스트 + 사이즈 상한 검증.
+    // 사용자 단말은 다양한 캡쳐 도구를 쓰므로 jpeg/png/webp/heic 만 명시적으로 허용하고
+    // 그 외 (text/pdf/svg 등) 는 OCR 단계에서 의미 없거나 위험할 수 있어 입력 시점에 차단.
+    // 사이즈 상한은 메모리·Firestore 비용 보호 + DoS 방지(거대한 파일을 여러 장 올리는 패턴).
+    const accepted: File[] = [];
+    let rejectedMime = 0;
+    let rejectedSize = 0;
+    for (const file of files.slice(0, remainingSlots)) {
+      const mimeOk = (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(file.type);
+      const sizeOk = file.size > 0 && file.size <= MAX_IMAGE_BYTES;
+      if (!mimeOk) {
+        rejectedMime += 1;
+        continue;
+      }
+      if (!sizeOk) {
+        rejectedSize += 1;
+        continue;
+      }
+      accepted.push(file);
+    }
+    if (rejectedMime > 0 || rejectedSize > 0) {
+      // 정확한 toast 시스템이 없는 단계라 console + 추후 SaveResultModal 류 안내로 묶기 좋게
+      // console.warn 으로 남깁니다(사용자에 즉시 보이지 않더라도 개발 단계에서 확인 가능).
+      console.warn(
+        `[OcrUpload] 파일 일부 거절: MIME ${rejectedMime}건, 사이즈 초과(${MAX_IMAGE_BYTES / (1024 * 1024)}MB) ${rejectedSize}건`,
+      );
+    }
+    const filesToAdd = accepted;
 
     // thumbUrl(blob)은 즉시 생성하고, sourceDataUrl(압축 data URL)은 병렬로 생성합니다.
     // sourceDataUrl은 저장 후 거래내역 "OCR 이미지 보기"에 쓰이며 새로고침 후에도 유효합니다.

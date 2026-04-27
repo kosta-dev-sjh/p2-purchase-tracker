@@ -119,6 +119,10 @@ export const HomePage: React.FC = () => {
     const cached = getInsight(month);
 
     if (!cached || cached.hash !== hash) {
+      // 외부 비동기 호출(AI 인사이트) 트리거 + loading flag 동기화는 effect 의 정당한 용도라
+      // react-hooks/set-state-in-effect 비활성화. 호출 자체가 cascading 으로 이어지지 않고
+      // finally 에서 한 번만 풀어 줍니다.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsAiLoading(true);
       const rulesText = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
 

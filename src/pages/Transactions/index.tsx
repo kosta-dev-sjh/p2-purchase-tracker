@@ -437,10 +437,13 @@ export const TransactionsPage: React.FC = () => {
     const targetId = state?.editTransactionId;
 
     // OCR/CSV 저장 후 넘어올 때 해당 날짜의 월로 자동 전환합니다.
+    // 외부 라우팅 state(targetDate) 에 따라 페이지 내부 month/visibleCount 를 동기화하는
+    // 정당한 effect 케이스 (한 번만 실행되고 navigate 로 state 를 비웁니다).
     const targetDate = state?.targetDate;
     if (!targetId && targetDate) {
       const key = toMonthKey(targetDate);
       if (key) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setMonth(key);
         resetVisibleCount();
       }

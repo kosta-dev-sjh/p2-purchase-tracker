@@ -101,7 +101,7 @@ function stripResidualButtonText(name: string): string {
 function toFiniteAmount(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
-    const digits = value.replace(/[^\d.\-]/g, "");
+    const digits = value.replace(/[^\d.-]/g, "");
     if (!digits) return 0;
     const n = Number(digits);
     return Number.isFinite(n) ? n : 0;

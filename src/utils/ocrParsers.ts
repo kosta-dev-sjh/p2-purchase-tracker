@@ -190,7 +190,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   //   - 예: "로켓내일마이싹" → "마이싹", "판매자로켓새벽코지엔비" → "코지엔비",
   //         "판매자로켓내일BFL" → "BFL".
   const COUPANG_GARBAGE_HEAD_PATTERNS = [
-    /[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-\|ㅣ=_*©!?~@#&]+\s*/,
+    /[🚀↑↓▲▼★☆·•»«‹›<>;:,."'”“‘’\-|ㅣ=_*©!?~@#&]+\s*/u,
     /[a-zA-Zㄱ-ㅎㅏ-ㅣ0-9]{1,4}\s*[>»‹<]+\s*/,
     /[A-Za-z0-9]{1,4}(?=\s+(?:로[켓컷킷겟케]|판매자|편매자|란매자|환매자|만매자|새벽|내일|대일|오늘|당일|와우|무료|해외))\s+/,
     /[A-Za-z]{1,3}\s+[ㄱ-ㅎㅏ-ㅣ]\s+/,
@@ -242,7 +242,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     /장바구니\s*담기/,
   ];
   const COUPANG_MOBILE_BUTTONS = [
-    /배송\s*[·•\-]?\s*주문\s*관리/,
+    /배송\s*[·•-]?\s*주문\s*관리/,
     /바로\s*구매/,
     /더보기/,
     /상세보기/,
@@ -270,7 +270,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     // 모바일 버튼.
     /^더보기\s*$/,
     /^상세보기\s*>?\s*$/,
-    /^배송\s*[·•\-]?\s*주문\s*관리\s*$/,
+    /^배송\s*[·•-]?\s*주문\s*관리\s*$/,
     /^바로\s*구매\s*$/,
     // 모바일 버튼 OCR 잔류 — 쿠팡 앱의 "배송 · 주문 관리 | 바로구매 | [장바구니아이콘]" 버튼 행이
     //   Tesseract 에서 "배송" 접두가 붙기도/빠지기도 하고, 중간점이 `ㆍ` 로 떨어지며 꼬리에
@@ -350,7 +350,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
   // 있었습니다. 앵커로 막으면 버튼 꼬리는 이름 처리 경로로 넘어가 leadingTagRegex / 이름 수집
   // 에서 자연스럽게 정리됩니다. 한편 한글 사이 공백 변형("배송 완료", "상품 준비 중") 은 `\s*`
   // 로 흡수해 한 줄 regex 를 유지합니다.
-  const statusLineRegex = /^[\s·•▪\-\*\|ㅣ]*(배송\s*완료|배송\s*중|상품\s*준비\s*중|결제\s*완료|주문\s*완료|주문\s*취소|취소\s*완료|환불\s*완료|환불\s*처리|반품\s*완료|구매\s*확정|정기\s*결제|구독)/;
+  const statusLineRegex = /^[\s·•▪\-*|ㅣ]*(배송\s*완료|배송\s*중|상품\s*준비\s*중|결제\s*완료|주문\s*완료|주문\s*취소|취소\s*완료|환불\s*완료|환불\s*처리|반품\s*완료|구매\s*확정|정기\s*결제|구독)/;
 
   // 섹션 경계 — 이 라인 이후는 주문 집계 영역이라 상품으로 보지 않음.
   const sectionBoundaryRegex = /(결제\s*정보|결제영수증\s*정보|받는사람\s*정보|배송(?:상품)?\s*주문상태\s*안내|배송지\s*정보)/;
@@ -532,7 +532,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     const prefix = m[0];
     if (prefix.length === 0) return line; // 이미 선두가 깨끗한 한글
     // 노이즈 마커: ASCII 영문/숫자, 특수 연산/괄호류, 한글 자모(ㄱ-ㅎㅏ-ㅣ)
-    const hasNoise = /[A-Za-z0-9=|\[\]#\+\^~ㄱ-ㅎㅏ-ㅣ]/.test(prefix);
+    const hasNoise = /[A-Za-z0-9=|[\]#+^~ㄱ-ㅎㅏ-ㅣ]/.test(prefix);
     if (!hasNoise) return line; // 순수 한글+공백 prefix 는 합법 브랜드("탐사 ", "초록 " 등)로 간주
     // 2026-04-23 (3차 보정, 모바일 캡쳐):
     //   "샤넬 루쥬 코코 밤 3g 무료선물포장..." 처럼 2글자 한글 덩어리가 공백으로 이어진 뒤
@@ -637,7 +637,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
     while (cleaned !== prev) {
       prev = cleaned;
       cleaned = cleaned
-        .replace(/[\s,·.…\-]*[ㄱ-ㅎㅏ-ㅣ]+\s*$/, '')
+        .replace(/[\s,·.…-]*[ㄱ-ㅎㅏ-ㅣ]+\s*$/, '')
         .replace(/\s*[…]+\s*\.?\s*$/, '')
         .replace(/\s*\.…\s*$/, '')
         // 꼬리 ` .` (공백+온점) 컷 — OCR 이 상품명 뒤 truncation 을 온점 1개로 떨군 케이스.
@@ -1052,7 +1052,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // 라인 정규화 — 쿠팡과 같은 가벼운 전처리
   let lines = rawText
     .split('\n')
-    .map((line) => line.replace(/^[\s\|ㅣ<\-—©]+/, '').trim())
+    .map((line) => line.replace(/^[\s|ㅣ<\-—©]+/, '').trim())
     .filter((line) => line.length > 0);
 
   // ── 광고 섹션 제거 (모바일 캡쳐 한정 명시적 마커) ──────────────────────────
@@ -1228,7 +1228,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     //   은 라인 전체가 UI 일 때만 컷하고 합성된 라인은 itemName 으로 흘러가서 sim 손실.
     //   여기서 끝부분에 붙어 있으면 잘라내. 한글 본문은 보존.
     cleaned = cleaned
-      .replace(/\s*상세\s*보기\s*>?\s*[|\\\/·:_-]?\s*판매자\s*정보\s*\/?\s*문의\s*>?\s*$/u, "")
+      .replace(/\s*상세\s*보기\s*>?\s*[|\\/·:_-]?\s*판매자\s*정보\s*\/?\s*문의\s*>?\s*$/u, "")
       .replace(/\s*상세\s*보기\s*>?\s*$/u, "")
       .replace(/\s*판매자\s*정보\s*\/?\s*문의\s*>?\s*$/u, "")
       .trim();
@@ -1616,7 +1616,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   const looksLikeDateLine = (line: string): boolean => {
     if (!ORDER_OR_PAYMENT_KW.test(line)) return false;
     // 라인의 60% 이상이 숫자/구두점/공백이면 날짜 라인으로 간주.
-    const nonHangul = (line.match(/[\d.\s:\-,(\)]/g) ?? []).length;
+    const nonHangul = (line.match(/[\d.\s:\-,()]/g) ?? []).length;
     return nonHangul / Math.max(1, line.length) >= 0.6;
   };
 

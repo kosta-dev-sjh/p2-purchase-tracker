@@ -62,7 +62,7 @@ function toFiniteAmount(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
     // 콤마/공백/원/₩/달러 기호 등 가격 표기에 흔한 비-숫자 문자를 제거하고 정수로 환원.
-    const digits = value.replace(/[^\d.\-]/g, "");
+    const digits = value.replace(/[^\d.-]/g, "");
     if (!digits) return 0;
     const n = Number(digits);
     return Number.isFinite(n) ? n : 0;
@@ -92,7 +92,8 @@ function sumProductTotal(products: OcrOrder["products"]): number {
  * 모든 OCR 카드의 `totalAmount` 동기화는 이 함수 한 곳을 통과해야 하며, OrderCard 의
  * "전체 거래금액" 표시도 이 함수를 직접 호출하지 않고 `order.totalAmount` 만 읽으면 됩니다.
  */
-export function deriveOrderTotal(order: OcrOrder): number {
+// 외부 import 없음 — 같은 파일 내부 사용만 있어 export 를 떼고 react-refresh 룰을 만족시킵니다.
+function deriveOrderTotal(order: OcrOrder): number {
   const productsSum = sumProductTotal(order.products);
   const sectionTotal = toFiniteAmount(order.sectionTotal);
   const base = order.folded && sectionTotal > 0 ? sectionTotal : productsSum;

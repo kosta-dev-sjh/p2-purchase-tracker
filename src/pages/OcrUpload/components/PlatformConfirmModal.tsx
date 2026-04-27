@@ -214,6 +214,8 @@ export const PlatformConfirmModal: React.FC<PlatformConfirmModalProps> = ({
 
   useEffect(() => {
     if (isOpen) {
+      // 모달 재오픈 시 외부 prop(images) 의 최신 스냅샷으로 동기화하는 정당한 effect.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setDraft(images);
     }
   }, [isOpen, images]);

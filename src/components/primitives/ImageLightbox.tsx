@@ -178,10 +178,15 @@ export const ImageLightbox: React.FC<ImageLightboxProps> = ({
 
   // 이미지 src 변경 또는 닫힘 시 zoom/offset 초기화. 이전 zoom 상태가 다른 이미지에 그대로
   // 적용되면 사용자 혼동을 줘서.
+  // 외부 prop(src/isOpen) 에 따라 내부 zoom 상태를 "동기화" 하는 정당한 effect 케이스라
+  // react-hooks/set-state-in-effect 는 의도적으로 비활성화. 호출자가 매번 key 를 바꿔
+  // 리마운트하게 만들면 호출 부담이 커지므로 effect 동기화가 더 자연스럽습니다.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!isOpen) reset();
   }, [isOpen, reset]);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     reset();
   }, [src, reset]);
 

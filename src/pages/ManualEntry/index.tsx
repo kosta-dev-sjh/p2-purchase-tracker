@@ -32,6 +32,11 @@ import { checkProductTotal } from "../../utils/productTotalCheck";
 import { formatKRW } from "../../utils/format";
 import type { TxRow } from "./../Transactions/components/TransactionTable";
 import { mapCategories, mapPlatform } from "../../utils/manualMapping";
+import {
+  MAX_AMOUNT_VALUE,
+  MAX_MEMO_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "../../constants/inputLimits";
 
 const Lead = styled.p`
   margin: 0 0 16px;
@@ -350,6 +355,21 @@ export const ManualEntryPage: React.FC = () => {
     if (missing.length > 0) {
       onError(`다음 항목을 입력해 주세요 — ${missing.join(", ")}`);
       if (firstMissingField) focusMetaField(firstMissingField);
+      return null;
+    }
+    // 길이/금액 한도 검증. maxLength 로 1차 차단되지만 paste/IME 우회 가능성에 대비한 보강.
+    if (meta.title.trim().length > MAX_TITLE_LENGTH) {
+      onError(`거래명은 ${MAX_TITLE_LENGTH}자 이내로 입력해 주세요.`);
+      focusMetaField("title");
+      return null;
+    }
+    if (meta.memo.trim().length > MAX_MEMO_LENGTH) {
+      onError(`메모는 ${MAX_MEMO_LENGTH}자 이내로 입력해 주세요.`);
+      return null;
+    }
+    if (Math.abs(amountNumber) > MAX_AMOUNT_VALUE) {
+      onError("금액이 너무 커요. 한도를 확인해 주세요.");
+      focusMetaField("amount");
       return null;
     }
     const signedAmount =

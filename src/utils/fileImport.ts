@@ -6,6 +6,7 @@
 import { importRows, type CsvImportResult } from "./csvImport";
 import { decodeCsvBuffer, parseCsv } from "./csvParse";
 import { readXlsxAsRows } from "./xlsxImport";
+import { MAX_IMPORT_FILE_BYTES } from "../constants/inputLimits";
 
 export type SupportedFileKind = "csv" | "xlsx";
 
@@ -13,6 +14,15 @@ export class UnsupportedFileTypeError extends Error {
   constructor(fileName: string) {
     super(`지원하지 않는 파일 형식입니다 (${fileName}). CSV, XLSX 또는 XLS 파일을 올려주세요.`);
     this.name = "UnsupportedFileTypeError";
+  }
+}
+
+export class OversizedFileError extends Error {
+  constructor(fileName: string, sizeBytes: number) {
+    const sizeMb = (sizeBytes / (1024 * 1024)).toFixed(1);
+    const limitMb = MAX_IMPORT_FILE_BYTES / (1024 * 1024);
+    super(`파일 크기(${sizeMb}MB)가 한도(${limitMb}MB) 를 넘었습니다 — ${fileName}`);
+    this.name = "OversizedFileError";
   }
 }
 
@@ -24,6 +34,11 @@ export function detectFileKind(fileName: string): SupportedFileKind | null {
 }
 
 export async function importFile(file: File): Promise<CsvImportResult> {
+  // 사이즈 상한 검증 — 파싱 전 차단해 비정상적으로 큰 파일이 메모리에 풀리지 않도록 보호.
+  // 일반적인 카드 한 달 이용내역은 100KB 미만이므로 5MB 한도는 사실상 모든 정상 사용을 통과시킵니다.
+  if (file.size > MAX_IMPORT_FILE_BYTES) {
+    throw new OversizedFileError(file.name, file.size);
+  }
   const kind = detectFileKind(file.name);
   if (kind === "csv") {
     const text = decodeCsvBuffer(await file.arrayBuffer());

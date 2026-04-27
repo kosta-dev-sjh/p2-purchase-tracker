@@ -10,6 +10,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import type { OcrProduct, Status } from "../data";
 import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
+import { sanitizeHref } from "../../../utils/safeUrl";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -448,25 +449,32 @@ export const ProductTable: React.FC<{
               onChange={(e) => patch(row.id, { link: e.target.value })}
             />
           </div>
-          {/* 링크가 있으면 새 탭으로 열기 아이콘을 표시합니다 */}
-          <div style={{ display: "grid", placeItems: "center" }}>
-            {row.link ? (
-              <LinkButton
-                href={row.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="새 탭으로 열기"
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M6 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
-                  <path d="M9 2h5v5" />
-                  <path d="M14 2 8 8" />
-                </svg>
-              </LinkButton>
-            ) : (
-              <span />
-            )}
-          </div>
+          {/* 링크가 있으면 새 탭으로 열기 아이콘을 표시합니다.
+              row.link 는 사용자/OCR 입력이라 sanitizeHref 로 검증 — 위험 스킴이면 버튼 자체를 숨겨
+              `<a href="javascript:...">` 가 새지 않게 합니다. */}
+          {(() => {
+            const safeLink = sanitizeHref(row.link);
+            return (
+              <div style={{ display: "grid", placeItems: "center" }}>
+                {safeLink ? (
+                  <LinkButton
+                    href={safeLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="새 탭으로 열기"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M6 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
+                      <path d="M9 2h5v5" />
+                      <path d="M14 2 8 8" />
+                    </svg>
+                  </LinkButton>
+                ) : (
+                  <span />
+                )}
+              </div>
+            );
+          })()}
           <div style={{ display: "grid", placeItems: "center" }}>
             <RemoveButton type="button" onClick={() => handleRemove(row.id)}>
               ×

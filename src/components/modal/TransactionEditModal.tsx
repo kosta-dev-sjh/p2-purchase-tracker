@@ -45,6 +45,11 @@ import { checkProductTotal } from "../../utils/productTotalCheck";
 import { checkDuplicates } from "../../utils/duplicateCheck";
 import { formatKRW } from "../../utils/format";
 import { useTransactionsStore } from "../../stores/transactionsStore";
+import {
+  MAX_AMOUNT_VALUE,
+  MAX_MEMO_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "../../constants/inputLimits";
 
 interface Props {
   /** 편집 대상 거래. 상위에서 반드시 존재할 때만 이 컴포넌트를 마운트합니다. */
@@ -392,6 +397,21 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
     if (!meta.date.trim()) {
       setError("거래일자를 선택해 주세요.");
       focusMetaField("date");
+      return null;
+    }
+    // 길이/금액 한도 검증. 신규 입력과 동일 정책으로 한도 위반 시 차단합니다.
+    if (meta.title.trim().length > MAX_TITLE_LENGTH) {
+      setError(`거래명은 ${MAX_TITLE_LENGTH}자 이내로 입력해 주세요.`);
+      focusMetaField("title");
+      return null;
+    }
+    if (meta.memo.trim().length > MAX_MEMO_LENGTH) {
+      setError(`메모는 ${MAX_MEMO_LENGTH}자 이내로 입력해 주세요.`);
+      return null;
+    }
+    if (Math.abs(amountNumber) > MAX_AMOUNT_VALUE) {
+      setError("금액이 너무 커요. 한도를 확인해 주세요.");
+      focusMetaField("amount");
       return null;
     }
 

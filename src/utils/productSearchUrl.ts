@@ -12,6 +12,7 @@
  *   이는 "플랫폼 미지정 거래도 어딘가에 가서 그 상품을 찾아볼 수 있어야 한다" 는 원칙을 따르기 위함입니다.
  */
 import type { TxPlatform } from "../pages/Transactions/components/TransactionTable";
+import { sanitizeHref } from "./safeUrl";
 
 export function buildPlatformSearchUrl(
   platform: TxPlatform | null | undefined,
@@ -39,9 +40,13 @@ export function resolveProductLink(
   platform: TxPlatform | null | undefined,
   name: string
 ): { href: string; isFallback: boolean } {
-  const trimmed = link?.trim();
-  if (trimmed) {
-    return { href: trimmed, isFallback: false };
+  // 사용자 입력 link 는 sanitizeHref 를 통과해야 `<a href>` 에 흘려보낼 수 있습니다.
+  // `javascript:`, `data:`, `vbscript:` 같은 위험한 스킴이 들어왔다면 폴백 검색 URL 로 대체.
+  // 이 경계는 ProductAddModal 의 입력 시점에도 한 번 거르지만, defense-in-depth 로 출력 단에서
+  // 한 번 더 검증해 잘못된 데이터가 어디서 들어오든(레거시 거래·외부 import 등) 안전합니다.
+  const safe = sanitizeHref(link);
+  if (safe) {
+    return { href: safe, isFallback: false };
   }
   return { href: buildPlatformSearchUrl(platform, name), isFallback: true };
 }

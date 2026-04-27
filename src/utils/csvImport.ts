@@ -27,6 +27,7 @@ import {
 import { type CsvRow } from "./csvParse";
 import { normalizeMerchant } from "./merchantNormalize";
 import { inferCardRecordKind } from "./cardInstallment";
+import { MAX_IMPORT_ROW_COUNT } from "../constants/inputLimits";
 
 const CATEGORY_MAP: Record<string, TxCategory> = {
   생활용품: "living",
@@ -63,9 +64,9 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
   return "";
 }
 
-function parseAmount(raw: any): number | null {
+function parseAmount(raw: unknown): number | null {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const rawStr = String(raw || "").trim();
+  const rawStr = String(raw ?? "").trim();
   // 숫자, 마이너스 부호, 점(소수점)만 남기고 제거
   const cleaned = rawStr.replace(/[^0-9.-]/g, "");
   if (!cleaned) return null;
@@ -74,8 +75,8 @@ function parseAmount(raw: any): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function normalizeDate(raw: any): string | null {
-  const rawStr = String(raw || "").trim();
+function normalizeDate(raw: unknown): string | null {
+  const rawStr = String(raw ?? "").trim();
   // 숫자만 추출 (예: "2026년 4월 20일" -> ["2026", "4", "20"])
   let digits = rawStr.match(/\d+/g);
   if (!digits) return null;
@@ -219,7 +220,20 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
   const skipped: CsvImportSkipped[] = [];
   const now = Date.now();
 
-  parsed.forEach((raw, index) => {
+  // 행 수 상한 보호. 정상 카드 한 달 이용내역은 200행 이하라 10K 한도는 사실상 무한대로
+  // 잡혀 있으나, 악의적 입력(거대 CSV)이 메모리에서 풀리는 것을 방지합니다.
+  // 한도 초과 시 앞쪽 행만 처리하고 나머지는 한 건의 skip 항목으로 요약 보고합니다.
+  const truncated = parsed.length > MAX_IMPORT_ROW_COUNT;
+  const rows = truncated ? parsed.slice(0, MAX_IMPORT_ROW_COUNT) : parsed;
+  if (truncated) {
+    skipped.push({
+      index: MAX_IMPORT_ROW_COUNT,
+      reason: `행 수 상한(${MAX_IMPORT_ROW_COUNT}) 초과 — 이후 ${parsed.length - MAX_IMPORT_ROW_COUNT}행은 처리하지 않습니다.`,
+      raw: {},
+    });
+  }
+
+  rows.forEach((raw, index) => {
     const dateRaw = pickFirstValue(raw, DATE_HEADERS);
     const merchantRaw = pickFirstValue(raw, MERCHANT_HEADERS);
     const amountRaw = pickFirstValue(raw, AMOUNT_HEADERS);
