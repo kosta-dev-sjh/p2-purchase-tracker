@@ -228,7 +228,7 @@ export const AnalysisProgressModal: React.FC<AnalysisProgressModalProps> = ({
   return (
     <>
       <Overlay aria-hidden />
-      <Card role="dialog" aria-modal="true" aria-label="OCR 이미지 분석 진행률">
+      <Card role="dialog" aria-modal="true" aria-label="주문 캡처 분석 진행률">
         <Title>이미지 분석 중</Title>
         <Subtitle>
           업로드한 이미지를 순서대로 인식하고 있어요. 이미지 장수와 해상도에 따라 수십 초가

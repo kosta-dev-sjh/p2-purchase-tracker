@@ -130,4 +130,3 @@ export const GlobalStyle = createGlobalStyle`
     background: transparent;
   }
 `;
-

@@ -84,20 +84,51 @@ export const LoginForm: React.FC = () => {
       onSubmit={async (event) => {
         event.preventDefault();
         setError(null);
+        // 클라이언트 측 1차 검증 — 빈 폼/이메일 형식 오류는 서버까지 가지 않고 즉시 친화적 메시지로
+        // 안내합니다. 이걸 안 하면 Firebase가 "Firebase: Error (auth/invalid-email)." 같은
+        // 영문 raw 메시지를 던져 사용자가 이해 못하고, 백엔드 스택까지 노출돼 보안적으로도 좋지 않아요.
+        const trimmedEmail = email.trim();
+        if (!trimmedEmail || !password) {
+          setError("이메일과 비밀번호를 모두 입력해 주세요.");
+          return;
+        }
+        if (!/.+@.+\..+/.test(trimmedEmail)) {
+          setError("올바른 이메일 형식을 입력해 주세요.");
+          return;
+        }
         setSubmitting(true);
         try {
-          await signIn(email.trim(), password);
+          await signIn(trimmedEmail, password);
           navigate("/");
         } catch (err) {
           const code = (err as { code?: string }).code ?? "";
-          const message =
-            code === "auth/invalid-credential" ||
-            code === "auth/user-not-found" ||
-            code === "auth/wrong-password"
-              ? "이메일이나 비밀번호가 일치하지 않습니다."
-              : err instanceof Error
-                ? err.message
-                : "로그인에 실패했어요.";
+          // Firebase 에러 코드를 한국어 친화 메시지로 매핑합니다. 매핑되지 않은 코드는 일반화된
+          // 폴백으로 떨어뜨려 raw 'Firebase: Error (...)' 문자열이 그대로 노출되지 않게 합니다.
+          let message: string;
+          switch (code) {
+            case "auth/invalid-credential":
+            case "auth/user-not-found":
+            case "auth/wrong-password":
+              message = "이메일이나 비밀번호가 일치하지 않습니다.";
+              break;
+            case "auth/invalid-email":
+              message = "올바른 이메일 형식을 입력해 주세요.";
+              break;
+            case "auth/missing-password":
+              message = "비밀번호를 입력해 주세요.";
+              break;
+            case "auth/too-many-requests":
+              message = "너무 많은 요청이 들어와 잠시 후 다시 시도해 주세요.";
+              break;
+            case "auth/network-request-failed":
+              message = "네트워크 연결을 확인해 주세요.";
+              break;
+            case "auth/user-disabled":
+              message = "이 계정은 사용이 중지되었어요.";
+              break;
+            default:
+              message = "로그인에 실패했어요. 잠시 후 다시 시도해 주세요.";
+          }
           setError(message);
         } finally {
           setSubmitting(false);

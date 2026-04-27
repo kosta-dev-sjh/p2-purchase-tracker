@@ -18,6 +18,10 @@ import {
   normalizeMerchantKey,
   shouldInferCategory,
 } from "../utils/categoryInference";
+import {
+  normalizeTransactionRow,
+  normalizeTransactionRows,
+} from "../utils/transactionNormalize";
 import { auth } from "../lib/firebase";
 import {
   addTransactions,
@@ -31,6 +35,7 @@ import {
  * 사용자가 거래 수정으로 카테고리를 바꾸면 여기에 기록되고, 다음 import에서 룰보다 우선 적용됩니다.
  */
 const LEARNED_STORAGE_KEY = "spendtrack:category-learned:v1";
+const LEARNED_TEMPLATE_STORAGE_KEY = "spendtrack:merchant-template:v1";
 
 function readLearned(): Record<string, TxCategory> {
   if (typeof window === "undefined") return {};
@@ -56,6 +61,79 @@ function writeLearned(map: Record<string, TxCategory>): void {
   }
 }
 
+interface LearnedMerchantTemplate {
+  title?: string;
+  memo?: string;
+  categories?: TxCategory[];
+  status?: TxRow["status"];
+}
+
+function readLearnedTemplates(): Record<string, LearnedMerchantTemplate> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(LEARNED_TEMPLATE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as Record<string, LearnedMerchantTemplate>;
+    }
+    return {};
+  } catch {
+    return {};
+  }
+}
+
+function writeLearnedTemplates(map: Record<string, LearnedMerchantTemplate>): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LEARNED_TEMPLATE_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    /* 템플릿 학습은 보조 기능이므로 저장 실패 시 조용히 무시합니다. */
+  }
+}
+
+function isMeaningfulCategories(categories: TxCategory[] | undefined): categories is TxCategory[] {
+  return Array.isArray(categories) && categories.length > 0 && !(categories.length === 1 && categories[0] === "etc");
+}
+
+function buildLearnedTemplate(row: TxRow): LearnedMerchantTemplate {
+  const memo = row.memo?.trim();
+  return {
+    ...(row.title.trim() ? { title: row.title.trim() } : {}),
+    ...(memo ? { memo } : {}),
+    ...(isMeaningfulCategories(row.categories) ? { categories: [...row.categories] } : {}),
+    ...(row.status ? { status: row.status } : {}),
+  };
+}
+
+function deriveMerchantTemplateKeys(row: TxRow): string[] {
+  const keys = [row.title];
+  const originalMerchant = row.detail?.cardImport?.originalMerchant;
+  if (originalMerchant) keys.push(originalMerchant);
+  return Array.from(new Set(keys.map((item) => item.trim()).filter(Boolean)));
+}
+
+function learnMerchantTemplate(keys: string[], row: TxRow): void {
+  const template = buildLearnedTemplate(row);
+  if (
+    !template.title &&
+    !template.memo &&
+    !template.categories &&
+    !template.status
+  ) {
+    return;
+  }
+
+  const map = readLearnedTemplates();
+  keys
+    .map((key) => normalizeMerchantKey(key))
+    .filter(Boolean)
+    .forEach((key) => {
+      map[key] = template;
+    });
+  writeLearnedTemplates(map);
+}
+
 /**
  * 주어진 row 배열을 "저장 직전" 시점에 카테고리 자동추정으로 보강합니다.
  * - `categories`가 비었거나 `["etc"]`인 경우에만 건드립니다. 사용자가 명시적으로 고른 값은 그대로.
@@ -64,12 +142,30 @@ function writeLearned(map: Record<string, TxCategory>): void {
 function enrichCategories(rows: TxRow[]): TxRow[] {
   const bindings = categoriesStore.getBindings();
   const learned = readLearned();
+  const learnedTemplates = readLearnedTemplates();
   return rows.map((row) => {
-    if (!shouldInferCategory(row.categories)) return row;
-    // TxRow에는 별도의 merchant 필드가 없고 가맹점명은 title에 정규화돼 담깁니다(csvImport 참조).
-    const guess = inferCategory(row.title, { bindings, learnedMap: learned });
-    if (!guess) return row;
-    return { ...row, categories: [guess] };
+    const template = deriveMerchantTemplateKeys(row)
+      .map((key) => learnedTemplates[normalizeMerchantKey(key)])
+      .find(Boolean);
+    const nextCategories = shouldInferCategory(row.categories)
+      ? (() => {
+          const guess = inferCategory(row.title, { bindings, learnedMap: learned });
+          return guess ? [guess] : row.categories;
+        })()
+      : row.categories;
+
+    const hasTemplateCategories = isMeaningfulCategories(template?.categories);
+    const templateCategories = hasTemplateCategories ? template.categories : undefined;
+    const memo = template?.memo?.trim();
+    const title = template?.title?.trim();
+
+    return {
+      ...row,
+      ...(title ? { title } : {}),
+      ...(memo ? { memo } : {}),
+      ...(template?.status ? { status: template.status } : {}),
+      categories: templateCategories ? [...templateCategories] : nextCategories,
+    };
   });
 }
 
@@ -78,21 +174,23 @@ function enrichCategories(rows: TxRow[]): TxRow[] {
  * v3에는 "musinsa" 플랫폼의 랜덤 시드 행이 들어 있어 현재 타입(TxPlatform)에서
  * undefined 참조로 크래시가 났기 때문에, v4부터는 무조건 빈 상태로 시작합니다.
  */
-const STORAGE_KEY = "spendtrack:transactions:v4";
+const STORAGE_KEY = "spendtrack:transactions:v5";
 
 function readCurrent(): TxRow[] | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as TxRow[]) : null;
+    return Array.isArray(parsed)
+      ? normalizeTransactionRows(parsed as TxRow[])
+      : null;
   } catch {
     return null;
   }
 }
 
 function writeCurrent(rows: TxRow[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeTransactionRows(rows)));
 }
 
 /**
@@ -128,7 +226,7 @@ interface TransactionsState {
   appendItemsToTransaction: (
     id: string,
     items: { name: string; price: number; link?: string }[],
-    source?: "OCR" | "MANUAL"
+    source?: "OCR" | "MANUAL" | "CARD"
   ) => void;
   /** 저장된 거래를 모두 지워 "빈 계정" 상태로 돌립니다. */
   clearAll: () => TxRow[];
@@ -138,15 +236,16 @@ interface TransactionsState {
 const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
   rows: loadInitial(),
   replaceAll: (rows) => {
-    writeCurrent(rows);
-    set({ rows });
+    const normalized = normalizeTransactionRows(rows);
+    writeCurrent(normalized);
+    set({ rows: normalized });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void replaceTransactions(uid, rows);
+      void replaceTransactions(uid, normalized);
     }
   },
   addFromImport: (rows) => {
-    const enriched = enrichCategories(rows);
+    const enriched = normalizeTransactionRows(enrichCategories(rows));
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
@@ -156,16 +255,18 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     }
   },
   addFromManual: (row) => {
-    const next = [row, ...get().rows];
+    const normalized = normalizeTransactionRow(row);
+    const next = [normalized, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
+    learnMerchantTemplate(deriveMerchantTemplateKeys(normalized), normalized);
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [row]);
+      void addTransactions(uid, [normalized]);
     }
   },
   addMany: (rows) => {
-    const enriched = enrichCategories(rows);
+    const enriched = normalizeTransactionRows(enrichCategories(rows));
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
@@ -175,17 +276,20 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     }
   },
   addOne: (row) => {
-    const next = [row, ...get().rows];
+    const normalized = normalizeTransactionRow(row);
+    const next = [normalized, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [row]);
+      void addTransactions(uid, [normalized]);
     }
   },
   updateOne: (id, patch) => {
     const prev = get().rows.find((row) => row.id === id);
-    const next = get().rows.map((row) => (row.id === id ? { ...row, ...patch } : row));
+    const next = get().rows.map((row) =>
+      row.id === id ? normalizeTransactionRow({ ...row, ...patch }) : row,
+    );
     writeCurrent(next);
     set({ rows: next });
     const uid = auth.currentUser?.uid;
@@ -209,6 +313,16 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
           learned[key] = nextCat;
           writeLearned(learned);
         }
+      }
+    }
+
+    if (prev) {
+      const updated = next.find((row) => row.id === id);
+      if (updated) {
+        learnMerchantTemplate(
+          Array.from(new Set([...deriveMerchantTemplateKeys(prev), ...deriveMerchantTemplateKeys(updated)])),
+          updated,
+        );
       }
     }
   },
@@ -254,9 +368,10 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     return [];
   },
   hydrate: (rows) => {
-    writeCurrent(rows);
-    set({ rows });
-    return rows;
+    const normalized = normalizeTransactionRows(rows);
+    writeCurrent(normalized);
+    set({ rows: normalized });
+    return normalized;
   },
 }));
 
@@ -298,7 +413,7 @@ export const transactionsStore = {
   appendItemsToTransaction(
     id: string,
     items: { name: string; price: number; link?: string }[],
-    source: "OCR" | "MANUAL" = "OCR"
+    source: "OCR" | "MANUAL" | "CARD" = "OCR"
   ): void {
     useTransactionsStoreBase.getState().appendItemsToTransaction(id, items, source);
   },

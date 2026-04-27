@@ -37,8 +37,15 @@ export const TYPE_LABELS = {
 } as const;
 
 export const SOURCE_LABELS = {
-  OCR: "OCR",
+  // 사용자 피드백: "OCR" 이라는 약어가 직관적이지 않다는 피드백을 받아, 화면에 노출되는 모든 곳에서
+  // "주문 캡처" 라는 표현으로 통일합니다. 내부 코드 식별자(detail.source: "OCR")는 그대로 유지되어
+  // 기존 저장된 거래 데이터·라우트와 호환됩니다(2026-04-28).
+  OCR: "주문 캡처",
   MANUAL: "수동 입력",
+  // 카드 CSV/XLSX 업로드 경로로 들어온 거래임을 표시. 이전에는 detail.source 가 "MANUAL" 로 강제
+  // 되어 있어 "카드내역으로 들어왔지만 수동 입력으로 보이는" 표시 회귀가 있었습니다(2026-04-28).
+  // 표시 라벨만 분리하고 "분석한 캡처 보기" 같은 OCR 전용 게이트는 그대로 detail.source === "OCR" 로 둡니다.
+  CARD: "카드내역",
 } as const;
 
 export const CATEGORY_LABELS = {
@@ -56,6 +63,43 @@ export const CATEGORY_LABELS = {
  * TxCategory와 타입이 같도록 const assertion으로 좁혀둡니다.
  */
 export const DEFAULT_CATEGORY_KEY = "etc" as const;
+
+/**
+ * 표준 카테고리의 표시 순서. 모든 화면(설정·카테고리 목록, 수동입력 칩, 내역 필터)이 이 순서를
+ * 공유해 페이지마다 정렬이 다르던 일관성 이슈(QA #26)를 해소합니다.
+ *
+ * 정책: 일상 빈도가 높은 순으로 living → fashion → digital → food, 마지막에 폴백 etc. 커스텀
+ * 카테고리는 이 표 뒤에 사용자가 추가한 순으로 이어 붙입니다.
+ */
+export const STANDARD_CATEGORY_ORDER = [
+  "living",
+  "fashion",
+  "digital",
+  "food",
+  "etc",
+] as const;
+
+/**
+ * categoryEntries(또는 동등한 {id, name}[])를 STANDARD_CATEGORY_ORDER에 맞춰 안정적으로 정렬합니다.
+ * 표준 키는 위 표 순서로, 그 외(custom_*)는 입력된 순서를 그대로 유지해 사용자 정의 순서가 뒤섞이지 않습니다.
+ */
+export function sortCategoriesByStandard<T extends { id: string }>(items: ReadonlyArray<T>): T[] {
+  const standardIndex = new Map<string, number>(
+    STANDARD_CATEGORY_ORDER.map((key, idx) => [key, idx])
+  );
+  const standard: T[] = [];
+  const custom: T[] = [];
+  for (const item of items) {
+    if (standardIndex.has(item.id)) standard.push(item);
+    else custom.push(item);
+  }
+  standard.sort(
+    (a, b) =>
+      (standardIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+      (standardIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+  );
+  return [...standard, ...custom];
+}
 
 /**
  * 한 거래(영수증)가 가질 수 있는 카테고리 최대 개수.

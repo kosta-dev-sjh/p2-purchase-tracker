@@ -14,6 +14,10 @@ import type { TxRow } from "../pages/Transactions/components/TransactionTable";
 import type { UserProfile } from "../stores/profileStore";
 import type { CategoryEntry } from "../stores/categoriesStore";
 import { db } from "./firebase";
+import {
+  normalizeTransactionRow,
+  normalizeTransactionRows,
+} from "../utils/transactionNormalize";
 
 function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -58,6 +62,11 @@ export async function bootstrapUserProfile(
     email: seed?.email ?? user.email ?? "",
     avatarDataUrl: seed?.avatarDataUrl ?? null,
     passwordChangedAt: seed?.passwordChangedAt ?? "",
+    // 최초 부트스트랩 시점에는 변경 이력이 없는 상태로 두어, 사용자가 첫 변경을
+    // 시도할 때 쿨다운에 걸리지 않게 합니다. updateNickname callable 가 첫 변경 시
+    // serverTimestamp 로 채워 줍니다.
+    nicknameChangedAt: null,
+    accountStatus: "active",
     onboardingSeen: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -89,6 +98,20 @@ export function subscribeUserProfile(
   return onSnapshot(userDoc(uid), (snap) => {
     const data = snap.data();
     if (!data) return;
+    // Firestore Timestamp -> ISO 문자열 변환. 클라이언트(profileStore/ProfileSection)는
+    // ISO 문자열만 다루도록 통일해서, 쿨다운 계산도 일관됩니다.
+    // 기존 사용자(필드 없음)와 신규 사용자(null), 변경 이력 있음(Timestamp) 셋 다 다룹니다.
+    const rawNickAt = data.nicknameChangedAt;
+    let nicknameChangedAtPatch: { nicknameChangedAt: string | null } | object = {};
+    if (rawNickAt === null) {
+      nicknameChangedAtPatch = { nicknameChangedAt: null };
+    } else if (rawNickAt && typeof rawNickAt.toDate === "function") {
+      nicknameChangedAtPatch = {
+        nicknameChangedAt: (rawNickAt.toDate() as Date).toISOString(),
+      };
+    } else if (typeof rawNickAt === "string") {
+      nicknameChangedAtPatch = { nicknameChangedAt: rawNickAt };
+    }
     onValue({
       name: typeof data.displayName === "string" ? data.displayName : undefined,
       nickname: typeof data.nickname === "string" ? data.nickname : undefined,
@@ -99,6 +122,7 @@ export function subscribeUserProfile(
           : undefined,
       passwordChangedAt:
         typeof data.passwordChangedAt === "string" ? data.passwordChangedAt : undefined,
+      ...nicknameChangedAtPatch,
     });
   });
 }
@@ -108,12 +132,14 @@ export function subscribeTransactions(
   onValue: (rows: TxRow[]) => void,
 ): () => void {
   return onSnapshot(transactionsCol(uid), (snap) => {
-    const rows = snap.docs
+    const rows = normalizeTransactionRows(
+      snap.docs
       .map((item) => {
         const data = item.data();
         const row = { id: item.id, ...data } as TxRow;
         return stripUndefined(row);
       })
+    )
       .sort((a, b) => {
         if (a.date === b.date) return b.id.localeCompare(a.id);
         return String(b.date).localeCompare(String(a.date));
@@ -142,11 +168,18 @@ export async function saveUserProfile(
     updatedAt: serverTimestamp(),
   };
   if (partial.name !== undefined) payload.displayName = partial.name;
-  if (partial.nickname !== undefined) payload.nickname = partial.nickname;
+  // 닉네임은 보안 정책상 이 직접 쓰기 경로로 저장하지 않습니다.
+  // 모든 변경은 Cloud Function `updateNickname` 을 통해서만 통과시키고,
+  // 그 함수가 nicknameChangedAt 와 함께 트랜잭션으로 갱신합니다.
+  // (정책: 임퍼소네이션/봇 어뷰즈 방어, 클라이언트 disable 만으로는 부족)
   if (partial.email !== undefined) payload.email = partial.email;
   if (partial.avatarDataUrl !== undefined) payload.avatarDataUrl = partial.avatarDataUrl;
   if (partial.passwordChangedAt !== undefined) {
     payload.passwordChangedAt = partial.passwordChangedAt;
+  }
+  if (Object.keys(payload).length === 1) {
+    // updatedAt 만 있으면 굳이 쓸 필요 없음(불필요한 listener 알림 방지).
+    return;
   }
   await setDoc(userDoc(uid), payload, { merge: true });
 }
@@ -155,7 +188,7 @@ export async function addTransactions(uid: string, rows: TxRow[]): Promise<void>
   if (rows.length === 0) return;
   const batch = writeBatch(db);
   const colRef = transactionsCol(uid);
-  for (const row of rows) {
+  for (const row of normalizeTransactionRows(rows)) {
     batch.set(doc(colRef, row.id), {
       ...stripUndefined(row),
       createdAt: serverTimestamp(),
@@ -168,12 +201,13 @@ export async function addTransactions(uid: string, rows: TxRow[]): Promise<void>
 export async function replaceTransactions(uid: string, rows: TxRow[]): Promise<void> {
   const colRef = transactionsCol(uid);
   const snap = await getDocs(colRef);
-  const keepIds = new Set(rows.map((row) => row.id));
+  const normalizedRows = normalizeTransactionRows(rows);
+  const keepIds = new Set(normalizedRows.map((row) => row.id));
   const batch = writeBatch(db);
   for (const rowDoc of snap.docs) {
     if (!keepIds.has(rowDoc.id)) batch.delete(rowDoc.ref);
   }
-  for (const row of rows) {
+  for (const row of normalizedRows) {
     batch.set(doc(colRef, row.id), {
       ...stripUndefined(row),
       createdAt: serverTimestamp(),
@@ -188,9 +222,29 @@ export async function updateTransaction(
   id: string,
   patch: Partial<TxRow>,
 ): Promise<void> {
+  const normalizedPatch = normalizeTransactionRow({
+    id,
+    type: patch.type ?? "expense",
+    date: patch.date ?? "",
+    platform: patch.platform ?? "unspecified",
+    categories: patch.categories ?? ["etc"],
+    title: patch.title ?? "",
+    amount: patch.amount ?? 0,
+    status: patch.status ?? "purchase",
+    source: patch.source,
+    memo: patch.memo,
+    detail: patch.detail,
+  });
   await setDoc(
     doc(transactionsCol(uid), id),
-    { ...stripUndefined(patch), updatedAt: serverTimestamp() },
+    {
+      ...stripUndefined({
+        ...patch,
+        ...(normalizedPatch.detail ? { detail: normalizedPatch.detail } : {}),
+        ...(normalizedPatch.categories ? { categories: normalizedPatch.categories } : {}),
+      }),
+      updatedAt: serverTimestamp(),
+    },
     { merge: true },
   );
 }

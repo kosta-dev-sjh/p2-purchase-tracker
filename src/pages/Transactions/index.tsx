@@ -12,14 +12,16 @@ import { MonthPicker } from "../../components/primitives/MonthPicker";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { SummaryStrip } from "./components/SummaryStrip";
-import { FilterBar } from "./components/FilterBar";
+import { FilterBar, type InstallmentFilter } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
-import { buildTransactionSummary, getPrevMonthKey } from "./data";
+import { buildTransactionSummary } from "./data";
 import {
+  computeMaxMonthKey,
   computeMinYear,
   getCurrentMonthKey,
   getMonthOption,
+  getPrevMonthKey,
 } from "../../constants/months";
 import {
   transactionsStore,
@@ -33,6 +35,7 @@ import type {
   TxRow,
   TxPlatform,
 } from "./components/TransactionTable";
+import { getCardInstallmentKind } from "../../utils/cardInstallment";
 
 const Body = styled.div<{ $hasPanel: boolean }>`
   display: grid;
@@ -171,6 +174,7 @@ export const TransactionsPage: React.FC = () => {
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
   const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
+  const [installmentFilter, setInstallmentFilter] = useState<InstallmentFilter>("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
@@ -190,16 +194,26 @@ export const TransactionsPage: React.FC = () => {
     () => computeMinYear(allRows.map((row) => row.date)),
     [allRows]
   );
+  // 미래 거래(과거 데이터 정합 케이스)가 있으면 그 월까지 자동 노출. 새 거래는 거래일자 maxDate로 차단.
+  const pickerMaxMonth = useMemo(
+    () => computeMaxMonthKey(allRows.map((row) => row.date)),
+    [allRows]
+  );
+  const markedMonthKeys = useMemo(
+    () => Array.from(new Set(allRows.map((row) => toMonthKey(row.date)).filter(Boolean))),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
   );
 
   const filteredRows = useMemo(() => {
-    // 검색어, 플랫폼, 카테고리 조건을 한 번에 적용해 실제 표에 보여줄 후보 목록을 만듭니다.
     const query = search.trim().toLowerCase();
+    // 검색이 들어오면 현재 월에 갇히지 않고 전체 거래 기간에서 찾습니다.
+    const candidateRows = query ? allRows : monthRows;
 
-    const matched = monthRows.filter((row) => {
+    const matched = candidateRows.filter((row) => {
       if (typeFilter !== "all" && row.type !== typeFilter) {
         return false;
       }
@@ -214,6 +228,19 @@ export const TransactionsPage: React.FC = () => {
       }
 
       if (statusFilter !== "all" && row.status !== statusFilter) {
+        return false;
+      }
+
+      const cardImport = row.detail?.cardImport;
+      const installmentKind = getCardInstallmentKind(cardImport);
+      if (installmentFilter === "lump_sum" && installmentKind !== "lump_sum") {
+        return false;
+      }
+      if (
+        installmentFilter === "installment" &&
+        installmentKind !== "installment_approval" &&
+        installmentKind !== "installment_billing"
+      ) {
         return false;
       }
 
@@ -239,12 +266,12 @@ export const TransactionsPage: React.FC = () => {
       return sortOrder === "desc" ? -diff : diff;
     });
     return sorted;
-  }, [category, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  }, [allRows, category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
 
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
-  const [selectedId, setSelectedId] = useState<string | null>(monthRows[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const resetVisibleCount = useCallback(() => {
     setVisibleCount(INITIAL_VISIBLE);
@@ -288,6 +315,11 @@ export const TransactionsPage: React.FC = () => {
     },
     [resetVisibleCount]
   );
+
+  const handleInstallmentChange = useCallback((nextInstallment: InstallmentFilter) => {
+    setInstallmentFilter(nextInstallment);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
 
   const visibleRows = useMemo(
     () => filteredRows.slice(0, visibleCount),
@@ -479,11 +511,13 @@ export const TransactionsPage: React.FC = () => {
           value={month}
           onChange={handleMonthChange}
           minYear={pickerMinYear}
+          maxMonthKey={pickerMaxMonth}
+          markedMonthKeys={markedMonthKeys}
         />
       }
     >
       <Grid>
-        <SummaryStrip summary={summary} />
+        <SummaryStrip summary={summary} filteredCount={filteredRows.length} />
         <Body $hasPanel={isOpen}>
           <Left>
             {/* 왼쪽 영역은 필터와 표, 오른쪽 영역은 상세 패널로 역할을 분리합니다.
@@ -495,6 +529,7 @@ export const TransactionsPage: React.FC = () => {
               platform={platform}
               category={category}
               statusFilter={statusFilter}
+              installmentFilter={installmentFilter}
               sortOrder={sortOrder}
               onToggleSort={handleToggleSort}
               onSearchChange={handleSearchChange}
@@ -502,6 +537,7 @@ export const TransactionsPage: React.FC = () => {
               onPlatformChange={handlePlatformChange}
               onCategoryChange={handleCategoryChange}
               onStatusChange={handleStatusChange}
+              onInstallmentChange={handleInstallmentChange}
             />
             <TransactionTable
               rows={visibleRows}
@@ -574,14 +610,14 @@ export const TransactionsPage: React.FC = () => {
         <Modal
           isOpen
           onClose={() => setSourceImageUrl(null)}
-          title="OCR 분석한 이미지"
+          title="분석에 사용된 원본 캡처"
         >
           {/* 이미지 URL이 비어 있는 경우(mock/구데이터)엔 플레이스홀더로 떨어뜨려,
             "버튼은 보이는데 눌러도 아무것도 안 뜬다"는 상태를 피합니다. */}
           {sourceImageUrl ? (
             <img
               src={sourceImageUrl}
-              alt="OCR 분석에 사용된 원본 캡쳐"
+              alt="주문 캡처 분석에 사용된 원본 이미지"
               style={{
                 display: "block",
                 width: "100%",

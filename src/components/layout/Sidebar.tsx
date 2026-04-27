@@ -20,7 +20,7 @@ interface SidebarProps {
   };
 }
 
-type IconKey = Exclude<NavKey, "settings"> | "settings";
+type IconKey = NavKey;
 
 const NavIcon = ({ name }: { name: IconKey }) => {
   const common = {
@@ -62,11 +62,24 @@ const NavIcon = ({ name }: { name: IconKey }) => {
           <path d="M11 12V8" />
         </svg>
       );
-    case "settings":
+    case "subscriptions":
+      // 시계 아이콘 — "예정된 결제" 메타포. 회전 화살표(↻)는 "새로고침/재시도" 로
+      // 오해될 여지가 있어 시계로 교체했습니다(2026-04-28).
+      // AppShell 의 더보기 시트 안 아이콘과 모양을 일치시켜 일관성 유지.
       return (
         <svg {...common}>
-          <circle cx="8" cy="8" r="2" />
-          <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3" />
+          <circle cx="8" cy="8" r="6" />
+          <path d="M8 4.5v3.7l2.4 1.8" />
+        </svg>
+      );
+    case "settings":
+      // 톱니바퀴 모양으로 변경. 이전에는 햇빛(중심 원 + 8방향 짧은 선) 아이콘이라 라이트/다크
+      // 모드 토글로 오해할 여지가 있었어요. 둥근 톱니로 굴곡을 명시해 "설정"의 일반적 픽토그램에 맞춥니다.
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="8" r="2.4" />
+          <path d="M8 1.8v1.6M8 12.6v1.6M1.8 8h1.6M12.6 8h1.6M3.6 3.6l1.1 1.1M11.3 11.3l1.1 1.1M3.6 12.4l1.1-1.1M11.3 4.7l1.1-1.1" />
+          <circle cx="8" cy="8" r="5.2" />
         </svg>
       );
   }
@@ -81,6 +94,9 @@ const NAV_ITEMS: Array<{
   { key: "upload", label: "입력", path: "/upload" },
   { key: "transactions", label: "수입·지출 내역", path: "/transactions" },
   { key: "analysis", label: "소비 분석", path: "/analysis" },
+  // 데스크톱은 사이드바 폭(232px)이 충분하므로 정기결제도 메인 메뉴에 함께 둡니다.
+  // 모바일에선 폭이 빠듯해서 AppShell 의 더보기 드롭다운 안으로 들어갑니다.
+  { key: "subscriptions", label: "정기결제", path: "/subscriptions" },
 ];
 
 const Aside = styled.aside`

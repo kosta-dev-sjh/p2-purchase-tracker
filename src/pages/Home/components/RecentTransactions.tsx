@@ -43,6 +43,18 @@ const List = styled.ul`
   list-style: none;
 `;
 
+/**
+ * 거래가 한 건도 없을 때 카드 본문이 빈 박스로 보이지 않도록 띄우는 안내.
+ * 다른 빈 상태(소비 인사이트 카드)와 결을 맞춰 회색 톤 + 짧은 안내 문구로 처리합니다.
+ */
+const EmptyState = styled.div`
+  padding: 28px 12px;
+  text-align: center;
+  color: ${tokens.color.ink4};
+  font-size: 12.5px;
+  line-height: 1.55;
+`;
+
 const Row = styled.li`
   display: grid;
   grid-template-columns: 32px minmax(0, 1fr) auto auto;
@@ -159,24 +171,32 @@ export const RecentTransactions: React.FC<{ items: RecentItem[] }> = ({ items })
         </LinkButton>
       </CardHd>
       <CardBd>
-        <List>
-          {items.map((item) => (
-            <Row key={item.id}>
-              <Avatar>{item.initial}</Avatar>
-              <TitleBlock>
-                <Title>{item.title}</Title>
-                <Sub>{item.date}</Sub>
-              </TitleBlock>
-              <MetaBlock>
-                <Tag kind={item.platform}>{PLATFORM_LABELS[item.platform]}</Tag>
-                <Amount $negative={item.amount < 0}>
-                  {item.amount < 0 ? "-" : "+"}
-                  {formatKRW(Math.abs(item.amount))}
-                </Amount>
-              </MetaBlock>
-            </Row>
-          ))}
-        </List>
+        {items.length === 0 ? (
+          <EmptyState>
+            아직 거래가 없어요.
+            <br />
+            상단 ‘입력’에서 첫 거래를 추가해 보세요.
+          </EmptyState>
+        ) : (
+          <List>
+            {items.map((item) => (
+              <Row key={item.id}>
+                <Avatar>{item.initial}</Avatar>
+                <TitleBlock>
+                  <Title>{item.title}</Title>
+                  <Sub>{item.date}</Sub>
+                </TitleBlock>
+                <MetaBlock>
+                  <Tag kind={item.platform}>{PLATFORM_LABELS[item.platform]}</Tag>
+                  <Amount $negative={item.amount < 0}>
+                    {item.amount < 0 ? "-" : "+"}
+                    {formatKRW(Math.abs(item.amount))}
+                  </Amount>
+                </MetaBlock>
+              </Row>
+            ))}
+          </List>
+        )}
       </CardBd>
     </Card>
   );

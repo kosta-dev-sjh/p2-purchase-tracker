@@ -13,6 +13,9 @@ export interface UserProfile {
   email: string;
   passwordChangedAt: string;
   avatarDataUrl: string | null;
+  // 마지막 닉네임 변경 시각(ISO). 서버 callable updateNickname 가 갱신하며,
+  // 24시간 쿨다운 UI 표시에 사용합니다. null/빈값이면 "한 번도 변경한 적 없음".
+  nicknameChangedAt: string | null;
 }
 
 const STORAGE_KEY = "spendtrack:profile:v1";
@@ -23,6 +26,7 @@ export const DEFAULT_PROFILE: UserProfile = {
   email: "hong@example.com",
   passwordChangedAt: "2025.02.10",
   avatarDataUrl: null,
+  nicknameChangedAt: null,
 };
 
 function readCurrent(): UserProfile | null {
@@ -62,6 +66,9 @@ const useProfileStoreBase = create<ProfileState>((set, get) => ({
     set({ profile: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
+      // saveUserProfile 은 nickname 을 무시하도록 막혀 있습니다(정책: 닉네임은 callable 만).
+      // 이 store 의 save 가 nickname 만 단독으로 호출되는 경우 Firestore 가 갱신되지 않아도
+      // 의도된 동작입니다. 닉네임 변경은 changeNicknameWithCooldown(firebaseSync) 를 통해서만.
       void saveUserProfile(uid, partial);
     }
     return next;

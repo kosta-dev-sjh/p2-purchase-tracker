@@ -27,6 +27,7 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 
 - `/transactions`: 월별 거래 목록, 상세, 수정, 삭제
 - `/analysis`: 플랫폼/카테고리/반복구매/요일 패턴 등 분석
+- `/subscriptions`: 정기결제 전용 페이지 — `Analysis/data.ts` 의 `buildSubscriptions` 결과 재사용
 
 ## 4. 핵심 도메인 규칙
 
@@ -50,6 +51,14 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 - 기존 데이터가 빈 경우만 자동 채움
 - 충돌은 사용자 확인 모달로 보냄
 - 기존 값을 소리 없이 덮어쓰지 않음
+
+### 카드 할부와 OCR의 역할 분리
+
+- `cardImport` 기반 할부 메타(`approval` / `billing`, 할부개월, 회차, 청구금액)는 카드 CSV/XLSX import가 원본이다.
+- OCR은 상품명, 상품 가격, 주문일자, 상태, 주문 화면에 보이는 합계까지만 책임진다.
+- OCR 단독 저장 거래에는 할부 여부를 추정해서 넣지 않는다.
+- OCR 상품이 기존 카드 거래에 붙을 때만, 그 거래가 이미 가진 `cardImport` 메타를 그대로 따른다.
+- OCR 매칭 후보 탐색에서는 `billing`(할부 청구건)을 제외하고 승인 성격의 거래만 대상으로 본다.
 
 ## 5. 지금 코드에서 중요한 파일
 
@@ -83,11 +92,25 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 
 ## 7. 현재 상태 및 차기 작업 포인트
 
-- 인증은 Firebase Auth 기반으로 전환됨
-- 저장은 Zustand 로컬 상태 + Firestore 동기화 구조로 전환됨
-- 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료
+- 인증은 Firebase Auth 기반으로 전환됨 (`src/lib/firebase.ts`, `authStore.ts`).
+- 저장은 Zustand 로컬 상태 + Firestore 동기화 구조 (`src/lib/firebaseSync.ts`,
+  `firebaseRepository.ts`).
+- AI 호출은 Firebase Functions `geminiProxy` 단일 경로로 통일됨
+  (`functions/src/index.ts`, `src/utils/aiService.ts`). 키는 Functions secret
+  `GEMINI_API_KEY` 에 보관, 프론트 번들에 직접 노출되지 않음. 요금제는 paid
+  Gemini 2.5 Flash.
+- 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료. 추가 정확도 튜닝은
+  동결, 회귀 대응만 (`docs/OCR_Architecture_Decision.md` §9.1).
+- 네이버 OCR은 얕은 1차 파서 + AI 보정 정책으로 진행 중
+  (`docs/Naver_OCR_Parsing_Strategy.md`).
+- 홈 화면 AI 인사이트는 월별 캐시(`src/stores/aiInsightsStore.ts`) + hash 무효화로
+  거래 변동 시에만 재호출. 호출 실패는 캐시에 쓰지 않음.
 - 관련 참고 문서:
+  - `docs/SpendTrack_Feature_Spec_From_Code_v1.md` (현재 빌드 동작의 코드 기준 인덱스)
   - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
+  - `docs/OCR_Architecture_Decision.md`
+  - `docs/Naver_OCR_Parsing_Strategy.md`
+  - `docs/Naver_OCR_Pattern_Catalog.md`
 
 ## 8. 문서 유지 규칙
 

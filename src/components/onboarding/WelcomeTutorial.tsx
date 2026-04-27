@@ -32,10 +32,10 @@ const STEPS: Step[] = [
   },
   {
     emoji: "🧾",
-    title: "쇼핑몰 주문내역 OCR로 자동 정리",
+    title: "주문 캡처로 한 번에 자동 정리",
     body:
-      "스크린샷을 올리면 상품·가격·플랫폼을 자동으로 뽑아서 거래로 만들어 드려요. 한 번에 여러 장도 괜찮아요.",
-    ctaLabel: "OCR 업로드 보러가기",
+      "쇼핑몰 주문내역 스크린샷을 올리면 상품·가격·플랫폼을 자동으로 뽑아서 거래로 만들어 드려요. 한 번에 여러 장도 괜찮아요.",
+    ctaLabel: "주문 캡처 시작하기",
     ctaHref: "/ocr-upload",
   },
   {
@@ -72,6 +72,16 @@ const Card = styled.div`
   left: 50%;
   transform: translate(-50%, -50%);
   width: min(520px, calc(100vw - 32px));
+  /*
+   * 모바일에서 사용자 글씨 크기를 키운 환경(시스템 텍스트 200% 등)에서는 본문 + 푸터가
+   * 카드 max-height 를 넘어 잘리는 회귀가 있었습니다. 카드 자체에 max-height + flex 만
+   * 두면 overflow:hidden 으로 뒷부분(다음/완료 버튼)이 사라지므로,
+   *   - max-height 를 동적 viewport(dvh) 기준으로 두고
+   *   - 본문(Body)만 overflow-y:auto 로 풀어 푸터가 항상 보이도록 분리합니다.
+   * dvh 미지원 브라우저는 vh 폴백으로 자연스럽게 떨어집니다.
+   */
+  max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   background: ${tokens.color.panel};
   border-radius: ${tokens.radius.modal};
   z-index: 1001;
@@ -82,7 +92,9 @@ const Card = styled.div`
 
   ${media.mobile} {
     width: calc(100vw - 24px);
-    max-height: calc(100vh - 48px);
+    /* 안전 영역(노치/홈 인디케이터) 만큼 카드를 살짝 띄워, 모바일 사파리 하단 바와
+       겹치지 않게 합니다. env() 미지원 브라우저는 0 으로 떨어집니다. */
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   }
 `;
 
@@ -121,7 +133,19 @@ const SkipButton = styled.button`
 `;
 
 const Body = styled.div`
+  /*
+   * 본문만 스크롤 가능하게 해 두고 카드 자체는 overflow:hidden 을 유지합니다.
+   * Footer(다음/완료) 가 항상 화면에 보이도록 layout 책임을 본문 쪽으로 옮긴 형태.
+   * min-height:0 은 flex 자식의 overflow 가 제대로 동작하기 위한 정석 처방.
+   */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 6px 24px 20px;
+
+  ${media.mobile} {
+    padding: 6px 20px 16px;
+  }
 `;
 
 const Emoji = styled.div`
@@ -165,6 +189,8 @@ const Dot = styled.button<{ $active: boolean }>`
 `;
 
 const Footer = styled.div`
+  /* 카드 안에서 항상 바닥에 sticky. 본문 스크롤 후에도 액션 버튼이 화면에 남도록 보장. */
+  flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -176,6 +202,8 @@ const Footer = styled.div`
   ${media.mobile} {
     flex-direction: column-reverse;
     align-items: stretch;
+    /* 모바일에서 좌우 패딩을 줄여 좁은 화면에서도 두 버튼이 한 줄에 살아남게 합니다. */
+    padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   }
 `;
 
@@ -195,6 +223,15 @@ const Nav = styled.div`
   display: flex;
   gap: 8px;
   align-items: center;
+
+  ${media.mobile} {
+    /* 모바일에서 Footer 가 column-reverse + stretch 가 되면 Nav 가 풀-폭이 되므로,
+       내부 버튼이 50:50 으로 자연스럽게 나뉘도록 만들어 줍니다. && 는 styled.button
+       기본 specificity 보다 한 단계 위에 잡기 위해 사용. */
+    && > button {
+      flex: 1;
+    }
+  }
 `;
 
 function markSeen(): void {

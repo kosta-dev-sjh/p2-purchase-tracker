@@ -16,7 +16,7 @@
  *   - useNavigate / useLocation을 쓰므로 BrowserRouter 안쪽이어야 합니다.
  *   - Routes와 형제로 두면 라우트 전환에도 살아남아 투어가 연속됩니다.
  */
-import React, { useCallback, useEffect, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Button } from "../primitives/Button";
@@ -56,7 +56,7 @@ const STEPS: TourStep[] = [
     id: "ocr-zone",
     route: "/ocr-upload",
     selector: '[data-tour="ocr-zone"]',
-    title: "영수증 사진으로 자동 등록",
+    title: "주문 캡처로 자동 등록",
     body:
       "쇼핑몰 주문내역 스크린샷을 올리면 상품·가격·플랫폼을 자동으로 뽑아 거래로 만들어 드려요. 한 번에 여러 장도 가능해요.",
   },
@@ -97,10 +97,17 @@ const Tooltip = styled.div`
   box-shadow: ${tokens.shadow.modal};
   padding: 16px 18px 12px;
   z-index: 1003;
+  /* 본문이 길거나 모바일 가로 공간이 좁아 줄바꿈이 누적될 때 viewport 를 넘기지 않도록
+     자체 max-height 를 두고 안에서 스크롤. transition 은 위치 변경에만 적용합니다. */
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
   transition: top 200ms ease, left 200ms ease;
 
   ${media.mobile} {
     width: calc(100vw - 24px);
+    /* 모바일에서는 ResizeObserver 가 실측한 높이를 부모(ProductTour) 가 위치 계산에 쓰므로,
+       내부 스크롤은 노치/홈바를 감안한 영역을 한 번 더 줄여 둡니다. */
+    max-height: calc(100dvh - 24px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
   }
 `;
 
@@ -159,8 +166,13 @@ const Actions = styled.div`
   align-items: center;
 `;
 
-// 말풍선 세로 공간 예상치. 실제 높이를 측정하려면 ref+ResizeObserver로 교체하면 됩니다.
-const TOOLTIP_HEIGHT_EST = 190;
+/**
+ * 말풍선 세로 공간 fallback 추정치.
+ * 모바일에서 사용자 텍스트 크기가 커지거나 본문이 길면 실제 높이가 250~300px 까지 늘어나
+ * 작은 화면에서는 카드가 viewport 를 벗어나는 회귀가 있었습니다.
+ * 아래 컴포넌트 안에서 ResizeObserver 로 실측해 위치 계산에 사용하고, 측정 전에는 이 값을 씁니다.
+ */
+const TOOLTIP_HEIGHT_EST = 220;
 // 스포트라이트와 대상 사이 패딩.
 const SPOTLIGHT_PAD = 10;
 // 스포트라이트와 말풍선 사이 간격.
@@ -170,6 +182,12 @@ export const ProductTour: React.FC = () => {
   const isOpen = useTour();
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState<DOMRect | null>(null);
+  /**
+   * 말풍선 실측 높이. 측정되기 전에는 TOOLTIP_HEIGHT_EST 폴백.
+   * 모바일/줌 상태에서 본문이 늘어나는 경우에도 말풍선이 viewport 를 벗어나지 않도록 하기 위함.
+   */
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  const [tooltipHeight, setTooltipHeight] = useState<number>(TOOLTIP_HEIGHT_EST);
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -239,6 +257,28 @@ export const ProductTour: React.FC = () => {
     };
   }, [isOpen, step.selector]);
 
+  // 말풍선 실측 높이 추적. ref 가 붙은 다음부터 ResizeObserver 로 변동을 따라잡고,
+  // 미지원 브라우저에선 1회 측정값으로 폴백합니다.
+  useEffect(() => {
+    if (!isOpen) return;
+    const node = tooltipRef.current;
+    if (!node) return;
+
+    const measure = () => {
+      const next = node.getBoundingClientRect().height;
+      // 0 으로 떨어지는 transient 측정은 무시 (mount 직후 1프레임).
+      if (next > 0) setTooltipHeight(next);
+    };
+    measure();
+
+    const RO = (window as Window & { ResizeObserver?: typeof ResizeObserver }).ResizeObserver;
+    if (typeof RO === "function") {
+      const observer = new RO(measure);
+      observer.observe(node);
+      return () => observer.disconnect();
+    }
+  }, [isOpen, index, step.title, step.body]);
+
   // ESC 키로 닫기.
   useEffect(() => {
     if (!isOpen) return;
@@ -263,16 +303,17 @@ export const ProductTour: React.FC = () => {
   const tooltipWidth = Math.min(360, viewW - 32);
 
   // 아래 공간이 충분하면 말풍선을 아래에, 아니면 위에 배치합니다.
+  // tooltipHeight 는 ResizeObserver 가 실측해 둔 값(없으면 fallback 추정치).
   const spaceBelow = viewH - (rect.top + rect.height);
-  const placeBelow = spaceBelow > TOOLTIP_HEIGHT_EST + TOOLTIP_OFFSET;
+  const placeBelow = spaceBelow > tooltipHeight + TOOLTIP_OFFSET;
 
   let tooltipTop = placeBelow
     ? rect.top + rect.height + TOOLTIP_OFFSET
-    : rect.top - TOOLTIP_HEIGHT_EST - TOOLTIP_OFFSET;
-  // 뷰포트 밖으로 나가지 않도록 클램프.
+    : rect.top - tooltipHeight - TOOLTIP_OFFSET;
+  // 뷰포트 밖으로 나가지 않도록 클램프. 실측 높이를 사용해 모바일/줌 환경에서도 잘리지 않게 합니다.
   tooltipTop = Math.max(
     16,
-    Math.min(tooltipTop, viewH - TOOLTIP_HEIGHT_EST - 16)
+    Math.min(tooltipTop, viewH - tooltipHeight - 16)
   );
 
   let tooltipLeft = rect.left + rect.width / 2 - tooltipWidth / 2;
@@ -294,6 +335,7 @@ export const ProductTour: React.FC = () => {
         }}
       />
       <Tooltip
+        ref={tooltipRef}
         role="dialog"
         aria-modal="true"
         aria-label="기능 투어"

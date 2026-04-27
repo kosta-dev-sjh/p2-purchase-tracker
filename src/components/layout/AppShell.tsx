@@ -2,7 +2,7 @@
  * 역할: 여러 화면이 함께 사용하는 공통 레이아웃 컴포넌트입니다.
  * 위치: src\components\layout\AppShell.tsx
  */
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Sidebar } from "./Sidebar";
@@ -12,7 +12,19 @@ import { media } from "../../tokens/breakpoints";
 import { useProfile } from "../../stores/profileStore";
 import { logOut } from "../../lib/firebaseSync";
 
-export type NavKey = "home" | "upload" | "transactions" | "analysis" | "settings";
+export type NavKey =
+  | "home"
+  | "upload"
+  | "transactions"
+  | "analysis"
+  | "subscriptions"
+  | "settings";
+
+/**
+ * 모바일 하단 칩 중 "더보기" 토글이 펼치는 보조 메뉴 항목 키.
+ * 핵심 4개(홈/입력/거래/분석) 외 페이지가 늘어나면 여기로 추가합니다.
+ */
+const SECONDARY_NAV_KEYS: NavKey[] = ["subscriptions", "settings"];
 
 interface AppShellProps {
   activeNav: NavKey;
@@ -29,15 +41,30 @@ type MobileNavItemConfig = {
   path: string;
 };
 
-const MOBILE_NAV_ITEMS: MobileNavItemConfig[] = [
+/**
+ * 모바일 하단 메뉴는 "핵심 4개 + 더보기" 5칩 구성으로 고정합니다.
+ * 정기결제 / 설정처럼 자주 진입하지 않는 보조 페이지는 더보기 토글 안의 시트에 묶어
+ * 360px 폭에서도 칩이 깨지지 않게 해 둡니다(향후 보조 페이지가 더 늘어나도 동일 패턴).
+ */
+const MOBILE_PRIMARY_NAV_ITEMS: MobileNavItemConfig[] = [
   { key: "home", label: "홈", shortLabel: "홈", path: "/" },
   { key: "upload", label: "입력", shortLabel: "입력", path: "/upload" },
   { key: "transactions", label: "수입·지출 내역", shortLabel: "거래", path: "/transactions" },
   { key: "analysis", label: "소비 분석", shortLabel: "분석", path: "/analysis" },
+];
+
+const MOBILE_SECONDARY_NAV_ITEMS: MobileNavItemConfig[] = [
+  { key: "subscriptions", label: "정기결제", shortLabel: "정기결제", path: "/subscriptions" },
   { key: "settings", label: "설정", shortLabel: "설정", path: "/settings" },
 ];
 
-const NavIcon = ({ name }: { name: NavKey }) => {
+/**
+ * 모바일 칩에 들어가는 아이콘. NavKey 외에 "more"(더보기 ⋯) 도 함께 받습니다.
+ * NavKey 자체는 라우트 식별자이므로 "more" 를 NavKey 에 섞지 않고 별도 prop 키로 둠.
+ */
+type IconKey = NavKey | "more";
+
+const NavIcon = ({ name }: { name: IconKey }) => {
   const common = {
     viewBox: "0 0 16 16",
     fill: "none",
@@ -78,11 +105,27 @@ const NavIcon = ({ name }: { name: NavKey }) => {
           <path d="M11 12V8" />
         </svg>
       );
+    case "subscriptions":
+      // 시계 아이콘 — "예정된 결제" 메타포. Sidebar 와 동일 모양 사용.
+      return (
+        <svg {...common}>
+          <circle cx="8" cy="8" r="6" />
+          <path d="M8 4.5v3.7l2.4 1.8" />
+        </svg>
+      );
     case "settings":
       return (
         <svg {...common}>
           <circle cx="8" cy="8" r="2" />
           <path d="M8 1v2M8 13v2M1 8h2M13 8h2M3 3l1.5 1.5M11.5 11.5L13 13M3 13l1.5-1.5M11.5 4.5L13 3" />
+        </svg>
+      );
+    case "more":
+      return (
+        <svg {...common}>
+          <circle cx="3.5" cy="8" r="1.2" />
+          <circle cx="8" cy="8" r="1.2" />
+          <circle cx="12.5" cy="8" r="1.2" />
         </svg>
       );
   }
@@ -235,6 +278,61 @@ const MobileNavRail = styled.div`
   }
 `;
 
+/**
+ * "더보기" 칩이 펼치는 드롭다운 시트. 모바일에서만 노출되고, 칩 바로 아래에
+ * absolute 로 떠서 외부 클릭 / ESC / 항목 선택 시 닫힙니다.
+ *
+ * 시트 위치는 MobileNavRail 의 우측에 정렬해, 더보기 칩 바로 밑에서 펴지는 것처럼
+ * 보이게 했습니다(우측 정렬은 그 칩이 항상 마지막 칩이라는 전제에 기반).
+ */
+const MoreSheetWrap = styled.div`
+  position: relative;
+  flex: 1 1 0;
+  display: flex;
+`;
+
+const MoreSheet = styled.div`
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 168px;
+  padding: 6px;
+  background: ${tokens.color.panel};
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.card};
+  box-shadow: ${tokens.shadow.modal};
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+`;
+
+const MoreSheetItem = styled.button<{ $active?: boolean }>`
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: none;
+  border-radius: ${tokens.radius.control};
+  background: ${({ $active }) => ($active ? tokens.color.accentSubtle : "transparent")};
+  color: ${({ $active }) => ($active ? tokens.color.accentHover : tokens.color.ink2)};
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: ${({ $active }) => ($active ? 700 : 500)};
+  text-align: left;
+
+  svg {
+    width: 14px;
+    height: 14px;
+    color: ${({ $active }) => ($active ? tokens.color.accent : tokens.color.ink4)};
+  }
+
+  &:hover {
+    background: ${({ $active }) => ($active ? tokens.color.accentSubtle : tokens.color.tint)};
+  }
+`;
+
 const MobileNavItem = styled.button<{ $active?: boolean }>`
   display: inline-flex;
   align-items: center;
@@ -301,6 +399,37 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
   const navigate = useNavigate();
   const profile = useProfile();
   const initial = profile.name.trim().charAt(0) || "?";
+  // "더보기" 시트의 펼침 상태. 외부 클릭/ESC/항목 선택 시 닫힙니다.
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreRef = useRef<HTMLDivElement | null>(null);
+
+  // 보조 항목(정기결제/설정) 중 하나가 활성 라우트면 더보기 칩 자체를 active 로 표기.
+  // 사용자가 어떤 화면에 있는지 칩에서도 시각적으로 추적되게 하기 위함.
+  const moreActive = SECONDARY_NAV_KEYS.includes(activeNav);
+
+  useEffect(() => {
+    if (!moreOpen) return;
+    const handlePointer = (event: MouseEvent) => {
+      if (!moreRef.current) return;
+      if (!moreRef.current.contains(event.target as Node)) {
+        setMoreOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setMoreOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [moreOpen]);
+
+  const handleSecondaryNavigate = (path: string) => {
+    setMoreOpen(false);
+    navigate(path);
+  };
 
   const handleLogout = async () => {
     await logOut();
@@ -340,7 +469,7 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
             </MobileMeta>
           </MobileNavHead>
           <MobileNavRail className="hide-scrollbar">
-            {MOBILE_NAV_ITEMS.map((item) => (
+            {MOBILE_PRIMARY_NAV_ITEMS.map((item) => (
               <MobileNavItem
                 key={item.key}
                 $active={activeNav === item.key}
@@ -350,6 +479,40 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
                 {item.shortLabel}
               </MobileNavItem>
             ))}
+            {/*
+             * "더보기" 토글. 칩 자체가 아래로 시트를 펼치는 형태라 별도의 wrapper(MoreSheetWrap)
+             * 가 필요합니다 — flex 칸 1개분의 폭을 차지하면서 absolute 시트의 기준점이 됨.
+             */}
+            <MoreSheetWrap ref={moreRef}>
+              <MobileNavItem
+                type="button"
+                $active={moreActive || moreOpen}
+                onClick={() => setMoreOpen((v) => !v)}
+                aria-haspopup="menu"
+                aria-expanded={moreOpen}
+                aria-label="더보기"
+                style={{ width: "100%" }}
+              >
+                <NavIcon name="more" />
+                더보기
+              </MobileNavItem>
+              {moreOpen && (
+                <MoreSheet role="menu">
+                  {MOBILE_SECONDARY_NAV_ITEMS.map((item) => (
+                    <MoreSheetItem
+                      key={item.key}
+                      type="button"
+                      role="menuitem"
+                      $active={activeNav === item.key}
+                      onClick={() => handleSecondaryNavigate(item.path)}
+                    >
+                      <NavIcon name={item.key} />
+                      {item.label}
+                    </MoreSheetItem>
+                  ))}
+                </MoreSheet>
+              )}
+            </MoreSheetWrap>
           </MobileNavRail>
         </MobileNav>
         <Content>

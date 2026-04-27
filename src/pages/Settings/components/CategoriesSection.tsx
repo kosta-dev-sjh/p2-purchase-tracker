@@ -13,6 +13,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import { SettingsBlock } from "./SettingsSection";
 import { Button } from "../../../components/primitives/Button";
+import { Modal } from "../../../components/modal/Modal";
 import { useTransactionsStore } from "../../../stores/transactionsStore";
 import {
   categoriesStore,
@@ -20,6 +21,7 @@ import {
 } from "../../../stores/categoriesStore";
 import type { TxCategory } from "../../../pages/Transactions/components/TransactionTable";
 import type { ConceptId } from "../../../data/categoryConcepts";
+import { sortCategoriesByStandard } from "../../../constants/labels";
 import { CategoryAddModal, type CategoryAddPayload } from "./CategoryAddModal";
 
 const HeaderBar = styled.div`
@@ -164,8 +166,28 @@ type ModalState =
 
 export const CategoriesSection: React.FC = () => {
   const rows = useTransactionsStore();
-  const categories = useCategoriesStore();
+  const rawCategories = useCategoriesStore();
+  // 설정 화면은 "기타"를 시스템 폴백 카테고리로 맨 위에 고정합니다.
+  // 다른 표준/커스텀 카테고리는 기존 공통 정렬 정책을 그대로 따르되,
+  // "기타"만 따로 빼서 가장 먼저 보여 UX 설명과 실제 순서를 일치시킵니다.
+  const categories = useMemo(() => {
+    const ordered = sortCategoriesByStandard(rawCategories);
+    const etc = ordered.find((category) => category.id === "etc");
+    const rest = ordered.filter((category) => category.id !== "etc");
+    return etc ? [etc, ...rest] : rest;
+  }, [rawCategories]);
   const [modal, setModal] = useState<ModalState>({ kind: "closed" });
+  /**
+   * 삭제 확인 모달 대상. 카테고리 삭제는 "이 카테고리에 묶여 있던 거래는 어떻게 되나"라는 부수효과가
+   * 있어 거래 삭제와 동일하게 두 단계로 보호합니다.
+   * - 첫 번째 단계: 행의 [삭제] 버튼 클릭 → 이 state에 후보 저장 → 확인 모달 표시
+   * - 두 번째 단계: 모달의 [삭제하기] → categoriesStore.remove 호출
+   */
+  const [deleteTarget, setDeleteTarget] = useState<{
+    id: string;
+    name: string;
+    count: number;
+  } | null>(null);
 
   /**
    * 표준 카테고리별 거래 건수 집계. 사용자 정의 카테고리는 아직 TxCategory union에 들어가지 않으므로
@@ -200,8 +222,19 @@ export const CategoriesSection: React.FC = () => {
     }
   };
 
-  const handleDelete = (id: string) => {
-    categoriesStore.remove(id);
+  /**
+   * 행의 [삭제] 버튼은 즉시 삭제하지 않고 확인 모달만 띄웁니다.
+   * 실제 삭제는 모달의 confirmDelete에서 처리합니다.
+   */
+  const requestDelete = (id: string, name: string) => {
+    const count = isTxCategoryKey(id) ? countByCategory[id] ?? 0 : 0;
+    setDeleteTarget({ id, name, count });
+  };
+
+  const confirmDelete = () => {
+    if (!deleteTarget) return;
+    categoriesStore.remove(deleteTarget.id);
+    setDeleteTarget(null);
   };
 
   // 편집 모드일 때는 자기 자신 이름을 중복 검사 대상에서 제외해야 "이름 그대로 색만 바꾸기"가 막히지 않습니다.
@@ -273,7 +306,7 @@ export const CategoriesSection: React.FC = () => {
                       $variant="delete"
                       aria-label={`${category.name} 카테고리 삭제`}
                       title="삭제"
-                      onClick={() => handleDelete(category.id)}
+                      onClick={() => requestDelete(category.id, category.name)}
                     >
                       삭제
                     </RowActionButton>
@@ -308,6 +341,70 @@ export const CategoriesSection: React.FC = () => {
         onClose={() => setModal({ kind: "closed" })}
         onSubmit={handleSubmit}
       />
+      {/*
+        카테고리 삭제 확인 모달. 거래 삭제 모달(Transactions/index.tsx)과 동일한 결로
+        대상 이름과 묶인 거래 수를 알려주고, 사용자가 의도를 다시 한번 확인하게 합니다.
+        이전에는 [삭제] 버튼 한 번 클릭이 곧바로 삭제로 이어져 실수 클릭 시 복구할 방법이 없었어요.
+      */}
+      {deleteTarget && (
+        <Modal
+          isOpen
+          onClose={() => setDeleteTarget(null)}
+          title="카테고리를 삭제할까요?"
+        >
+          <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+            <p
+              style={{
+                margin: 0,
+                color: tokens.color.ink2,
+                fontSize: 13.5,
+                lineHeight: 1.55,
+              }}
+            >
+              {deleteTarget.count > 0 ? (
+                <>
+                  이 카테고리에 연결된 거래가 <strong>{deleteTarget.count}건</strong> 있어요.
+                  삭제하면 해당 거래의 카테고리는 자동으로 ‘기타’로 이동합니다.
+                </>
+              ) : (
+                "삭제 후에는 되돌릴 수 없어요."
+              )}
+            </p>
+            <div
+              style={{
+                padding: "12px 14px",
+                border: `1px solid ${tokens.color.line}`,
+                borderRadius: tokens.radius.card,
+                background: tokens.color.foot,
+                color: tokens.color.ink1,
+                fontSize: 14,
+                fontWeight: 700,
+              }}
+            >
+              {deleteTarget.name}
+            </div>
+            <div
+              style={{
+                display: "flex",
+                gap: 8,
+                justifyContent: "flex-end",
+                flexWrap: "wrap",
+              }}
+            >
+              <Button
+                variant="secondary"
+                size="md"
+                onClick={() => setDeleteTarget(null)}
+              >
+                취소
+              </Button>
+              <Button variant="danger" size="md" onClick={confirmDelete}>
+                삭제하기
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
     </>
   );
 };

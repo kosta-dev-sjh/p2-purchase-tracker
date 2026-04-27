@@ -30,6 +30,41 @@ export interface DuplicateCheckResult {
   itemDiff: TxItemDiff[];
 }
 
+function buildBaseFingerprint(row: TxRow): string {
+  const date = row.date || "0000.00.00";
+  const platform = row.platform || "unspecified";
+  const amount = Math.abs(row.amount || 0);
+  const title = (row.title || "알 수 없음").trim();
+  return `${date}|${platform}|${amount}|${title}`;
+}
+
+function buildCardImportFingerprint(row: TxRow): string | null {
+  const cardImport = row.detail?.cardImport;
+  if (!cardImport) return null;
+
+  const cycleLabel =
+    cardImport.installmentCurrentCycle && cardImport.installmentCycleTotal
+      ? `${cardImport.installmentCurrentCycle}/${cardImport.installmentCycleTotal}`
+      : "";
+
+  // 승인번호/할부회차/청구월 같은 카드 원본 메타가 있으면 같은 날짜·가맹점·금액 거래끼리도
+  // 구분할 수 있습니다. 이전에는 이 구분이 없어 미리보기 직전에 "이미 등록됨"으로
+  // 잘못 묶이는 오탐이 있었습니다.
+  const stableParts = [
+    cardImport.recordKind,
+    cardImport.paymentMode,
+    cardImport.approvalNumber?.trim(),
+    cycleLabel,
+    cardImport.installmentMonths ? String(cardImport.installmentMonths) : "",
+    cardImport.dueDate ?? "",
+    cardImport.cardLabel ?? "",
+    cardImport.approvedAmount !== undefined ? String(cardImport.approvedAmount) : "",
+    cardImport.billedAmount !== undefined ? String(cardImport.billedAmount) : "",
+  ].filter(Boolean);
+
+  return stableParts.length > 0 ? stableParts.join("|") : null;
+}
+
 // ─── 지문 생성 ────────────────────────────────────────────────
 
 /**
@@ -37,12 +72,9 @@ export interface DuplicateCheckResult {
  */
 export function generateTxFingerprint(row: TxRow): string {
   if (!row) return "empty-row";
-  const date = row.date || "0000.00.00";
-  const platform = row.platform || "unspecified";
-  const amount = Math.abs(row.amount || 0);
-  const title = (row.title || "알 수 없음").trim();
-  
-  return `${date}|${platform}|${amount}|${title}`;
+  const base = buildBaseFingerprint(row);
+  const card = buildCardImportFingerprint(row);
+  return card ? `${base}|card|${card}` : base;
 }
 
 /**

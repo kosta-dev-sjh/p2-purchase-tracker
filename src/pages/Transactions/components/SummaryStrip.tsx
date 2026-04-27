@@ -133,15 +133,28 @@ const formatDelta = (delta: SummaryDelta) => {
 
 interface SummaryStripProps {
   summary: SummaryData;
+  /**
+   * 현재 필터 결과로 노출 중인 거래 수. 월 전체 KPI는 그대로 두되 사용자가 필터를 적용했을 때
+   * "지금 보이는 건 전체가 아니다"라는 점을 첫 번째 셀의 보조 라벨로 알려줍니다.
+   * 미지정이거나 summary.total과 같으면 표시하지 않습니다.
+   */
+  filteredCount?: number;
 }
 
-export const SummaryStrip = React.memo(({ summary }: SummaryStripProps) => (
+export const SummaryStrip = React.memo(({ summary, filteredCount }: SummaryStripProps) => {
+  // filteredCount가 summary.total과 같으면 필터가 비어있는 상태이므로 안내를 숨겨 시각 노이즈를 줄입니다.
+  const isFiltered =
+    typeof filteredCount === "number" && filteredCount !== summary.total;
+
+  return (
   <Strip>
     <Cell>
       <Label>전체 거래</Label>
       <Value className="tnum">{summary.total}건</Value>
       <Sub>
-        지출 {summary.spendCount} · 수입 {summary.incomeCount}
+        {isFiltered
+          ? `필터 결과 ${filteredCount}건 · 월 전체 ${summary.total}건`
+          : `지출 ${summary.spendCount} · 수입 ${summary.incomeCount}`}
       </Sub>
     </Cell>
     <Cell>
@@ -173,6 +186,7 @@ export const SummaryStrip = React.memo(({ summary }: SummaryStripProps) => (
       <Sub>지출 − 수입</Sub>
     </Cell>
   </Strip>
-));
+  );
+});
 
 SummaryStrip.displayName = "SummaryStrip";

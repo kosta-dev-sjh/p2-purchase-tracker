@@ -7,6 +7,39 @@ import { findHeaderRowIndex } from "./importHeaders";
 
 export type CsvRow = Record<string, string>;
 
+const HEADER_CONTINUATION_HINTS = [
+  "할부회차",
+  "결제금액",
+  "수수료",
+  "결제 후잔액",
+  "결제 후 잔액",
+  "잔액",
+  "할부개월",
+  "승인번호",
+] as const;
+
+function normalizeHeaderCell(cell: string): string {
+  return cell.replace(/[\r\n]+/g, "").trim();
+}
+
+function looksLikeHeaderContinuationRow(row: string[]): boolean {
+  const cells = row.map(normalizeHeaderCell).filter(Boolean);
+  if (cells.length === 0) return false;
+
+  const hintHits = cells.filter((cell) =>
+    HEADER_CONTINUATION_HINTS.some((hint) => cell.includes(hint))
+  ).length;
+  if (hintHits < 2) return false;
+
+  const valueLike = cells.filter((cell) =>
+    /^\d{4}[./-]\d{1,2}[./-]\d{1,2}$/.test(cell) ||
+    /^\d[\d,./-]*$/.test(cell) ||
+    /^[A-Z]\d{2,}$/i.test(cell)
+  ).length;
+
+  return valueLike <= Math.max(1, Math.floor(cells.length / 3));
+}
+
 /**
  * 줄 단위로 텍스트를 쪼개되, 따옴표로 감싸진 구분자는 무시합니다.
  */
@@ -108,14 +141,24 @@ export function parseCsvMatrix(text: string): string[][] {
   return rows;
 }
 
-export function rowsToCsvRows(rows: string[][], headerIndex = 0): CsvRow[] {
+export function rowsToCsvRows(
+  rows: string[][],
+  headerIndex = 0,
+  context?: { sheetName?: string; sheetIndex?: number },
+): CsvRow[] {
   if (rows.length <= headerIndex + 1) return [];
 
-  // 헤더의 줄바꿈을 제거합니다 (NH카드 등 멀티라인 헤더 처리)
-  const headers = (rows[headerIndex] ?? []).map((header) =>
-    header.replace(/[\r\n]+/g, '').trim()
-  );
-  return rows.slice(headerIndex + 1).reduce<CsvRow[]>((acc, cells) => {
+  const baseHeaders = (rows[headerIndex] ?? []).map(normalizeHeaderCell);
+  const continuationRow = rows[headerIndex + 1] ?? [];
+  const hasContinuation = looksLikeHeaderContinuationRow(continuationRow);
+  const headers = baseHeaders.map((header, index) => {
+    if (!hasContinuation) return header;
+    const leaf = normalizeHeaderCell(continuationRow[index] ?? "");
+    return leaf || header;
+  });
+  const dataStartIndex = headerIndex + (hasContinuation ? 2 : 1);
+
+  return rows.slice(dataStartIndex).reduce<CsvRow[]>((acc, cells, rowOffset) => {
     const row: CsvRow = {};
     let hasValue = false;
 
@@ -126,7 +169,12 @@ export function rowsToCsvRows(rows: string[][], headerIndex = 0): CsvRow[] {
       if (value !== "") hasValue = true;
     });
 
-    if (hasValue) acc.push(row);
+    if (hasValue) {
+      if (context?.sheetName) row.__sheetName = context.sheetName;
+      if (context?.sheetIndex !== undefined) row.__sheetIndex = String(context.sheetIndex);
+      row.__rowIndex = String(dataStartIndex + rowOffset + 1);
+      acc.push(row);
+    }
     return acc;
   }, []);
 }
