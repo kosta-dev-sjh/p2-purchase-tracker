@@ -55,7 +55,10 @@ export interface OcrOrder {
    * 보여 주기 위해 원문을 그대로 남겨둡니다. detect 대상으로도 사용됩니다.
    */
   statusLabel?: string;
-  /** 이 주문의 합계 금액. 상품 가격 합계로 계산해 둔 값입니다. */
+  /**
+   * 이 주문의 최종 거래금액. 일반 주문은 상품합계(가격 × 수량) - 차감액, 접힌 주문은
+   * sectionTotal - 차감액으로 자동 계산됩니다(`deriveOrderTotal` 참고).
+   */
   totalAmount: number;
   products: OcrProduct[];
   /**
@@ -63,6 +66,33 @@ export interface OcrOrder {
    * statusTag 추정과 디버깅·회귀 테스트에 활용합니다.
    */
   rawText?: string;
+  /**
+   * 네이버 "접힌 주문" 메타. parser 가 `포함 총 n건` / `주문 펼쳐보기` 같은 신호를 감지하면
+   * true 로 들어옵니다. true 인 주문은:
+   *   - products[] 는 대표 상품 1개만 들어있을 수 있고 가격이 미확정일 수 있음
+   *   - totalAmount 는 sectionTotal 기반으로 계산
+   *   - UI 에 "접힌 주문 / 외 n건 숨김" 안내가 노출됨
+   * 자세한 정책은 docs/Naver_OCR_Parsing_Strategy.md §6, §12-5 참조.
+   */
+  folded?: boolean;
+  /** "포함 총 n건" 에서 추출한 실제 상품 개수 힌트. folded 일 때만 의미 있습니다. */
+  itemCountHint?: number;
+  /**
+   * 결제 섹션 합계("총 n원"). folded 주문에서 totalAmount 계산의 기준이 되며,
+   * 펼친 주문에서도 OCR 이 결제 합계를 읽었다면 정합성 점검용 메타로 보존합니다.
+   */
+  sectionTotal?: number;
+  /**
+   * 사용자가 OCR 수정 화면에서 "쿠폰/추가 할인 적용" 체크박스를 켰는지. 체크하면 아래
+   * `discountAmount` 입력칸이 노출됩니다. 금액이 0 이어도 "토글한 의도" 를 보존하기 위해
+   * 별도 플래그로 둡니다.
+   */
+  couponEnabled?: boolean;
+  /**
+   * 주문단위 차감액(쿠폰/포인트/카드사 할인 등). 상품합계와 결제액의 차이를 사용자가 보정하는
+   * 단일 슬롯입니다. 자동 배분하지 않고 order 레벨에서만 보존합니다(정책 §12-3).
+   */
+  discountAmount?: number;
 }
 
 export interface OcrImageItem {

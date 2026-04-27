@@ -192,6 +192,12 @@ function buildCoupangOrders(
 
 /**
  * 네이버용: "이미지 1장 = 주문 N건(목록형)" 형식이라 결과 1개당 OcrOrder 1개.
+ *
+ * folded(접힌 주문) 메타가 들어오면:
+ *   - products[] 는 대표 상품 1개로 유지하되 가격은 0/미확정 (toProduct 가 흡수)
+ *   - totalAmount 는 product 합계 대신 sectionTotal 을 우선 사용 — 정책 §6.
+ *   - folded/itemCountHint/sectionTotal 메타를 그대로 OcrOrder 에 보존해
+ *     OrderCard / DetailPanel 이 "접힌 주문 · 외 n건 숨김" 안내를 띄울 수 있게 합니다.
  */
 function buildFlatOrders(
   imageId: string,
@@ -203,16 +209,26 @@ function buildFlatOrders(
     // toProduct 가 이미 toFiniteAmount 로 가격/수량을 정규화한 결과를 그대로 사용합니다.
     // 외부 res.price 를 다시 곱하면 string 으로 들어온 경우 NaN 이 생길 수 있으니,
     // product.price·product.quantity 만 신뢰합니다.
+    const productSum = product
+      ? toFiniteAmount(product.price) * (toFiniteAmount(product.quantity) || 1)
+      : 0;
+    const sectionTotal = toFiniteAmount(res.sectionTotal);
+    const folded = res.folded === true;
+    // folded 일 때만 sectionTotal 을 totalAmount 로 끌어옵니다. 펼친 주문은 products 합계를
+    // 신뢰하고, sectionTotal 은 메타로만 보존(정합성 점검용).
+    const totalAmount = folded && sectionTotal > 0 ? sectionTotal : productSum;
+
     return {
       id: `${imageId}-order-${idx}`,
       orderDate: res.date ?? "",
       statusTag,
       statusLabel: "자동 추출됨",
-      totalAmount: product
-        ? toFiniteAmount(product.price) * (toFiniteAmount(product.quantity) || 1)
-        : 0,
+      totalAmount,
       rawText: res.rawText,
       products: product ? [product] : [],
+      ...(folded ? { folded: true } : {}),
+      ...(res.itemCountHint !== undefined ? { itemCountHint: res.itemCountHint } : {}),
+      ...(sectionTotal > 0 ? { sectionTotal } : {}),
     };
   });
 }

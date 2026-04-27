@@ -51,6 +51,24 @@ export interface PurchaseOCRResult {
    * 파서가 true 로 찍습니다.
    */
   priceOcrFailed?: boolean;
+  /**
+   * 네이버 "접힌 주문" 신호. 화면에 `포함 총 n건` 또는 `주문 펼쳐보기` 가 보일 때 파서가 true 로
+   * 찍습니다. true 인 결과는 caller(buildFlatOrders) 가 OcrOrder.folded 메타와 sectionTotal 로
+   * 변환하고, 대표 상품 가격에 sectionTotal 을 강제 주입하지 않습니다. 자세한 정책은
+   * docs/Naver_OCR_Parsing_Strategy.md §6, §12-5 참고.
+   *
+   * 이번 1차 구현은 image 단위로 fold 여부만 일괄 감지하는 얕은 버전입니다. section-first 파서
+   * 정밀화는 Codex 후속 작업(strategy doc §15)으로 남겨두고, 이 단계에서는 UI/스토어/타입 흐름만
+   * 끊기지 않게 메타를 끌어옵니다.
+   */
+  folded?: boolean;
+  /** "포함 총 n건" 에서 추출한 실제 상품 개수 힌트. folded 일 때만 의미 있습니다. */
+  itemCountHint?: number;
+  /**
+   * 결제 섹션 합계("총 n원"). folded 일 때 totalAmount 계산 기준으로 사용됩니다.
+   * folded 가 아니어도 OCR 이 읽었으면 정합성 점검용 메타로 그대로 보존합니다.
+   */
+  sectionTotal?: number;
 }
 
 /**
@@ -986,6 +1004,47 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   const nameLines = lines.filter(line => line.endsWith('>'));
   const dpLines = lines.filter(line => /202\d/.test(line));
 
+  // ── 접힌 주문 신호 감지 (1차 구현 — image 단위 일괄 판정) ──────────────────────
+  //
+  // 정책: docs/Naver_OCR_Parsing_Strategy.md §3, §6, §12-5.
+  //   - "주문 펼쳐보기" CTA 가 한 번이라도 보이면 folded 후보.
+  //   - "포함 총 N건" 의 N(>=2) 도 folded 신호. N 은 itemCountHint 로 보존.
+  //   - "총 N원" 의 N 은 sectionTotal 로 보존.
+  //
+  // 한계(의도): 한 image 안에 folded/expanded 가 섞이는 케이스는 1차에서 일괄 folded 로
+  //   처리합니다. section-first 파서가 들어오는 Codex 후속 작업(strategy doc §15)에서
+  //   per-section 판정으로 좁혀질 예정입니다.
+  const FOLD_CTA_REGEX = /주문\s*펼쳐\s*보기/;
+  const ITEM_COUNT_HINT_REGEX = /포함\s*총\s*(\d+)\s*건/;
+  const SECTION_TOTAL_REGEX = /총\s*([\d,]+)\s*원/;
+
+  const hasUnfoldCta = lines.some((line) => FOLD_CTA_REGEX.test(line));
+  let detectedItemCountHint: number | undefined;
+  for (const line of lines) {
+    const m = line.match(ITEM_COUNT_HINT_REGEX);
+    if (m) {
+      const n = Number(m[1]);
+      if (Number.isFinite(n) && n > 1) {
+        detectedItemCountHint = Math.max(detectedItemCountHint ?? 0, n);
+      }
+    }
+  }
+  const folded = hasUnfoldCta || detectedItemCountHint !== undefined;
+
+  // sectionTotal 후보 — "총 N원" 라인에서 가장 큰 값을 후보로 둡니다. 작은 값(쿠폰/포인트
+  // 적립 안내 등 노이즈)을 잘못 잡는 위험을 줄이기 위해 max 를 씁니다. folded 가 아닌
+  // 이미지에서도 OCR 이 결제 합계 라인을 잡았다면 그대로 보존해 정합성 점검에 활용합니다.
+  let detectedSectionTotal: number | undefined;
+  for (const line of lines) {
+    const m = line.match(SECTION_TOTAL_REGEX);
+    if (m) {
+      const n = Number(m[1].replace(/,/g, ''));
+      if (Number.isFinite(n) && n > 0) {
+        detectedSectionTotal = Math.max(detectedSectionTotal ?? 0, n);
+      }
+    }
+  }
+
   const maxLen = Math.max(nameLines.length, dpLines.length);
   const results: PurchaseOCRResult[] = [];
 
@@ -1013,18 +1072,47 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     }
 
     const statusIdx = Math.min(i, statusTexts.length - 1);
+    // 정책 §6: 접힌 주문에서 대표 상품의 price 에 sectionTotal 을 강제 주입하지 않는다.
+    // 따라서 folded 일 때는 화면에서 읽은 price 를 sectionTotal 후보로만 보존하고
+    // 상품 단가는 null 로 비워 둡니다(buildFlatOrders 가 0 으로 흡수).
+    const productPrice = folded ? null : price;
+    const sectionTotalForResult = folded
+      ? (detectedSectionTotal ?? price ?? undefined)
+      : detectedSectionTotal;
+
     results.push({
       mall,
       itemName,
-      price,
+      price: productPrice,
       date,
       rawText,
-      statusText: statusTexts[statusIdx] || rawText
+      statusText: statusTexts[statusIdx] || rawText,
+      ...(folded ? { folded: true } : {}),
+      ...(folded && detectedItemCountHint !== undefined
+        ? { itemCountHint: detectedItemCountHint }
+        : {}),
+      ...(sectionTotalForResult !== undefined && sectionTotalForResult > 0
+        ? { sectionTotal: sectionTotalForResult }
+        : {}),
     });
   }
 
   if (results.length === 0) {
-    return [{ mall, itemName: null, price: null, date: null, rawText, statusText: rawText }];
+    return [{
+      mall,
+      itemName: null,
+      price: null,
+      date: null,
+      rawText,
+      statusText: rawText,
+      ...(folded ? { folded: true } : {}),
+      ...(folded && detectedItemCountHint !== undefined
+        ? { itemCountHint: detectedItemCountHint }
+        : {}),
+      ...(detectedSectionTotal !== undefined
+        ? { sectionTotal: detectedSectionTotal }
+        : {}),
+    }];
   }
 
   return results;

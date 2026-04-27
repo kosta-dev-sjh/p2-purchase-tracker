@@ -81,6 +81,27 @@ export interface TxRow {
      * DetailPanel은 이 값을 읽어 "상품 내역이 일부만 입력되어 있어요" 힌트를 띄웁니다.
      */
     itemsCoverage?: "full" | "partial";
+    /**
+     * 사용자가 OCR 수정 화면에서 입력한 주문단위 차감액(쿠폰·포인트·카드 할인 등).
+     * 상품 합계와 실제 결제액의 차이를 보정하는 단일 슬롯이며, 자동 상품별 배분 없이
+     * order 레벨에서만 저장합니다(정책 docs/Naver_OCR_Parsing_Strategy.md §12-3).
+     * 거래 상세에서는 "상품합계 / 차감액 / 최종 거래금액" 세 줄로 분리해 보여줍니다.
+     */
+    discountAmount?: number;
+    /**
+     * 네이버 접힌 주문에서 저장된 거래임을 표시하는 메타. true 면 DetailPanel 에 "접힌 주문 ·
+     * 상세 미확인 · 외 n건 숨김" 안내가 추가로 노출됩니다.
+     */
+    folded?: boolean;
+    /** "포함 총 n건" 에서 추출한 실제 상품 개수 힌트. folded 일 때만 채워집니다. */
+    itemCountHint?: number;
+    /** "외 n건 숨김" 에 사용되는 숨겨진 상품 수. folded 가 아니거나 신호가 없으면 비어 있음. */
+    hiddenItemCount?: number;
+    /**
+     * OCR 이 읽은 결제 섹션 합계("총 n원"). folded 주문에서는 amount 계산 기준이 되고,
+     * 펼친 주문에서도 정합성 점검 용도로 함께 보존합니다.
+     */
+    sectionTotal?: number;
   };
 }
 

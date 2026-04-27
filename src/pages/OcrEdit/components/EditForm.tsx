@@ -138,10 +138,16 @@ const TruncationBanner = styled.div`
 interface EditFormProps {
   image?: OcrImageItem;
   /**
-   * 주문 블록 내부 필드(주문일자·상태 태그)를 수정했을 때 상위(OcrEditPage)로 patch를 올립니다.
-   * totalAmount는 상품 목록 변경 시 상위에서 자동 동기화되므로 이 patch에는 포함하지 않습니다.
+   * 주문 블록 내부 필드(주문일자·상태 태그·쿠폰/차감액)를 수정했을 때 상위(OcrEditPage)로 patch를
+   * 올립니다. totalAmount 는 deriveOrderTotal 에서 단일 규칙으로 산출되므로 이 patch 에 포함하지
+   * 않습니다.
    */
-  onOrderPatch?: (orderId: string, patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>) => void;
+  onOrderPatch?: (
+    orderId: string,
+    patch: Partial<
+      Pick<OcrOrder, "orderDate" | "statusTag" | "couponEnabled" | "discountAmount">
+    >
+  ) => void;
   /**
    * 상품 목록 변경. ProductTable에서 추가·수정·삭제 시 orderId + 최신 목록으로 올라옵니다.
    */
@@ -214,19 +220,40 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         )}
       </ImageSummary>
 
+      {/*
+       * 안내 문구는 플랫폼별로 분기합니다.
+       *  - 쿠팡: 한 캡쳐에 구매·환불·취소 카드가 섞이는 케이스가 흔하므로 "주문 단위 카드 분리" 강조
+       *  - 네이버: list 뷰가 보통 동질 주문 묶음이거나 한 주문이라 "구매·환불 섞임" 표현이 맞지 않음
+       *
+       * 정책: docs/Naver_OCR_Parsing_Strategy.md §12-1 — 차이는 보조 메타와 "파서 해석" 에서
+       * 만들고 공통 데이터 형식은 유지. UI 카피도 플랫폼 차이에 맞춰 분기해 둡니다.
+       */}
       <Hint>
-        OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼
-        저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요.
+        {image.platform === "coupang"
+          ? "OCR 결과는 초안 상태예요. 같은 캡쳐에 구매·환불이 섞여 있어도 주문 단위로 카드가 분리돼 저장 시 각각의 거래로 들어갑니다. 카드마다 주문일자 · 상태 · 카테고리를 필요한 만큼 조정해 주세요."
+          : "OCR 결과는 초안 상태예요. 각 주문은 카드 단위로 분리돼 저장 시 별도 거래로 들어갑니다. 접힌 주문은 상품 상세가 일부만 보일 수 있고, 결제 차이는 카드 안의 ‘쿠폰/추가 할인 적용’에서 보정해 주세요."}
       </Hint>
 
       {(() => {
         // 잘림(truncation) 경고. detectTruncation 의 두 신호(topCut/bottomCut) 중 하나라도
         // 있으면 사용자에게 "이 캡쳐는 일부가 잘린 것 같다" 를 미리 알려 다시 캡쳐를 유도합니다.
         // 저장은 막지 않고 단순 hint — 이미 입력된 카드는 그대로 사용 가능.
+        //
+        // 카피 분기:
+        //   쿠팡 데스크톱 캡쳐는 상단에 "YYYY. M. DD 주문 ..." 헤더가 있어 topCut 을 "주문 헤더가
+        //   보이지 않음" 으로 표현해도 의미가 맞지만, 네이버 list 뷰는 주문마다 dp 라인이 따로
+        //   찍히고 단일 헤더가 없어 같은 표현이 어색합니다. 플랫폼별로 라벨만 갈아끼웁니다.
+        //   detect 로직 자체는 양쪽 모두 유효(첫 주문 orderDate 결측 / 마지막 카드 priceOcrFailed).
         const sig = detectTruncation(image);
         if (!sig.topCut && !sig.bottomCut) return null;
         const parts: string[] = [];
-        if (sig.topCut) parts.push("위쪽 (주문 헤더가 보이지 않음)");
+        if (sig.topCut) {
+          parts.push(
+            image.platform === "coupang"
+              ? "위쪽 (주문 헤더가 보이지 않음)"
+              : "위쪽 (첫 주문의 날짜를 읽지 못함)"
+          );
+        }
         if (sig.bottomCut) parts.push("아래쪽 (마지막 상품 가격이 잘림)");
         return (
           <TruncationBanner role="status" aria-live="polite">

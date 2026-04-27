@@ -3,6 +3,7 @@
     "source": "functions"
   },
   "hosting": {
+    "site": "spendtrack",
     "public": "dist",
     "ignore": [
       "firebase.json",

@@ -273,8 +273,18 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
           ? status
           : defaultStatusForType(type),
       memo: meta.memo.trim() || undefined,
-      // 상품이 하나라도 있으면 detail을 재구성하고, 없으면 detail을 비워 두어
-      // 이전에 붙어있던 items가 유령처럼 남지 않게 합니다.
+      // 상품이 하나라도 있으면 detail 을 재구성하고, 없으면 detail 을 통째로 비워
+      // 이전에 붙어있던 items 가 유령처럼 남지 않게 합니다.
+      //
+      // 단, 다음 order-level 메타들은 편집 화면에 노출되지 않더라도 저장 시 보존해야 합니다 —
+      // 이 모달에서 수정할 수 없는 값이라 사용자가 의도치 않게 잃어버리는 회귀를 막기 위함입니다.
+      //   - itemsCoverage : 부분 입력 플래그
+      //   - discountAmount : 주문단위 차감액(쿠폰/포인트/카드 할인)
+      //   - folded / itemCountHint / hiddenItemCount / sectionTotal : 네이버 접힌 주문 메타
+      // 정책 근거: docs/Naver_OCR_Parsing_Strategy.md §12-3 — 차감액은 별도 슬롯으로 보존,
+      //         §12-5 — 접힌 주문은 메타와 안내를 남긴다. 이번 단계에서 수동입력 / 거래 편집에는
+      //         쿠폰 입력 UI 를 추가하지 않으므로(strategy doc §12-4), 편집 모달은 표시·수정 없이
+      //         "통과" 만 책임집니다.
       detail:
         products.length > 0
           ? {
@@ -286,6 +296,22 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
               source: row.detail?.source ?? "MANUAL",
               ...(row.detail?.sourceImageUrl
                 ? { sourceImageUrl: row.detail.sourceImageUrl }
+                : {}),
+              ...(row.detail?.itemsCoverage
+                ? { itemsCoverage: row.detail.itemsCoverage }
+                : {}),
+              ...(typeof row.detail?.discountAmount === "number"
+                ? { discountAmount: row.detail.discountAmount }
+                : {}),
+              ...(row.detail?.folded ? { folded: true } : {}),
+              ...(typeof row.detail?.itemCountHint === "number"
+                ? { itemCountHint: row.detail.itemCountHint }
+                : {}),
+              ...(typeof row.detail?.hiddenItemCount === "number"
+                ? { hiddenItemCount: row.detail.hiddenItemCount }
+                : {}),
+              ...(typeof row.detail?.sectionTotal === "number"
+                ? { sectionTotal: row.detail.sectionTotal }
                 : {}),
             }
           : undefined,

@@ -174,6 +174,72 @@ const PartialNotice = styled.div`
 `;
 
 /**
+ * 접힌 주문(folded) 안내 — DetailPanel 버전. OcrEdit 의 FoldedBanner 와 동일한 정보를
+ * 거래 상세에서도 일관되게 보여주기 위해 같은 시각 톤(tint + ink3 dashed)으로 통일했습니다.
+ * 구현은 화면이 다르므로 컴포넌트는 분리되어 있지만, 사용자 입장에서 "어디서 보든 같은
+ * 모양으로 같은 의미" 를 받게 만드는 것이 목적입니다(strategy doc §12-5).
+ */
+const FoldedNotice = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong {
+    color: ${tokens.color.ink2};
+    font-weight: 700;
+  }
+`;
+
+/**
+ * "상품합계 / 차감액 / 최종 거래금액" 분해 표시 영역.
+ *
+ * 정책: docs/Naver_OCR_Parsing_Strategy.md §12-3 — 차감액을 별도 슬롯으로 보존해야 사용자가
+ * "왜 상품합계와 결제 금액이 다른지" 를 사후에 다시 확인할 수 있습니다. 단순 amount 한 줄로는
+ * 그 정보가 사라집니다.
+ *
+ * 차감액이 0/없으면 이 영역 자체가 렌더되지 않습니다(노이즈 방지).
+ */
+const AmountBreakdown = styled.div`
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid ${tokens.color.line2};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.bg};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.45;
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.minus {
+    color: ${tokens.color.neg};
+  }
+
+  .row.total {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed ${tokens.color.line2};
+    color: ${tokens.color.ink1};
+    font-weight: 700;
+  }
+`;
+
+/**
  * 카테고리 칩은 표의 "분류" 컬럼처럼 색만 보여주는 대신,
  * 상세 패널에선 색 + 이름을 함께 노출해 의미가 한눈에 읽히게 합니다.
  * 여러 카테고리가 가로로 자연스럽게 줄바꿈될 수 있도록 flex-wrap을 씁니다.
@@ -290,6 +356,57 @@ const DetailPanelInner = ({
             {formatKRW(Math.abs(row.amount))}
           </span>
         </DateAmount>
+
+        {/*
+         * 차감액이 있는 거래는 "상품합계 / 차감액 / 최종 거래금액" 3 줄로 분해해 보여줍니다.
+         * 상품합계는 amount + discount 로 역산 — 저장 시점에 amount 가 이미 차감 후 값으로
+         * 들어와 있기 때문(OcrEdit/buildCandidateFromOrder 의 deriveOrderTotal 결과를 그대로 사용).
+         * folded 거래는 base 가 sectionTotal 이지만, 거래 상세에서는 사용자에게 보여줄 단일
+         * 라벨이 필요하므로 일반 주문은 "상품 합계", folded 는 "결제 섹션 합계" 로 분기합니다.
+         */}
+        {(() => {
+          const discount = row.detail?.discountAmount ?? 0;
+          if (!(discount > 0)) return null;
+          const finalAmount = Math.abs(row.amount);
+          const baseAmount = finalAmount + discount;
+          const baseLabel = row.detail?.folded ? "결제 섹션 합계" : "상품 합계";
+          return (
+            <AmountBreakdown aria-label="거래금액 분해">
+              <div className="row">
+                <span>{baseLabel}</span>
+                <span>{formatKRW(baseAmount)}</span>
+              </div>
+              <div className="row minus">
+                <span>주문단위 차감액</span>
+                <span>-{formatKRW(discount)}</span>
+              </div>
+              <div className="row total">
+                <span>최종 거래금액</span>
+                <span>{formatKRW(finalAmount)}</span>
+              </div>
+            </AmountBreakdown>
+          );
+        })()}
+
+        {row.detail?.folded && (
+          /*
+           * 거래 상세에서 "이 거래는 접힌 주문에서 저장됐다" 는 사실을 한 번 더 알리는 안내.
+           * 상품 목록이 있어도 일부만 보일 수 있고, hiddenItemCount 가 있으면 함께 명시합니다.
+           */
+          <FoldedNotice role="status" aria-live="polite">
+            <span aria-hidden="true">🔒</span>
+            <span>
+              <strong>접힌 주문 · 상세 미확인</strong>
+              {typeof row.detail.hiddenItemCount === "number" &&
+                row.detail.hiddenItemCount > 0 &&
+                ` · 외 ${row.detail.hiddenItemCount}건 숨김`}
+              <div style={{ marginTop: 4 }}>
+                네이버에서 펼쳐지지 않은 주문이라 상품 상세가 일부만 저장됐을 수 있어요.
+                결제 섹션 합계는 별도로 보존돼 있고, 차감액은 거래금액에 이미 반영돼 있습니다.
+              </div>
+            </span>
+          </FoldedNotice>
+        )}
 
         {hasCategories && (
           <Section>
