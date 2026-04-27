@@ -10,7 +10,6 @@
 import { create } from "zustand";
 import { tokens } from "../styles/tokens";
 import { CATEGORY_LABELS, DEFAULT_CATEGORY_KEY } from "../constants/labels";
-import type { TxCategory } from "../pages/Transactions/components/TransactionTable";
 import type { ConceptId } from "../data/categoryConcepts";
 import { auth } from "../lib/firebase";
 import { addCategory, removeCategory, updateCategory } from "../lib/firebaseRepository";
@@ -258,13 +257,13 @@ export const categoriesStore = {
   /**
    * 추정 유틸에 주입할 바인딩 스냅샷. CategoryEntry 전체를 흘리지 않고 필요한 필드만.
    */
-  getBindings(): Array<{ categoryId: TxCategory; conceptIds: ConceptId[] }> {
+  getBindings(): Array<{ categoryId: string; conceptIds: ConceptId[] }> {
     return useCategoriesStoreBase.getState().items.map((entry) => ({
-      categoryId: entry.id as TxCategory,
+      categoryId: entry.id,
       conceptIds: entry.conceptIds,
     }));
   },
-  getColor(key: TxCategory): string {
+  getColor(key: string): string {
     const entry = useCategoriesStoreBase.getState().items.find((item) => item.id === key);
     if (entry) return entry.color;
     const fallback = useCategoriesStoreBase.getState().items.find((item) => item.id === DEFAULT_CATEGORY_KEY);
@@ -279,19 +278,20 @@ export function useCategoriesStore(): CategoryEntry[] {
   return useCategoriesStoreBase((state) => state.items);
 }
 
-export function useCategoryColorMap(): Record<TxCategory, string> {
+export function useCategoryColorMap(): Record<string, string> {
   const items = useCategoriesStore();
-  const map: Record<TxCategory, string> = {
-    living: tokens.color.cat2,
-    fashion: tokens.color.cat1,
-    digital: tokens.color.cat4,
-    food: tokens.color.cat3,
-    etc: tokens.color.cat5,
-  };
+  const map: Record<string, string> = {};
   for (const entry of items) {
-    if (entry.id === "living" || entry.id === "fashion" || entry.id === "digital" || entry.id === "food" || entry.id === "etc") {
-      map[entry.id] = entry.color;
-    }
+    map[entry.id] = entry.color;
+  }
+  return map;
+}
+
+export function useCategoryNameMap(): Record<string, string> {
+  const items = useCategoriesStore();
+  const map: Record<string, string> = {};
+  for (const entry of items) {
+    map[entry.id] = entry.name;
   }
   return map;
 }

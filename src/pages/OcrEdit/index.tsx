@@ -132,19 +132,17 @@ const Footer = styled.div`
  * 주문(OcrOrder) 하나를 TxRow 하나로 변환합니다.
  *
  * - 환불(refund)·취소(cancel)는 돈이 다시 들어오는 흐름이라 type="income"·양수로 저장합니다.
- *   b341470에서 수동 입력/CSV 임포트 경로가 이미 같은 규약으로 수렴했고, OCR 경로만
- *   이전 리팩토링에서 빠져 있었습니다. 이렇게 맞춰 둬야 Home/Analysis의 순수입 집계
- *   (sumIncomeAndRefund에서 status !== "cancel"로 취소를 따로 걸러내는 로직)와 부호 규약이
- *   어긋나지 않습니다. 구매/정기결제/기타는 종전대로 type="expense"·음수.
- * - 카테고리는 OCR만으로 단정할 수 없어 ["etc"]로 시작합니다. EditForm의
- *   카테고리 체크박스가 상위로 승격되면 여기서 선택값을 주입하게 됩니다.
+ * - selectedCategoryKeys: 사용자가 EditForm에서 체크한 카테고리 키 목록.
+ *   비어 있지 않은 문자열이면 표준·커스텀 구분 없이 그대로 저장됩니다.
  * - id에는 주문 id 일부를 섞어 같은 캡쳐에서 나온 여러 TxRow가 식별 가능하도록 합니다.
  */
 function buildCandidateFromOrder(
   image: OcrImageItem,
   order: OcrOrder,
+  selectedCategoryKeys: string[] = [],
 ): TxRow {
-  const categories: TxCategory[] = ["etc"];
+  const picked = selectedCategoryKeys.filter((k) => k && k.trim().length > 0);
+  const categories: TxCategory[] = picked.length > 0 ? picked : ["etc"];
   const title = order.products[0]?.name ?? "OCR 거래";
   const isIncome = order.statusTag === "refund" || order.statusTag === "cancel";
   const signedAmount = isIncome
@@ -170,7 +168,9 @@ function buildCandidateFromOrder(
       // 거래내역 상세에서 "OCR 분석한 이미지 보기"로 원본 캡쳐를 그대로 띄우기 위한 경로입니다.
       // 편집 페이지로 이동시키지 않고 이미지만 보여 주는 쪽으로 단순화하면서 추가된 필드로,
       // mock 데이터에서는 빈 문자열이 들어갈 수 있고 그럴 때 모달은 플레이스홀더로 떨어집니다.
-      sourceImageUrl: image.thumbUrl,
+      // thumbUrl(blob URL)은 세션 종료/새로고침 시 무효화됩니다.
+      // sourceDataUrl(압축 JPEG data URL)은 영속 가능하므로 거래내역 이미지 보기에 사용합니다.
+      sourceImageUrl: image.sourceDataUrl ?? "",
       // totalAmount를 상품 합계로 강제 동기화하면서, "상품 일부만 입력된" 상태가 구조적으로
       // 발생하지 않게 됐기 때문에 itemsCoverage 플래그는 OCR 경로에서 더 이상 붙지 않습니다.
     },
@@ -184,6 +184,7 @@ function buildCandidateFromOrder(
  */
 function buildCandidatesFromImages(
   images: OcrImageItem[],
+  selectedByOrder: Record<string, string[]>,
 ): Array<{
   image: OcrImageItem;
   order: OcrOrder;
@@ -193,7 +194,7 @@ function buildCandidatesFromImages(
     image.orders.map((order) => ({
       image,
       order,
-      candidate: buildCandidateFromOrder(image, order),
+      candidate: buildCandidateFromOrder(image, order, selectedByOrder[order.id] ?? []),
     }))
   );
 }
@@ -257,6 +258,19 @@ export const OcrEditPage: React.FC = () => {
     mergedActions: MergeAction[];
     skipped: SkippedItem[];
   } | null>(null);
+
+  /** EditForm에서 주문별로 체크한 카테고리 키. 저장 시 buildCandidateFromOrder에 주입됩니다. */
+  const [selectedByOrder, setSelectedByOrder] = useState<Record<string, string[]>>({});
+
+  const handleToggleCategoryFor = (orderId: string, key: string) => {
+    setSelectedByOrder((prev) => {
+      const current = prev[orderId] ?? [];
+      const next = current.includes(key)
+        ? current.filter((k) => k !== key)
+        : [...current, key];
+      return { ...prev, [orderId]: next };
+    });
+  };
 
   /** matchQueue 처리 중 최종 집계를 위한 컨텍스트. */
   const [pendingSaveContext, setPendingSaveContext] = useState<{
@@ -479,7 +493,7 @@ export const OcrEditPage: React.FC = () => {
    * 분기도 함께 사라졌습니다.
    */
   const performSaveFlow = () => {
-    const flat = buildCandidatesFromImages(images);
+    const flat = buildCandidatesFromImages(images, selectedByOrder);
     const allCandidates = flat.map((f) => f.candidate);
 
     // ── 0단계: 침묵 자동 보강(silent auto-fill) ─────────────────
@@ -680,6 +694,8 @@ export const OcrEditPage: React.FC = () => {
           onOrderPatch={handleOrderPatch}
           onProductsChange={handleProductsChange}
           onDeleteOrder={handleDeleteOrder}
+          selectedByOrder={selectedByOrder}
+          onToggleCategoryFor={handleToggleCategoryFor}
         />
       </Body>
       <Footer>
@@ -698,9 +714,18 @@ export const OcrEditPage: React.FC = () => {
           mergedActions={saveResult.mergedActions}
           allRows={allRows}
           skipped={saveResult.skipped}
+          onClose={() => setSaveResult(null)}
           onConfirm={() => {
             ocrStore.clear();
-            navigate("/transactions");
+            const firstDate =
+              saveResult.savedRows[0]?.date ??
+              (saveResult.mergedActions[0]
+                ? allRows.find((r) => r.id === saveResult.mergedActions[0].existingId)?.date
+                : undefined) ??
+              saveResult.skipped[0]?.date;
+            navigate("/transactions", {
+              state: firstDate ? { targetDate: firstDate } : undefined,
+            });
           }}
         />
       )}

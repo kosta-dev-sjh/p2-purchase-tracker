@@ -16,7 +16,11 @@ import { FilterBar } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { buildTransactionSummary, getPrevMonthKey } from "./data";
-import { getMonthOption } from "../../constants/months";
+import {
+  computeMinYear,
+  getCurrentMonthKey,
+  getMonthOption,
+} from "../../constants/months";
 import {
   transactionsStore,
   useTransactionsStore,
@@ -160,11 +164,12 @@ export const TransactionsPage: React.FC = () => {
   // 필터 상태는 모두 페이지 상단에서 관리해서 표와 상세 패널이 같은 기준을 보게 합니다.
   const location = useLocation();
   const navigate = useNavigate();
-  const [month, setMonth] = useState("2026-04");
+  // 진입 시 디폴트 월은 "오늘 시점의 현재 월". 과거 목업처럼 특정 월에 고정되지 않습니다.
+  const [month, setMonth] = useState(() => getCurrentMonthKey());
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<"all" | "expense" | "income">("all");
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
-  const [category, setCategory] = useState<"all" | "living" | "fashion" | "digital" | "food" | "etc">("all");
+  const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
@@ -180,6 +185,11 @@ export const TransactionsPage: React.FC = () => {
     return allRows.filter((row) => toMonthKey(row.date) === prevKey);
   }, [allRows, month]);
   const monthOption = getMonthOption(month);
+  // MonthPicker 셀렉터의 가장 오래된 년도 — 거래 데이터에 옛날 거래가 있으면 자동 확장.
+  const pickerMinYear = useMemo(
+    () => computeMinYear(allRows.map((row) => row.date)),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
@@ -264,7 +274,7 @@ export const TransactionsPage: React.FC = () => {
   );
 
   const handleCategoryChange = useCallback(
-    (nextCategory: "all" | "living" | "fashion" | "digital" | "food" | "etc") => {
+    (nextCategory: "all" | string) => {
       setCategory(nextCategory);
       resetVisibleCount();
     },
@@ -391,8 +401,20 @@ export const TransactionsPage: React.FC = () => {
    * 다시 뜨지 않게 합니다.
    */
   useEffect(() => {
-    const state = location.state as { editTransactionId?: string } | null;
+    const state = location.state as { editTransactionId?: string; targetDate?: string } | null;
     const targetId = state?.editTransactionId;
+
+    // OCR/CSV 저장 후 넘어올 때 해당 날짜의 월로 자동 전환합니다.
+    const targetDate = state?.targetDate;
+    if (!targetId && targetDate) {
+      const key = toMonthKey(targetDate);
+      if (key) {
+        setMonth(key);
+        resetVisibleCount();
+      }
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
     if (!targetId) return;
     const target = allRows.find((row) => row.id === targetId);
     const timer = window.setTimeout(() => {
@@ -452,7 +474,13 @@ export const TransactionsPage: React.FC = () => {
       activeNav="transactions"
       crumb={`거래 · ${monthOption.label}`}
       title="수입·지출 내역"
-      headerRight={<MonthPicker value={month} onChange={handleMonthChange} />}
+      headerRight={
+        <MonthPicker
+          value={month}
+          onChange={handleMonthChange}
+          minYear={pickerMinYear}
+        />
+      }
     >
       <Grid>
         <SummaryStrip summary={summary} />

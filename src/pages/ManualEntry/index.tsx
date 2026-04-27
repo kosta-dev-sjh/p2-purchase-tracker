@@ -364,7 +364,7 @@ export const ManualEntryPage: React.FC = () => {
     if (dupDismissed) {
       // 수동 입력은 사용자가 카테고리를 직접 고른 결과라 자동추정을 태우지 않는다.
       transactionsStore.addFromManual(row);
-      navigate("/transactions");
+      navigate("/transactions", { state: { targetDate: row.date } });
       return;
     }
 
@@ -380,7 +380,13 @@ export const ManualEntryPage: React.FC = () => {
 
     // 무언가 저장됐으면 거래내역으로 바로 이동합니다.
     if (resolved.toSave.length > 0 || resolved.toMerge.length > 0) {
-      navigate("/transactions");
+      // 저장된 행의 날짜(또는 기존 거래에 병합된 경우 그 날짜)로 이동합니다.
+      const savedDate =
+        resolved.toSave[0]?.date ??
+        allRows.find((r) => r.id === resolved.toMerge[0]?.existingId)?.date;
+      navigate("/transactions", {
+        state: savedDate ? { targetDate: savedDate } : undefined,
+      });
       return;
     }
 
@@ -585,7 +591,11 @@ export const ManualEntryPage: React.FC = () => {
           skipped={saveResult.skipped}
           onConfirm={() => {
             setSaveResult(null);
-            navigate("/transactions");
+            // skipped만 있는 경우(exactDup)도 해당 거래 날짜 기준 월로 이동합니다.
+            const targetDate = saveResult.skipped[0]?.date;
+            navigate("/transactions", {
+              state: targetDate ? { targetDate } : undefined,
+            });
           }}
         />
       )}

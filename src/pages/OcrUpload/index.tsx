@@ -30,6 +30,7 @@ import {
 import { OCR_UPLOAD_GUIDE, type UploadedImage } from "./data";
 import { ocrStore } from "../../stores/ocrStore";
 import { analyzeUploadedImages } from "../../utils/ocrAnalyzeImages";
+import { createThumbDataUrl } from "../../utils/createThumbDataUrl";
 
 const Wrap = styled.div`
   display: grid;
@@ -134,28 +135,31 @@ export const OcrUploadPage: React.FC = () => {
     setImages((current) => current.filter((image) => image.id !== id));
   };
 
-  const handleFileSelect = (files: File[]) => {
+  const handleFileSelect = async (files: File[]) => {
+    // 남은 슬롯을 현재 state 스냅샷으로 계산합니다.
+    const remainingSlots = MAX_IMAGES - images.length;
+    if (remainingSlots <= 0) return;
+    const filesToAdd = files.slice(0, remainingSlots);
+
+    // thumbUrl(blob)은 즉시 생성하고, sourceDataUrl(압축 data URL)은 병렬로 생성합니다.
+    // sourceDataUrl은 저장 후 거래내역 "OCR 이미지 보기"에 쓰이며 새로고침 후에도 유효합니다.
+    const newImages = await Promise.all(
+      filesToAdd.map(async (file, index) => ({
+        id: `file-${Date.now()}-${index}`,
+        thumbUrl: URL.createObjectURL(file),
+        sourceDataUrl: await createThumbDataUrl(file),
+        fileName: file.name,
+        sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
+        status: "ready" as const,
+        platform,
+        file,
+      }))
+    );
+
     setImages((current) => {
-      // 남은 개수만큼만 파일 받기
-      const remainingSlots = MAX_IMAGES - current.length;
-      if (remainingSlots <= 0) return current;
-
-      const filesToAdd = files.slice(0, remainingSlots);
-      
-      const newImages = filesToAdd.map((file, index) => {
-        return {
-          id: `file-${Date.now()}-${index}`,
-          thumbUrl: URL.createObjectURL(file),
-          fileName: file.name,
-          sizeLabel: `${(file.size / (1024 * 1024)).toFixed(1)} MB`,
-          status: "ready" as const,
-          // 현재 선택된 플랫폼을 이미지에 "찍어" 둡니다.
-          platform,
-          file, // OCR 파싱에 쓸 원본 파일
-        };
-      });
-
-      return [...current, ...newImages];
+      const remaining = Math.max(0, MAX_IMAGES - current.length);
+      if (remaining === 0) return current;
+      return [...current, ...newImages.slice(0, remaining)];
     });
   };
 

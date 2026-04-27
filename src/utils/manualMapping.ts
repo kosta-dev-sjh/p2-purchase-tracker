@@ -34,18 +34,17 @@ export function mapPlatform(input: string): TxPlatform {
 
 /**
  * 체크박스로 선택한 카테고리 키 배열을 TxRow.categories 배열로 매핑합니다.
- * - 표준 카테고리(living/fashion/digital/food/etc)만 저장 대상.
- * - 아무 것도 해당하지 않으면 ["etc"]로 수렴시킵니다(빈 배열 금지).
+ * - 비어 있지 않은 문자열이면 표준·커스텀 구분 없이 모두 유효로 취급합니다.
+ *   (categoriesStore가 유효 ID의 단일 진실원이며, 저장 시점에 별도 재검증을 하지 않습니다.)
+ * - 아무 것도 선택하지 않았으면 ["etc"]로 수렴시킵니다(빈 배열 금지).
  * - 상한은 MAX_CATEGORIES_PER_TX로 잘라냅니다.
  */
 export function mapCategories(keys: string[]): TxCategory[] {
-  const STANDARD: TxCategory[] = ["living", "fashion", "digital", "food", "etc"];
-  const standardSet = new Set<string>(STANDARD);
   const picked: TxCategory[] = [];
   for (const key of keys) {
-    if (!standardSet.has(key)) continue;
-    if (picked.includes(key as TxCategory)) continue;
-    picked.push(key as TxCategory);
+    if (!key || !key.trim()) continue;
+    if (picked.includes(key)) continue;
+    picked.push(key);
     if (picked.length >= MAX_CATEGORIES_PER_TX) break;
   }
   if (picked.length === 0) return ["etc"];

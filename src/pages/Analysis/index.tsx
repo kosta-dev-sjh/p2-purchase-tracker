@@ -16,9 +16,15 @@ import { SubscriptionList } from "./components/SubscriptionList";
 import { MonthlyTrend } from "./components/MonthlyTrend";
 import { WeeklyPattern } from "./components/WeeklyPattern";
 import { buildAnalysisData } from "./data";
-import { getMonthOption, getPrevMonthKey, LATEST_MONTH_KEY } from "../../constants/months";
+import {
+  computeMinYear,
+  getCurrentMonthKey,
+  getLatestMonthKey,
+  getMonthOption,
+  getPrevMonthKey,
+} from "../../constants/months";
 import { useTransactionsStore } from "../../stores/transactionsStore";
-import { useCategoryColorMap } from "../../stores/categoriesStore";
+import { useCategoryColorMap, useCategoryNameMap } from "../../stores/categoriesStore";
 
 const Grid = styled.div`
   display: grid;
@@ -48,24 +54,31 @@ const Row3 = styled.div`
 export const AnalysisPage: React.FC = () => {
   // Analysis도 월 선택만 바꾸면 같은 분석 레이아웃 안에서 데이터가 교체됩니다.
   // 거래 데이터는 transactionsStore를 구독해 쓰므로, 수동 입력이나 삭제가 즉시 반영됩니다.
-  const [month, setMonth] = useState("2026-04");
+  // 디폴트 월은 "오늘 시점의 현재 월". 과거 목업처럼 특정 월에 고정되지 않습니다.
+  const [month, setMonth] = useState(() => getCurrentMonthKey());
   const rows = useTransactionsStore();
+  // MonthPicker 셀렉터의 가장 오래된 년도 — 거래 데이터에 옛날 거래가 있으면 자동 확장.
+  const pickerMinYear = useMemo(
+    () => computeMinYear(rows.map((row) => row.date)),
+    [rows]
+  );
   // 설정에서 바꾼 색이 카테고리별 지출 차트에 즉시 반영되도록 스토어 구독 결과를 그대로 흘려보냅니다.
   const categoryColorMap = useCategoryColorMap();
+  const categoryNameMap = useCategoryNameMap();
   const data = useMemo(
-    () => buildAnalysisData(rows, month, categoryColorMap),
-    [rows, month, categoryColorMap]
+    () => buildAnalysisData(rows, month, categoryColorMap, categoryNameMap),
+    [rows, month, categoryColorMap, categoryNameMap]
   );
   // CategoryBars의 "지난 달" 탭에서 쓸 전달 참조 데이터.
   const prevData = useMemo(
-    () => buildAnalysisData(rows, getPrevMonthKey(month), categoryColorMap),
-    [rows, month, categoryColorMap]
+    () => buildAnalysisData(rows, getPrevMonthKey(month), categoryColorMap, categoryNameMap),
+    [rows, month, categoryColorMap, categoryNameMap]
   );
   const monthOption = getMonthOption(month);
 
   const summaryTitle = useMemo(() => {
-    // 최신 월은 "이번 달"로, 과거 월은 실제 라벨로 보여줘 문구를 자연스럽게 만듭니다.
-    if (month === LATEST_MONTH_KEY) {
+    // 최신 월(=오늘이 속한 월)은 "이번 달"로, 과거 월은 실제 라벨로 보여줘 문구를 자연스럽게 만듭니다.
+    if (month === getLatestMonthKey()) {
       return "이번 달 요약";
     }
     return `${monthOption.label} 요약`;
@@ -76,7 +89,9 @@ export const AnalysisPage: React.FC = () => {
       activeNav="analysis"
       crumb={`분석 · ${monthOption.label}`}
       title="소비 분석"
-      headerRight={<MonthPicker value={month} onChange={setMonth} />}
+      headerRight={
+        <MonthPicker value={month} onChange={setMonth} minYear={pickerMinYear} />
+      }
     >
       <Grid>
         {/* 요약 배너 → KPI → 플랫폼/카테고리 → 월간 추이 → 반복구매/정기결제/요일패턴 */}

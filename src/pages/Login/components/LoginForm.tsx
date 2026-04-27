@@ -89,7 +89,15 @@ export const LoginForm: React.FC = () => {
           await signIn(email.trim(), password);
           navigate("/");
         } catch (err) {
-          const message = err instanceof Error ? err.message : "로그인에 실패했어요.";
+          const code = (err as { code?: string }).code ?? "";
+          const message =
+            code === "auth/invalid-credential" ||
+            code === "auth/user-not-found" ||
+            code === "auth/wrong-password"
+              ? "이메일이나 비밀번호가 일치하지 않습니다."
+              : err instanceof Error
+                ? err.message
+                : "로그인에 실패했어요.";
           setError(message);
         } finally {
           setSubmitting(false);

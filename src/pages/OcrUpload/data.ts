@@ -12,6 +12,11 @@ import type { Platform } from "./components/PlatformSelect";
 export interface UploadedImage {
   id: string;
   thumbUrl: string;
+  /**
+   * 저장 후 거래내역 "OCR 이미지 보기"용 압축 data URL. blob URL(thumbUrl)은 세션 종료 시
+   * 무효화되므로, TxRow에 영속할 때는 이 값을 사용합니다.
+   */
+  sourceDataUrl?: string;
   fileName: string;
   sizeLabel: string;
   status: "ready" | "analyzing" | "done";

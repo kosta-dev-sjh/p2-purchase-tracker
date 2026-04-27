@@ -74,6 +74,8 @@ export const RegisterForm: React.FC = () => {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [agreed, setAgreed] = useState(false);
+  const [agreeError, setAgreeError] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -82,6 +84,10 @@ export const RegisterForm: React.FC = () => {
       onSubmit={async (event) => {
         event.preventDefault();
         setError(null);
+        if (!agreed) {
+          setAgreeError(true);
+          return;
+        }
         if (!name.trim()) {
           setError("이름을 입력해 주세요.");
           return;
@@ -141,12 +147,24 @@ export const RegisterForm: React.FC = () => {
         </FormField>
       </div>
       <Agree>
-        <input type="checkbox" defaultChecked />
+        <input
+          type="checkbox"
+          checked={agreed}
+          onChange={(e) => {
+            setAgreed(e.target.checked);
+            if (e.target.checked) setAgreeError(false);
+          }}
+        />
         <span>
           <Link to="/register">이용약관</Link>과{" "}
           <Link to="/register">개인정보 처리방침</Link>에 동의합니다. (필수)
         </span>
       </Agree>
+      {agreeError && (
+        <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
+          이용약관과 개인정보 처리방침에 동의하셔야 회원가입이 가능합니다.
+        </div>
+      )}
       {error && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
           {error}
