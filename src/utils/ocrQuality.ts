@@ -25,7 +25,6 @@
  *   - `reasons` 배열을 돌려주어 디버깅/로깅 시 "왜 이 tier 로 분류됐는지" 추적 가능.
  */
 
-import type { OcrOrder, OcrImageItem } from "../pages/OcrEdit/data";
 
 export type OcrCardTier = "clean" | "borderline" | "bad";
 
@@ -493,50 +492,3 @@ export function pickBadProducts<T extends {
   });
 }
 
-/**
- * 주문 하나의 품질 요약. 카드별 tier 를 집계해 "이 주문에 AI 후보가 몇 개 있나" 를 보여줍니다.
- */
-export function summarizeOrderQuality(order: OcrOrder) {
-  const per = order.products.map((p) =>
-    classifyOcrCardQuality({
-      name: p.name,
-      price: p.price,
-      date: p.date,
-      quantity: p.quantity,
-      statusTag: order.statusTag,
-    }),
-  );
-  const counts = { clean: 0, borderline: 0, bad: 0 } as Record<OcrCardTier, number>;
-  per.forEach((q) => {
-    counts[q.tier] += 1;
-  });
-  return { per, counts, total: per.length };
-}
-
-/**
- * 이미지 전체 품질 요약. "이미지를 AI 로 재분석" 배너 트리거 여부를 계산합니다.
- *
- * 기준 (2026-04-24, 실측 기반):
- *   - 카드 중 bad 비율 ≥ 30% 이면 배너 노출.
- *   - 단, 카드가 1 장뿐일 때는 1/1 = 100% 가 되어 민감하게 배너가 뜨므로 최소 카드 수 3 조건 병합.
- */
-export function summarizeImageQuality(image: OcrImageItem) {
-  const allProducts = image.orders.flatMap((o) =>
-    o.products.map((p) => ({ order: o, product: p })),
-  );
-  const per = allProducts.map(({ order, product }) =>
-    classifyOcrCardQuality({
-      name: product.name,
-      price: product.price,
-      date: product.date,
-      quantity: product.quantity,
-      statusTag: order.statusTag,
-    }),
-  );
-  const counts = { clean: 0, borderline: 0, bad: 0 } as Record<OcrCardTier, number>;
-  per.forEach((q) => counts[q.tier] += 1);
-  const total = per.length;
-  const badRatio = total > 0 ? counts.bad / total : 0;
-  const shouldShowImageBanner = total >= 3 && badRatio >= 0.3;
-  return { counts, total, badRatio, shouldShowImageBanner };
-}

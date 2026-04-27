@@ -7,19 +7,19 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 // ProductTour는 Routes와 형제로 라우터 안쪽에 마운트되어야
 // useNavigate/useLocation 훅이 동작하고, 라우트 전환 중에도 상태가 유지됩니다.
 import { ProductTour } from "./components/onboarding/ProductTour";
-import { LoginPage } from "./pages/LoginPage";
-import { RegisterPage } from "./pages/RegisterPage";
-import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
-import { HomePage } from "./pages/HomePage";
-import { UploadPage } from "./pages/UploadPage";
-import { ManualEntryPage } from "./pages/ManualEntryPage";
-import { OcrUploadPage } from "./pages/OcrUploadPage";
-import { OcrEditPage } from "./pages/OcrEditPage";
-import { CsvUploadPage } from "./pages/CsvUploadPage";
-import { TransactionsPage } from "./pages/TransactionsPage";
-import { AnalysisPage } from "./pages/AnalysisPage";
-import { SubscriptionsPage } from "./pages/SubscriptionsPage";
-import { SettingsPage } from "./pages/SettingsPage";
+import { LoginPage } from "./pages/Login";
+import { RegisterPage } from "./pages/Register";
+import { ForgotPasswordPage } from "./pages/ForgotPassword";
+import { HomePage } from "./pages/Home";
+import { UploadPage } from "./pages/Upload";
+import { ManualEntryPage } from "./pages/ManualEntry";
+import { OcrUploadPage } from "./pages/OcrUpload";
+import { OcrEditPage } from "./pages/OcrEdit";
+import { CsvUploadPage } from "./pages/CsvUpload";
+import { TransactionsPage } from "./pages/Transactions";
+import { AnalysisPage } from "./pages/Analysis";
+import { SubscriptionsPage } from "./pages/Subscriptions";
+import { SettingsPage } from "./pages/Settings";
 import { useAuthSession } from "./stores/authStore";
 
 const LoadingScreen = () => (

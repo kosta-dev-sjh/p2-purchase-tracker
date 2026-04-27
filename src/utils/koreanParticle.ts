@@ -63,23 +63,3 @@ export function topicParticle(noun: string | null | undefined): string {
   if (has === false) return "는";
   return "은/는";
 }
-
-/**
- * 명사 + 조사를 한 번에 잇는 헬퍼. 호출부 가독성을 위한 sugar.
- *   withParticle("쿠팡", "object")   // "쿠팡을"
- *   withParticle("네이버", "topic")  // "네이버는"
- */
-export function withParticle(
-  noun: string,
-  kind: "object" | "subject" | "topic",
-): string {
-  const trimmed = noun?.trim() ?? "";
-  switch (kind) {
-    case "object":
-      return `${trimmed}${objectParticle(trimmed)}`;
-    case "subject":
-      return `${trimmed}${subjectParticle(trimmed)}`;
-    case "topic":
-      return `${trimmed}${topicParticle(trimmed)}`;
-  }
-}

@@ -24,7 +24,7 @@ import {
   REMAINING_BALANCE_HEADERS,
   STATUS_HEADERS,
 } from "./importHeaders";
-import { parseCsv, type CsvRow } from "./csvParse";
+import { type CsvRow } from "./csvParse";
 import { normalizeMerchant } from "./merchantNormalize";
 import { inferCardRecordKind } from "./cardInstallment";
 
@@ -330,8 +330,4 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
   });
 
   return { total: parsed.length, imported, skipped };
-}
-
-export function importCsv(text: string): CsvImportResult {
-  return importRows(parseCsv(text));
 }
