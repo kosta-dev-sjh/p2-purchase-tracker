@@ -18,6 +18,7 @@ import { OcrEditPage } from "./pages/OcrEditPage";
 import { CsvUploadPage } from "./pages/CsvUploadPage";
 import { TransactionsPage } from "./pages/TransactionsPage";
 import { AnalysisPage } from "./pages/AnalysisPage";
+import { SubscriptionsPage } from "./pages/SubscriptionsPage";
 import { SettingsPage } from "./pages/SettingsPage";
 import { useAuthSession } from "./stores/authStore";
 
@@ -58,6 +59,7 @@ function App() {
         <Route path="/csv-upload" element={<ProtectedRoute><CsvUploadPage /></ProtectedRoute>} />
         <Route path="/transactions" element={<ProtectedRoute><TransactionsPage /></ProtectedRoute>} />
         <Route path="/analysis" element={<ProtectedRoute><AnalysisPage /></ProtectedRoute>} />
+        <Route path="/subscriptions" element={<ProtectedRoute><SubscriptionsPage /></ProtectedRoute>} />
         <Route path="/settings" element={<ProtectedRoute><SettingsPage /></ProtectedRoute>} />
         {/* 정의되지 않은 경로는 홈으로 되돌려서 데모 흐름이 끊기지 않게 합니다. */}
         <Route path="*" element={<Navigate to="/" replace />} />

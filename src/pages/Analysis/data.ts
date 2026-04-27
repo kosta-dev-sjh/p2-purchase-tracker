@@ -230,7 +230,18 @@ const SUB_COLOR: Record<string, string> = {
 
 const FIXED_EXPENSE_CONCEPTS = new Set(["subscription", "telecom", "utility", "insurance"]);
 
-function buildSubscriptions(rows: TxRow[], monthKey: string): { items: SubscriptionItem[]; total: number } {
+/**
+ * 정기결제(고정지출 감지) 집계.
+ *
+ * `limit` 은 결과 항목 상한. 분석 페이지의 카드는 상위 5개만 보여주는 것이 정책이라
+ * 기본값을 5 로 두고, 정기결제 전용 페이지처럼 전체 목록이 필요한 호출자만
+ * `limit: Infinity` 를 넘겨 풀 리스트를 받습니다.
+ */
+export function buildSubscriptions(
+  rows: TxRow[],
+  monthKey: string,
+  limit: number = 5,
+): { items: SubscriptionItem[]; total: number } {
   const buckets = new Map<
     string,
     {
@@ -291,7 +302,7 @@ function buildSubscriptions(rows: TxRow[], monthKey: string): { items: Subscript
       };
     })
     .sort((a, b) => b.amount - a.amount)
-    .slice(0, 5)
+    .slice(0, Number.isFinite(limit) ? limit : undefined)
     .map((sub, index) => ({
       id: `${monthKey}-sub-${index}`,
       name: sub.name,

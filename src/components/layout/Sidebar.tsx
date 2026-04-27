@@ -20,7 +20,7 @@ interface SidebarProps {
   };
 }
 
-type IconKey = Exclude<NavKey, "settings"> | "settings";
+type IconKey = NavKey;
 
 const NavIcon = ({ name }: { name: IconKey }) => {
   const common = {
@@ -62,6 +62,14 @@ const NavIcon = ({ name }: { name: IconKey }) => {
           <path d="M11 12V8" />
         </svg>
       );
+    case "subscriptions":
+      // AppShell 의 더보기 칩 안 아이콘과 동일 모양. "정기적으로 다시 결제됨" 의미의 ↻.
+      return (
+        <svg {...common}>
+          <path d="M13.5 7.5a5.5 5.5 0 1 0-1.6 4" />
+          <path d="M13.5 3v4.5h-4.5" />
+        </svg>
+      );
     case "settings":
       // 톱니바퀴 모양으로 변경. 이전에는 햇빛(중심 원 + 8방향 짧은 선) 아이콘이라 라이트/다크
       // 모드 토글로 오해할 여지가 있었어요. 둥근 톱니로 굴곡을 명시해 "설정"의 일반적 픽토그램에 맞춥니다.
@@ -84,6 +92,9 @@ const NAV_ITEMS: Array<{
   { key: "upload", label: "입력", path: "/upload" },
   { key: "transactions", label: "수입·지출 내역", path: "/transactions" },
   { key: "analysis", label: "소비 분석", path: "/analysis" },
+  // 데스크톱은 사이드바 폭(232px)이 충분하므로 정기결제도 메인 메뉴에 함께 둡니다.
+  // 모바일에선 폭이 빠듯해서 AppShell 의 더보기 드롭다운 안으로 들어갑니다.
+  { key: "subscriptions", label: "정기결제", path: "/subscriptions" },
 ];
 
 const Aside = styled.aside`
