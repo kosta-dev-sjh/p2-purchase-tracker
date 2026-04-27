@@ -290,6 +290,23 @@ const MemoBody = styled.p`
   word-break: break-word;
 `;
 
+const InfoGrid = styled.div`
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+
+  .key {
+    color: ${tokens.color.ink4};
+    font-size: 12px;
+  }
+
+  .value {
+    color: ${tokens.color.ink2};
+    font-size: 13px;
+    font-weight: 600;
+  }
+`;
+
 const Actions = styled.div`
   display: grid;
   gap: 8px;
@@ -332,6 +349,7 @@ const DetailPanelInner = ({
   const memoText = row.memo?.trim() ?? "";
   const hasMemo = memoText.length > 0;
   const hasCategories = row.categories.length > 0;
+  const cardImport = row.detail?.cardImport;
 
   return (
     <Card padding={0}>
@@ -347,6 +365,13 @@ const DetailPanelInner = ({
         <Tags>
           <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
           <Tag kind={row.type === "expense" ? "expense" : "income"}>{TYPE_LABELS[row.type]}</Tag>
+          {cardImport?.recordKind === "billing" ? (
+            <Tag kind="billing">할부 청구건</Tag>
+          ) : cardImport?.paymentMode === "installment" ? (
+            <Tag kind="installment">할부 승인건</Tag>
+          ) : cardImport?.paymentMode === "lump_sum" ? (
+            <Tag kind="purchase">일시불</Tag>
+          ) : null}
         </Tags>
         <Title>{row.title}</Title>
         <DateAmount>
@@ -476,6 +501,62 @@ const DetailPanelInner = ({
           <div className="label">거래 상태</div>
           <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
         </Section>
+
+        {cardImport && (
+          <Section>
+            <div className="label">결제 정보</div>
+            <InfoGrid>
+              <div className="key">결제방식</div>
+              <div className="value">
+                {cardImport.recordKind === "billing"
+                  ? "할부 청구건"
+                  : cardImport.paymentMode === "installment"
+                    ? "할부 승인건"
+                    : cardImport.paymentMode === "lump_sum"
+                      ? "일시불"
+                      : "미기록"}
+              </div>
+              {cardImport.installmentMonths ? (
+                <>
+                  <div className="key">할부개월</div>
+                  <div className="value">{cardImport.installmentMonths}개월</div>
+                </>
+              ) : null}
+              {cardImport.installmentCurrentCycle && cardImport.installmentCycleTotal ? (
+                <>
+                  <div className="key">현재 회차</div>
+                  <div className="value">
+                    {cardImport.installmentCurrentCycle}/{cardImport.installmentCycleTotal}회차
+                  </div>
+                </>
+              ) : null}
+              {cardImport.approvedAmount ? (
+                <>
+                  <div className="key">원 승인금액</div>
+                  <div className="value">{formatKRW(cardImport.approvedAmount)}</div>
+                </>
+              ) : null}
+              {cardImport.billedAmount ? (
+                <>
+                  <div className="key">이번 달 청구액</div>
+                  <div className="value">{formatKRW(cardImport.billedAmount)}</div>
+                </>
+              ) : null}
+              {cardImport.remainingBalance ? (
+                <>
+                  <div className="key">남은 잔액</div>
+                  <div className="value">{formatKRW(cardImport.remainingBalance)}</div>
+                </>
+              ) : null}
+              {cardImport.dueDate ? (
+                <>
+                  <div className="key">결제예정일</div>
+                  <div className="value">{cardImport.dueDate}</div>
+                </>
+              ) : null}
+            </InfoGrid>
+          </Section>
+        )}
 
         {hasMemo && (
           <Section>

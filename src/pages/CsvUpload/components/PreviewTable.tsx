@@ -76,7 +76,16 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
         // 데이터가 불완전해도 화면이 크래시되지 않도록 보장합니다.
         const platformKey = row.platform || "unspecified";
         const platformLabel = PLATFORM_LABELS[platformKey] || "미지정";
-        const displayTitle = (row.title || "알 수 없음").trim();
+        const cardImport = row.detail?.cardImport;
+        const paymentBadge =
+          cardImport?.recordKind === "billing" &&
+          cardImport.installmentCurrentCycle &&
+          cardImport.installmentCycleTotal
+            ? ` · 할부 ${cardImport.installmentCurrentCycle}/${cardImport.installmentCycleTotal}회차`
+            : cardImport?.paymentMode === "installment" && cardImport.installmentMonths
+              ? ` · 할부 ${cardImport.installmentMonths}개월`
+              : "";
+        const displayTitle = ((row.title || "알 수 없음").trim() + paymentBadge).trim();
         const displayDate = row.date || "0000.00.00";
         const absAmount = Math.abs(row.amount || 0);
 

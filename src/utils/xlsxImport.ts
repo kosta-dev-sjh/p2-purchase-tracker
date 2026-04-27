@@ -96,7 +96,7 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
   // 첫 시트만 읽으면 실제 거래가 다른 탭에 있을 때 전부 놓치므로, 모든 시트를 순회하며
   // 각 시트에서 헤더를 찾아 CsvRow 배열로 변환하고 합칩니다.
   const allRows: CsvRow[] = [];
-  for (const sheetName of workbook.SheetNames) {
+  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
     const sheet = workbook.Sheets[sheetName];
     // dateNF: sheet_to_json이 Date 셀을 ISO 형태 문자열로 포맷해서 내려주도록 지정합니다.
     //         이 옵션이 없으면 Excel 일련번호("46131.375" 등)가 그대로 내려와 날짜 파서가 오인식합니다.
@@ -107,13 +107,16 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
       dateNF: "yyyy-mm-dd",
       blankrows: false,
     });
-    if (aoa.length === 0) continue;
+    if (aoa.length === 0) return;
 
     const matrix = aoa.map((cells) => cells.map((cell) => String(cell ?? "").trim()));
-    const sheetRows = rowsToCsvRows(matrix, findHeaderRowIndex(matrix));
+    const sheetRows = rowsToCsvRows(matrix, findHeaderRowIndex(matrix), {
+      sheetName,
+      sheetIndex,
+    });
     if (sheetRows.length > 0) {
       allRows.push(...sheetRows);
     }
-  }
+  });
   return allRows;
 }

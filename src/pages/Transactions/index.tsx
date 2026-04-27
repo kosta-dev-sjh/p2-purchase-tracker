@@ -12,7 +12,7 @@ import { MonthPicker } from "../../components/primitives/MonthPicker";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { SummaryStrip } from "./components/SummaryStrip";
-import { FilterBar } from "./components/FilterBar";
+import { FilterBar, type InstallmentFilter } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
 import { buildTransactionSummary, getPrevMonthKey } from "./data";
@@ -171,6 +171,7 @@ export const TransactionsPage: React.FC = () => {
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
   const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
+  const [installmentFilter, setInstallmentFilter] = useState<InstallmentFilter>("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
@@ -217,6 +218,17 @@ export const TransactionsPage: React.FC = () => {
         return false;
       }
 
+      const cardImport = row.detail?.cardImport;
+      if (installmentFilter === "lump_sum" && cardImport?.paymentMode !== "lump_sum") {
+        return false;
+      }
+      if (installmentFilter === "installment" && !(cardImport?.paymentMode === "installment" && cardImport?.recordKind === "approval")) {
+        return false;
+      }
+      if (installmentFilter === "billing" && cardImport?.recordKind !== "billing") {
+        return false;
+      }
+
       if (!query) {
         return true;
       }
@@ -239,7 +251,7 @@ export const TransactionsPage: React.FC = () => {
       return sortOrder === "desc" ? -diff : diff;
     });
     return sorted;
-  }, [category, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  }, [category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
 
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
@@ -288,6 +300,11 @@ export const TransactionsPage: React.FC = () => {
     },
     [resetVisibleCount]
   );
+
+  const handleInstallmentChange = useCallback((nextInstallment: InstallmentFilter) => {
+    setInstallmentFilter(nextInstallment);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
 
   const visibleRows = useMemo(
     () => filteredRows.slice(0, visibleCount),
@@ -495,6 +512,7 @@ export const TransactionsPage: React.FC = () => {
               platform={platform}
               category={category}
               statusFilter={statusFilter}
+              installmentFilter={installmentFilter}
               sortOrder={sortOrder}
               onToggleSort={handleToggleSort}
               onSearchChange={handleSearchChange}
@@ -502,6 +520,7 @@ export const TransactionsPage: React.FC = () => {
               onPlatformChange={handlePlatformChange}
               onCategoryChange={handleCategoryChange}
               onStatusChange={handleStatusChange}
+              onInstallmentChange={handleInstallmentChange}
             />
             <TransactionTable
               rows={visibleRows}

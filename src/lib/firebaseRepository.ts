@@ -14,6 +14,10 @@ import type { TxRow } from "../pages/Transactions/components/TransactionTable";
 import type { UserProfile } from "../stores/profileStore";
 import type { CategoryEntry } from "../stores/categoriesStore";
 import { db } from "./firebase";
+import {
+  normalizeTransactionRow,
+  normalizeTransactionRows,
+} from "../utils/transactionNormalize";
 
 function stripUndefined<T>(value: T): T {
   if (Array.isArray(value)) {
@@ -108,12 +112,14 @@ export function subscribeTransactions(
   onValue: (rows: TxRow[]) => void,
 ): () => void {
   return onSnapshot(transactionsCol(uid), (snap) => {
-    const rows = snap.docs
+    const rows = normalizeTransactionRows(
+      snap.docs
       .map((item) => {
         const data = item.data();
         const row = { id: item.id, ...data } as TxRow;
         return stripUndefined(row);
       })
+    )
       .sort((a, b) => {
         if (a.date === b.date) return b.id.localeCompare(a.id);
         return String(b.date).localeCompare(String(a.date));
@@ -155,7 +161,7 @@ export async function addTransactions(uid: string, rows: TxRow[]): Promise<void>
   if (rows.length === 0) return;
   const batch = writeBatch(db);
   const colRef = transactionsCol(uid);
-  for (const row of rows) {
+  for (const row of normalizeTransactionRows(rows)) {
     batch.set(doc(colRef, row.id), {
       ...stripUndefined(row),
       createdAt: serverTimestamp(),
@@ -168,12 +174,13 @@ export async function addTransactions(uid: string, rows: TxRow[]): Promise<void>
 export async function replaceTransactions(uid: string, rows: TxRow[]): Promise<void> {
   const colRef = transactionsCol(uid);
   const snap = await getDocs(colRef);
-  const keepIds = new Set(rows.map((row) => row.id));
+  const normalizedRows = normalizeTransactionRows(rows);
+  const keepIds = new Set(normalizedRows.map((row) => row.id));
   const batch = writeBatch(db);
   for (const rowDoc of snap.docs) {
     if (!keepIds.has(rowDoc.id)) batch.delete(rowDoc.ref);
   }
-  for (const row of rows) {
+  for (const row of normalizedRows) {
     batch.set(doc(colRef, row.id), {
       ...stripUndefined(row),
       createdAt: serverTimestamp(),
@@ -188,9 +195,29 @@ export async function updateTransaction(
   id: string,
   patch: Partial<TxRow>,
 ): Promise<void> {
+  const normalizedPatch = normalizeTransactionRow({
+    id,
+    type: patch.type ?? "expense",
+    date: patch.date ?? "",
+    platform: patch.platform ?? "unspecified",
+    categories: patch.categories ?? ["etc"],
+    title: patch.title ?? "",
+    amount: patch.amount ?? 0,
+    status: patch.status ?? "purchase",
+    source: patch.source,
+    memo: patch.memo,
+    detail: patch.detail,
+  });
   await setDoc(
     doc(transactionsCol(uid), id),
-    { ...stripUndefined(patch), updatedAt: serverTimestamp() },
+    {
+      ...stripUndefined({
+        ...patch,
+        ...(normalizedPatch.detail ? { detail: normalizedPatch.detail } : {}),
+        ...(normalizedPatch.categories ? { categories: normalizedPatch.categories } : {}),
+      }),
+      updatedAt: serverTimestamp(),
+    },
     { merge: true },
   );
 }

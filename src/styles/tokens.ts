@@ -49,6 +49,8 @@ export const tokens = {
       income: { bg: "#ECFDF5", fg: "#067A55" },
       purchase: { bg: "#F2F4F8", fg: "#5B6474" },
       sub: { bg: "#EEF0FF", fg: "#4338CA" },
+      installment: { bg: "#EEF0FF", fg: "#4338CA" },
+      billing: { bg: "#FFF7ED", fg: "#C2410C" },
       cancel: { bg: "#FEF2F2", fg: "#B42318" },
       refund: { bg: "#EFF6FF", fg: "#1D4ED8" },
       // "기타" 상태는 purchase와 유사한 회색 계열로 두되, 살짝 더 옅게 해 의미 있는 상태들과 시각 가중치를 낮춥니다.

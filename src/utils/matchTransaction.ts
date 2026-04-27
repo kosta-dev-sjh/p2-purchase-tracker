@@ -32,6 +32,7 @@ export function findMatches(rows: TxRow[], criteria: MatchCriteria): TxRow[] {
   return rows
     .filter((row) => {
       if (row.platform !== criteria.platform) return false;
+      if (row.detail?.cardImport?.recordKind === "billing") return false;
       const diffAmount = Math.abs(Math.abs(row.amount) - targetAmount);
       if (diffAmount > amountTolerance) return false;
       const rowTs = parseDate(row.date);

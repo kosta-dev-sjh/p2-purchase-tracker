@@ -13,6 +13,7 @@ import type { TxPlatform, TxStatus, TxType } from "./TransactionTable";
 
 export type TypeFilter = "all" | TxType;
 export type StatusFilter = "all" | TxStatus;
+export type InstallmentFilter = "all" | "lump_sum" | "installment" | "billing";
 
 interface FilterBarProps {
   search: string;
@@ -20,6 +21,7 @@ interface FilterBarProps {
   platform: "all" | TxPlatform;
   category: "all" | string;
   statusFilter: StatusFilter;
+  installmentFilter: InstallmentFilter;
   /** 모바일 아이콘 바의 정렬 토글을 여기서 함께 다루기 위해 받아 둡니다. PC 에서는 테이블 헤더가 정렬을 담당합니다. */
   sortOrder: "desc" | "asc";
   onToggleSort: () => void;
@@ -28,6 +30,7 @@ interface FilterBarProps {
   onPlatformChange: (value: "all" | TxPlatform) => void;
   onCategoryChange: (value: "all" | string) => void;
   onStatusChange: (value: StatusFilter) => void;
+  onInstallmentChange: (value: InstallmentFilter) => void;
 }
 
 const TYPE_OPTIONS: Array<{ value: TypeFilter; label: string }> = [
@@ -60,7 +63,7 @@ const Wrap = styled.div`
 
 const DesktopBar = styled.div`
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
   gap: 8px;
   align-items: center;
 
@@ -327,6 +330,7 @@ export const FilterBar = memo(({
   platform,
   category,
   statusFilter,
+  installmentFilter,
   sortOrder,
   onToggleSort,
   onSearchChange,
@@ -334,6 +338,7 @@ export const FilterBar = memo(({
   onPlatformChange,
   onCategoryChange,
   onStatusChange,
+  onInstallmentChange,
 }: FilterBarProps) => {
   const storeCategories = useCategoriesStore();
   // 모바일 아이콘 바 상태. 검색/필터 패널은 서로 독립적으로 열고 닫힐 수 있습니다.
@@ -361,6 +366,7 @@ export const FilterBar = memo(({
     platform !== "all",
     category !== "all",
     statusFilter !== "all",
+    installmentFilter !== "all",
   ].filter(Boolean).length;
 
   return (
@@ -417,6 +423,15 @@ export const FilterBar = memo(({
           <option value="sub">{STATUS_LABELS.sub}</option>
           {/* "기타" 상태는 지출·수입 양쪽 폴백이라 상태 필터에도 노출해 수동 입력 정리에 쓰도록 합니다. */}
           <option value="etc">{STATUS_LABELS.etc}</option>
+        </Select>
+        <Select
+          value={installmentFilter}
+          onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
+        >
+          <option value="all">결제방식 전체</option>
+          <option value="lump_sum">일시불</option>
+          <option value="installment">할부 승인건</option>
+          <option value="billing">할부 청구건</option>
         </Select>
       </DesktopBar>
 
@@ -533,6 +548,16 @@ export const FilterBar = memo(({
               <option value="refund">{STATUS_LABELS.refund}</option>
               <option value="sub">{STATUS_LABELS.sub}</option>
               <option value="etc">{STATUS_LABELS.etc}</option>
+            </Select>
+            <FilterGroupLabel>결제방식</FilterGroupLabel>
+            <Select
+              value={installmentFilter}
+              onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
+            >
+              <option value="all">결제방식 전체</option>
+              <option value="lump_sum">일시불</option>
+              <option value="installment">할부 승인건</option>
+              <option value="billing">할부 청구건</option>
             </Select>
           </FilterPanel>
         </CollapsiblePanel>

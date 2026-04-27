@@ -39,6 +39,12 @@ export interface MetaFieldValues {
   date: string;
   categories: string[];
   memo: string;
+  installmentKind: "none" | "lump_sum" | "installment_approval" | "installment_billing";
+  installmentMonths: string;
+  installmentCurrentCycle: string;
+  installmentCycleTotal: string;
+  billedAmount: string;
+  dueDate: string;
 }
 
 const Grid = styled.div`
@@ -74,6 +80,13 @@ const PlatformSelect = styled.select`
     box-shadow: ${tokens.shadow.focus};
     outline: none;
   }
+`;
+
+const InlineHint = styled.div`
+  margin-top: 6px;
+  color: ${tokens.color.ink4};
+  font-size: 11px;
+  line-height: 1.45;
 `;
 
 const Field = styled.div<{ $span?: number }>`
@@ -171,6 +184,8 @@ export const MetaFields: React.FC<{
 }> = ({ value, onChange, fieldIdPrefix = "meta" }) => {
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
+  const isInstallment = value.installmentKind === "installment_approval" || value.installmentKind === "installment_billing";
+  const isBillingInstallment = value.installmentKind === "installment_billing";
 
   // 카테고리 목록은 스토어 전체 항목을 사용합니다.
   // 표준 카테고리는 기존 순서(CATEGORY_ORDER)로 먼저 정렬하고, 커스텀 카테고리는 뒤에 이어 붙입니다.
@@ -256,6 +271,83 @@ export const MetaFields: React.FC<{
           />
         </FormField>
       </Field>
+      <Field>
+        <FormField label="결제방식" helpText="거래가 일시불인지, 할부 승인건인지, 이번 달 할부 청구건인지 구분해요.">
+          <PlatformSelect
+            value={value.installmentKind}
+            onChange={(event) =>
+              patch({
+                installmentKind: event.target.value as MetaFieldValues["installmentKind"],
+              })
+            }
+            aria-label="결제방식"
+          >
+            <option value="none">선택 안 함</option>
+            <option value="lump_sum">일시불</option>
+            <option value="installment_approval">할부 승인건</option>
+            <option value="installment_billing">할부 청구건</option>
+          </PlatformSelect>
+        </FormField>
+      </Field>
+      <Field>
+        <FormField label="결제예정일" helpText="선택 항목 · 카드대금 결제 예정일이 보이면 함께 기록해 둘 수 있어요.">
+          <DatePicker
+            id={`${fieldIdPrefix}-due-date`}
+            value={value.dueDate}
+            onChange={(next) => patch({ dueDate: next })}
+            aria-label="결제예정일"
+          />
+        </FormField>
+      </Field>
+      {isInstallment && (
+        <Field>
+          <FormField
+            label="할부개월"
+            helpText={isBillingInstallment ? "총 할부 개월 수를 입력해 회차와 함께 추적해요." : "총 할부 개월 수를 입력해요."}
+          >
+            <AmountInput
+              id={`${fieldIdPrefix}-installment-months`}
+              placeholder="예: 3"
+              value={value.installmentMonths}
+              onChange={(rawDigits) => patch({ installmentMonths: rawDigits })}
+            />
+          </FormField>
+        </Field>
+      )}
+      {isBillingInstallment && (
+        <Field>
+          <FormField label="이번 달 청구금액" helpText="이번 달 카드값에 실제로 반영되는 금액이에요.">
+            <AmountInput
+              id={`${fieldIdPrefix}-billed-amount`}
+              placeholder="예: 27,472"
+              value={value.billedAmount}
+              onChange={(rawDigits) => patch({ billedAmount: rawDigits })}
+            />
+          </FormField>
+        </Field>
+      )}
+      {isBillingInstallment && (
+        <Field>
+          <FormField label="현재 회차" helpText="예: 전체 5개월 중 이번 달이 2회차라면 2 / 5">
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 20px 1fr", gap: 8, alignItems: "center" }}>
+              <AmountInput
+                id={`${fieldIdPrefix}-installment-current-cycle`}
+                placeholder="2"
+                value={value.installmentCurrentCycle}
+                onChange={(rawDigits) => patch({ installmentCurrentCycle: rawDigits })}
+              />
+              <div style={{ color: tokens.color.ink4, textAlign: "center", fontWeight: 700 }}>/</div>
+              <AmountInput
+                id={`${fieldIdPrefix}-installment-cycle-total`}
+                placeholder="5"
+                value={value.installmentCycleTotal}
+                onChange={(rawDigits) => patch({ installmentCycleTotal: rawDigits })}
+              />
+            </div>
+            <InlineHint>회차를 입력하면 거래내역에서 `할부 2/5회차`처럼 바로 보이게 됩니다.</InlineHint>
+          </FormField>
+        </Field>
+      )}
       <Field $span={2}>
         <FormField
           label={

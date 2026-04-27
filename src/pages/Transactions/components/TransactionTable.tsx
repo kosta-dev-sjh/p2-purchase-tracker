@@ -102,6 +102,25 @@ export interface TxRow {
      * 펼친 주문에서도 정합성 점검 용도로 함께 보존합니다.
      */
     sectionTotal?: number;
+    /**
+     * 카드 CSV/XLSX import 원본 메타. 승인 원거래와 월 청구행(할부 회차)을 구분해
+     * OCR 상품 매칭과 월별 카드값 추적이 서로 꼬이지 않도록 보존합니다.
+     */
+    cardImport?: {
+      recordKind: "approval" | "billing";
+      paymentMode: "lump_sum" | "installment" | "unknown";
+      installmentMonths?: number;
+      installmentCurrentCycle?: number;
+      installmentCycleTotal?: number;
+      approvedAmount?: number;
+      billedAmount?: number;
+      remainingBalance?: number;
+      approvalNumber?: string;
+      cardLabel?: string;
+      dueDate?: string;
+      sourceSheet?: string;
+      rawRowFingerprint?: string;
+    };
   };
 }
 
@@ -242,6 +261,25 @@ const MobileFooter = styled.div`
   justify-content: space-between;
   gap: 12px;
 `;
+
+function getInstallmentLabel(row: TxRow): string | null {
+  const cardImport = row.detail?.cardImport;
+  if (!cardImport) return null;
+  if (
+    cardImport.recordKind === "billing" &&
+    cardImport.installmentCurrentCycle &&
+    cardImport.installmentCycleTotal
+  ) {
+    return `${cardImport.installmentCurrentCycle}/${cardImport.installmentCycleTotal}회차`;
+  }
+  if (cardImport.paymentMode === "installment" && cardImport.installmentMonths) {
+    return `${cardImport.installmentMonths}개월`;
+  }
+  if (cardImport.paymentMode === "lump_sum") {
+    return "일시불";
+  }
+  return null;
+}
 
 const MobileCategories = styled.div`
   display: flex;
@@ -633,7 +671,14 @@ export const TransactionTable = memo<Props>(({
                   </Amount>
                 </DataCell>
                 <DataCell {...common}>
-                  <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                    <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                    {row.detail?.cardImport?.recordKind === "billing" ? (
+                      <Tag kind="billing">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                    ) : row.detail?.cardImport?.paymentMode === "installment" ? (
+                      <Tag kind="installment">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                    ) : null}
+                  </div>
                 </DataCell>
               </React.Fragment>
             );
@@ -670,6 +715,11 @@ export const TransactionTable = memo<Props>(({
                   </Tag>
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                   <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                  {row.detail?.cardImport?.recordKind === "billing" ? (
+                    <Tag kind="billing">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                  ) : row.detail?.cardImport?.paymentMode === "installment" ? (
+                    <Tag kind="installment">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                  ) : null}
                 </MobileTags>
                 <MobileFooter>
                   <MobileCategories aria-label="카테고리">

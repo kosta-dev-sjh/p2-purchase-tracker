@@ -15,6 +15,8 @@ type ModernKind =
   | "income"
   | "purchase"
   | "sub"
+  | "installment"
+  | "billing"
   | "cancel"
   | "refund"
   | "etc";

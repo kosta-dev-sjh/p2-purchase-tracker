@@ -159,6 +159,7 @@ const DuplicateActions = styled.div`
 type ProductModalMode = { type: "add" } | { type: "edit"; id: string };
 
 function rowToMeta(row: TxRow): MetaFieldValues {
+  const cardImport = row.detail?.cardImport;
   return {
     title: row.title,
     // TxRow.amount는 부호 있는 숫자(지출은 음수). UI에서는 양수값으로 보여주고,
@@ -170,6 +171,23 @@ function rowToMeta(row: TxRow): MetaFieldValues {
     date: row.date,
     categories: [...row.categories],
     memo: row.memo ?? "",
+    installmentKind:
+      cardImport?.recordKind === "billing"
+        ? "installment_billing"
+        : cardImport?.paymentMode === "installment"
+          ? "installment_approval"
+          : cardImport?.paymentMode === "lump_sum"
+            ? "lump_sum"
+            : "none",
+    installmentMonths: cardImport?.installmentMonths ? String(cardImport.installmentMonths) : "",
+    installmentCurrentCycle: cardImport?.installmentCurrentCycle
+      ? String(cardImport.installmentCurrentCycle)
+      : "",
+    installmentCycleTotal: cardImport?.installmentCycleTotal
+      ? String(cardImport.installmentCycleTotal)
+      : "",
+    billedAmount: cardImport?.billedAmount ? String(cardImport.billedAmount) : "",
+    dueDate: cardImport?.dueDate ?? "",
   };
 }
 

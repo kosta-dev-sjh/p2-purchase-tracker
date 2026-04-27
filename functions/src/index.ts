@@ -15,6 +15,10 @@ interface CsvRow {
   가맹점명: string;
   이용금액: string;
   카테고리: string;
+  이용구분?: string;
+  할부개월?: string;
+  할부회차?: string;
+  결제금액?: string;
 }
 
 interface OcrProduct {
@@ -75,7 +79,16 @@ function parsePipeLine(line: string): CsvRow | null {
   const parts = trimmed.split("|").map((p) => p.trim());
   if (parts.length < 4) return null;
 
-  const [date, merchant, amount, category] = parts;
+  const [
+    date,
+    merchant,
+    amount,
+    category,
+    paymentMode,
+    installmentMonths,
+    installmentCycle,
+    billedAmount,
+  ] = parts;
   if (/[가-힣]/.test(date) && /[가-힣]/.test(amount)) return null;
   if (date === "이용일" && merchant === "가맹점명") return null;
   if (!date || !merchant) return null;
@@ -85,6 +98,10 @@ function parsePipeLine(line: string): CsvRow | null {
     가맹점명: merchant,
     이용금액: amount,
     카테고리: category || "",
+    ...(paymentMode ? { 이용구분: paymentMode } : {}),
+    ...(installmentMonths ? { 할부개월: installmentMonths } : {}),
+    ...(installmentCycle ? { 할부회차: installmentCycle } : {}),
+    ...(billedAmount ? { 결제금액: billedAmount } : {}),
   };
 }
 
@@ -157,13 +174,20 @@ async function runFallbackCsv(text: string): Promise<{ rows: CsvRow[] }> {
   const prompt = `너는 한국 카드사/쇼핑몰 명세서에서 거래 행만 뽑아내는 추출기다.
 다음 규칙을 엄격히 지켜라:
 - 출력은 오직 파이프(|) 구분 라인이다. JSON/코드펜스/설명/머리말/꼬리말 금지.
-- 각 라인 형식: \`이용일|가맹점명|이용금액|카테고리\`
+- 각 라인 형식: \`이용일|가맹점명|이용금액|카테고리|이용구분|할부개월|할부회차|결제금액\`
 - 이용일은 \`YYYY.MM.DD\` 형식(하이픈/슬래시 금지).
 - 이용금액은 쉼표 없이 정수 숫자만(예: 4500). 환불/취소면 금액 앞에 '-'를 붙이지 말고 양수로 적되, 카테고리 뒤에는 쓰지 마라.
 - 가맹점명 안에 '|' 문자가 있으면 공백으로 치환하라.
 - '총 합계', '소계', '누계' 같은 요약 행은 절대 출력하지 마라.
 - 가맹점명이 비거나 알 수 없으면 '알 수 없음'으로 적는다.
 - 카테고리는 가능하면 한 단어(예: 카페, 식당, 교통, 쇼핑, 구독, 기타). 모르면 '기타'.
+- 이용구분은 가능하면 \`일시불\`, \`할부\`, \`취소\`, \`환불\` 중 하나를 적고, 없으면 빈칸으로 둔다.
+- 할부개월은 총 할부 개월 수만 숫자로 적는다(예: \`3\`). 없으면 빈칸.
+- 할부회차는 월 청구형 데이터일 때만 \`현재/전체\` 형식으로 적는다(예: \`2/5\`). 없으면 빈칸.
+- 결제금액은 월 청구형 파일에서 보이는 실제 이번 달 청구금액이 있으면 숫자로 적고, 없으면 빈칸.
+- 승인형 상세 파일이면 이용금액에는 원 승인금액을 적고, 결제금액은 비워 둔다.
+- 청구형/회차형 파일이면 이용금액에는 원 승인금액이 보일 때만 적고, 이번 달 청구액은 결제금액에 적는다.
+- 같은 카드사의 요약 시트와 상세 시트가 함께 있을 수 있다. 상세 거래행만 뽑고 요약/집계 시트는 무시한다.
 - 헤더 라인을 출력하지 마라. 첫 라인부터 바로 데이터다.
 
 데이터:
@@ -208,6 +232,10 @@ ${compressed}`;
               가맹점명: String(record.가맹점명 ?? "").trim(),
               이용금액: String(record.이용금액 ?? "").trim(),
               카테고리: String(record.카테고리 ?? "").trim(),
+              이용구분: String(record.이용구분 ?? "").trim(),
+              할부개월: String(record.할부개월 ?? "").trim(),
+              할부회차: String(record.할부회차 ?? "").trim(),
+              결제금액: String(record.결제금액 ?? "").trim(),
             });
           }
         }

@@ -18,6 +18,10 @@ import {
   normalizeMerchantKey,
   shouldInferCategory,
 } from "../utils/categoryInference";
+import {
+  normalizeTransactionRow,
+  normalizeTransactionRows,
+} from "../utils/transactionNormalize";
 import { auth } from "../lib/firebase";
 import {
   addTransactions,
@@ -78,21 +82,23 @@ function enrichCategories(rows: TxRow[]): TxRow[] {
  * v3에는 "musinsa" 플랫폼의 랜덤 시드 행이 들어 있어 현재 타입(TxPlatform)에서
  * undefined 참조로 크래시가 났기 때문에, v4부터는 무조건 빈 상태로 시작합니다.
  */
-const STORAGE_KEY = "spendtrack:transactions:v4";
+const STORAGE_KEY = "spendtrack:transactions:v5";
 
 function readCurrent(): TxRow[] | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as TxRow[]) : null;
+    return Array.isArray(parsed)
+      ? normalizeTransactionRows(parsed as TxRow[])
+      : null;
   } catch {
     return null;
   }
 }
 
 function writeCurrent(rows: TxRow[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(rows));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeTransactionRows(rows)));
 }
 
 /**
@@ -138,15 +144,16 @@ interface TransactionsState {
 const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
   rows: loadInitial(),
   replaceAll: (rows) => {
-    writeCurrent(rows);
-    set({ rows });
+    const normalized = normalizeTransactionRows(rows);
+    writeCurrent(normalized);
+    set({ rows: normalized });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void replaceTransactions(uid, rows);
+      void replaceTransactions(uid, normalized);
     }
   },
   addFromImport: (rows) => {
-    const enriched = enrichCategories(rows);
+    const enriched = normalizeTransactionRows(enrichCategories(rows));
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
@@ -156,16 +163,17 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     }
   },
   addFromManual: (row) => {
-    const next = [row, ...get().rows];
+    const normalized = normalizeTransactionRow(row);
+    const next = [normalized, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [row]);
+      void addTransactions(uid, [normalized]);
     }
   },
   addMany: (rows) => {
-    const enriched = enrichCategories(rows);
+    const enriched = normalizeTransactionRows(enrichCategories(rows));
     const next = [...enriched, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
@@ -175,17 +183,20 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     }
   },
   addOne: (row) => {
-    const next = [row, ...get().rows];
+    const normalized = normalizeTransactionRow(row);
+    const next = [normalized, ...get().rows];
     writeCurrent(next);
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [row]);
+      void addTransactions(uid, [normalized]);
     }
   },
   updateOne: (id, patch) => {
     const prev = get().rows.find((row) => row.id === id);
-    const next = get().rows.map((row) => (row.id === id ? { ...row, ...patch } : row));
+    const next = get().rows.map((row) =>
+      row.id === id ? normalizeTransactionRow({ ...row, ...patch }) : row,
+    );
     writeCurrent(next);
     set({ rows: next });
     const uid = auth.currentUser?.uid;
@@ -254,9 +265,10 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     return [];
   },
   hydrate: (rows) => {
-    writeCurrent(rows);
-    set({ rows });
-    return rows;
+    const normalized = normalizeTransactionRows(rows);
+    writeCurrent(normalized);
+    set({ rows: normalized });
+    return normalized;
   },
 }));
 

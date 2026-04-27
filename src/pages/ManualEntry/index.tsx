@@ -192,6 +192,12 @@ const EMPTY_META: MetaFieldValues = {
   // 사용자가 다른 카테고리를 고르면 그대로 덮어 써집니다.
   categories: ["etc"],
   memo: "",
+  installmentKind: "none",
+  installmentMonths: "",
+  installmentCurrentCycle: "",
+  installmentCycleTotal: "",
+  billedAmount: "",
+  dueDate: "",
 };
 
 type RequiredMetaField = "title" | "amount" | "date";
@@ -291,6 +297,10 @@ export const ManualEntryPage: React.FC = () => {
    */
   const buildRowFromForm = (onError: (message: string) => void): TxRow | null => {
     const amountNumber = Number(meta.amount.replace(/[^0-9]/g, ""));
+    const installmentMonths = Number(meta.installmentMonths.replace(/[^0-9]/g, ""));
+    const installmentCurrentCycle = Number(meta.installmentCurrentCycle.replace(/[^0-9]/g, ""));
+    const installmentCycleTotal = Number(meta.installmentCycleTotal.replace(/[^0-9]/g, ""));
+    const billedAmountNumber = Number(meta.billedAmount.replace(/[^0-9]/g, ""));
     if (!meta.title.trim()) {
       onError("거래명을 입력해 주세요.");
       focusMetaField("title");
@@ -306,8 +316,72 @@ export const ManualEntryPage: React.FC = () => {
       focusMetaField("date");
       return null;
     }
+    if (
+      (meta.installmentKind === "installment_approval" ||
+        meta.installmentKind === "installment_billing") &&
+      (!installmentMonths || Number.isNaN(installmentMonths))
+    ) {
+      onError("할부개월을 입력해 주세요.");
+      return null;
+    }
+    if (meta.installmentKind === "installment_billing") {
+      if (
+        !installmentCurrentCycle ||
+        !installmentCycleTotal ||
+        Number.isNaN(installmentCurrentCycle) ||
+        Number.isNaN(installmentCycleTotal)
+      ) {
+        onError("할부 청구건은 현재 회차를 입력해 주세요.");
+        return null;
+      }
+    }
     const signedAmount =
       type === "expense" ? -Math.abs(amountNumber) : Math.abs(amountNumber);
+    const paymentMode =
+      meta.installmentKind === "lump_sum"
+        ? "lump_sum"
+        : meta.installmentKind === "installment_approval" ||
+            meta.installmentKind === "installment_billing"
+          ? "installment"
+          : "unknown";
+    const recordKind =
+      meta.installmentKind === "installment_billing" ? "billing" : "approval";
+    const baseDetail =
+      products.length > 0
+        ? {
+            items: products.map((product) => ({
+              name: product.name,
+              price: product.price,
+              link: product.link,
+            })),
+            source: "MANUAL" as const,
+          }
+        : undefined;
+    const cardImport: NonNullable<NonNullable<TxRow["detail"]>["cardImport"]> | undefined =
+      meta.installmentKind !== "none" || meta.dueDate.trim()
+        ? {
+            recordKind,
+            paymentMode,
+            ...(installmentMonths > 0 ? { installmentMonths } : {}),
+            ...(meta.installmentKind === "installment_billing" &&
+            installmentCurrentCycle > 0 &&
+            installmentCycleTotal > 0
+              ? {
+                  installmentCurrentCycle,
+                  installmentCycleTotal,
+                }
+              : {}),
+            ...(meta.installmentKind === "installment_billing" && billedAmountNumber > 0
+              ? { billedAmount: billedAmountNumber }
+              : {}),
+            ...(meta.installmentKind !== "installment_billing"
+              ? { approvedAmount: amountNumber }
+              : amountNumber > 0
+                ? { approvedAmount: amountNumber }
+                : {}),
+            ...(meta.dueDate.trim() ? { dueDate: meta.dueDate.trim() } : {}),
+          }
+        : undefined;
     return {
       id: `m_${Date.now()}`,
       type,
@@ -323,14 +397,10 @@ export const ManualEntryPage: React.FC = () => {
       source: "manual",
       memo: meta.memo.trim() || undefined,
       detail:
-        products.length > 0
+        baseDetail || cardImport
           ? {
-              items: products.map((product) => ({
-                name: product.name,
-                price: product.price,
-                link: product.link,
-              })),
-              source: "MANUAL",
+              ...(baseDetail ?? { items: [], source: "MANUAL" as const }),
+              ...(cardImport ? { cardImport } : {}),
             }
           : undefined,
     };

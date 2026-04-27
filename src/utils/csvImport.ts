@@ -10,9 +10,18 @@ import type {
 } from "../pages/Transactions/components/TransactionTable";
 import {
   AMOUNT_HEADERS,
+  APPROVAL_NUMBER_HEADERS,
+  BILLING_AMOUNT_HEADERS,
+  CANCELLATION_HEADERS,
+  CARD_LABEL_HEADERS,
   CATEGORY_HEADERS,
   DATE_HEADERS,
+  INSTALLMENT_CYCLE_HEADERS,
+  INSTALLMENT_MONTHS_HEADERS,
   MERCHANT_HEADERS,
+  PAYMENT_DUE_DATE_HEADERS,
+  PAYMENT_MODE_HEADERS,
+  REMAINING_BALANCE_HEADERS,
   STATUS_HEADERS,
 } from "./importHeaders";
 import { parseCsv, type CsvRow } from "./csvParse";
@@ -90,6 +99,21 @@ function normalizeDate(raw: any): string | null {
     day = digits[0];
   }
 
+  // 미국식 단축 날짜(MM/DD/YY). 현대카드 엑셀처럼 "4/20/26"으로 내려오는 경우를 지원합니다.
+  if (
+    year.length !== 4 &&
+    digits[2].length <= 2 &&
+    rawStr.includes("/") &&
+    Number(digits[0]) >= 1 &&
+    Number(digits[0]) <= 12 &&
+    Number(digits[1]) >= 1 &&
+    Number(digits[1]) <= 31
+  ) {
+    year = String(2000 + Number(digits[2]));
+    month = digits[0];
+    day = digits[1];
+  }
+
   const y = Number(year);
   const m = Number(month);
   const d = Number(day);
@@ -143,6 +167,86 @@ export interface CsvImportResult {
   skipped: CsvImportSkipped[];
 }
 
+type CardRecordKind = "approval" | "billing";
+type CardPaymentMode = "lump_sum" | "installment" | "unknown";
+
+function hasAnyHeader(row: CsvRow, headers: readonly string[]): boolean {
+  const keys = Object.keys(row);
+  return headers.some((header) => keys.some((key) => key.includes(header)));
+}
+
+function parsePositiveInteger(raw: string): number | null {
+  const digits = String(raw || "").match(/\d+/g);
+  if (!digits || digits.length === 0) return null;
+  const value = Number(digits[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseInstallmentCycle(raw: string): { current: number; total: number } | null {
+  const match = String(raw || "").match(/(\d+)\s*\/\s*(\d+)/);
+  if (!match) return null;
+
+  const current = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || current <= 0 || total <= 0) {
+    return null;
+  }
+
+  return { current, total };
+}
+
+function parsePaymentMode(
+  raw: string,
+  months: number | null,
+  cycle: { current: number; total: number } | null,
+): CardPaymentMode {
+  const normalized = String(raw || "").replace(/\s+/g, "");
+  if (/할부/.test(normalized) || (months !== null && months > 1) || cycle) {
+    return "installment";
+  }
+  if (/일시불/.test(normalized) || months === 0 || months === 1) {
+    return "lump_sum";
+  }
+  return "unknown";
+}
+
+function inferRecordKind(input: {
+  raw: CsvRow;
+  amount: number | null;
+  billedAmount: number | null;
+  cycle: { current: number; total: number } | null;
+  remainingBalance: number | null;
+  paymentMode: CardPaymentMode;
+}): CardRecordKind {
+  if (input.cycle) return "billing";
+  if (input.remainingBalance !== null) return "billing";
+  if (
+    hasAnyHeader(input.raw, [...INSTALLMENT_CYCLE_HEADERS, ...REMAINING_BALANCE_HEADERS]) &&
+    (input.billedAmount !== null || input.paymentMode === "installment")
+  ) {
+    return "billing";
+  }
+  if (
+    input.paymentMode === "installment" &&
+    input.amount !== null &&
+    input.billedAmount !== null &&
+    input.billedAmount > 0 &&
+    input.billedAmount < input.amount
+  ) {
+    return "billing";
+  }
+  return "approval";
+}
+
+function looksLikeSummaryRow(raw: CsvRow, merchantRaw: string, dateRaw: string): boolean {
+  const joined = Object.values(raw).join(" ");
+  if (/총\s*합계|합계|소계|누계|건수합계/.test(joined)) return true;
+  if (!hasAnyHeader(raw, MERCHANT_HEADERS)) return true;
+  if (String(dateRaw || "").includes("~")) return true;
+  if (!merchantRaw && !dateRaw) return true;
+  return false;
+}
+
 export function importRows(parsed: CsvRow[]): CsvImportResult {
   const imported: TxRow[] = [];
   const skipped: CsvImportSkipped[] = [];
@@ -152,11 +256,40 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
     const dateRaw = pickFirstValue(raw, DATE_HEADERS);
     const merchantRaw = pickFirstValue(raw, MERCHANT_HEADERS);
     const amountRaw = pickFirstValue(raw, AMOUNT_HEADERS);
+    const billedAmountRaw = pickFirstValue(raw, BILLING_AMOUNT_HEADERS);
     const categoryRaw = pickFirstValue(raw, CATEGORY_HEADERS);
     const statusRaw = pickFirstValue(raw, STATUS_HEADERS);
+    const paymentModeRaw = pickFirstValue(raw, PAYMENT_MODE_HEADERS);
+    const installmentMonthsRaw = pickFirstValue(raw, INSTALLMENT_MONTHS_HEADERS);
+    const installmentCycleRaw = pickFirstValue(raw, INSTALLMENT_CYCLE_HEADERS);
+    const approvalNumberRaw = pickFirstValue(raw, APPROVAL_NUMBER_HEADERS);
+    const dueDateRaw = pickFirstValue(raw, PAYMENT_DUE_DATE_HEADERS);
+    const remainingBalanceRaw = pickFirstValue(raw, REMAINING_BALANCE_HEADERS);
+    const cardLabelRaw = pickFirstValue(raw, CARD_LABEL_HEADERS);
+    const cancellationRaw = pickFirstValue(raw, CANCELLATION_HEADERS);
+
+    if (looksLikeSummaryRow(raw, merchantRaw, dateRaw)) {
+      skipped.push({ index, reason: "요약/합계 행은 건너뜁니다.", raw });
+      return;
+    }
 
     const date = normalizeDate(dateRaw);
     const amount = parseAmount(amountRaw);
+    const billedAmount = parseAmount(billedAmountRaw);
+    const installmentMonths = parsePositiveInteger(installmentMonthsRaw);
+    const installmentCycle = parseInstallmentCycle(installmentCycleRaw);
+    const remainingBalance = parseAmount(remainingBalanceRaw);
+    const paymentMode = parsePaymentMode(paymentModeRaw, installmentMonths, installmentCycle);
+    const recordKind = inferRecordKind({
+      raw,
+      amount,
+      billedAmount,
+      cycle: installmentCycle,
+      remainingBalance,
+      paymentMode,
+    });
+    const effectiveAmount =
+      recordKind === "billing" ? (billedAmount ?? amount) : (amount ?? billedAmount);
     // 가맹점명이 비면 행을 버리지 않고 "알 수 없음"으로 대체해 import합니다.
     const effectiveMerchantRaw = merchantRaw || "알 수 없음";
     const { platform, cleaned } = normalizeMerchant(effectiveMerchantRaw);
@@ -165,15 +298,25 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       skipped.push({ index, reason: "날짜 형식을 읽을 수 없습니다.", raw });
       return;
     }
-    if (amount === null) {
+    if (effectiveAmount === null) {
       skipped.push({ index, reason: "금액 형식을 읽을 수 없습니다.", raw });
       return;
     }
     
     const resolvedPlatform = platform ?? "unspecified";
     const category = (CATEGORY_MAP[categoryRaw.trim()] ?? "etc") as TxCategory;
-    const status = inferStatus(statusRaw, amount);
-    const txShape = toTxShape(amount, status);
+    const status = inferStatus(`${statusRaw} ${cancellationRaw}`.trim(), effectiveAmount);
+    const txShape = toTxShape(effectiveAmount, status);
+    const dueDate = normalizeDate(dueDateRaw);
+    const fingerprintParts = [
+      date,
+      effectiveMerchantRaw,
+      approvalNumberRaw,
+      String(amount ?? ""),
+      String(billedAmount ?? ""),
+      String(raw.__sheetName ?? ""),
+      String(raw.__rowIndex ?? ""),
+    ].filter(Boolean);
 
     const row: TxRow = {
       id: `csv-${now}-${index}`,
@@ -185,6 +328,31 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       amount: txShape.amount,
       status: txShape.status,
       source: "csv",
+      detail: {
+        items: [],
+        source: "MANUAL",
+        cardImport: {
+          recordKind,
+          paymentMode,
+          ...(installmentMonths !== null ? { installmentMonths } : {}),
+          ...(installmentCycle
+            ? {
+                installmentCurrentCycle: installmentCycle.current,
+                installmentCycleTotal: installmentCycle.total,
+              }
+            : {}),
+          ...(amount !== null ? { approvedAmount: amount } : {}),
+          ...(billedAmount !== null ? { billedAmount } : {}),
+          ...(remainingBalance !== null ? { remainingBalance } : {}),
+          ...(approvalNumberRaw ? { approvalNumber: approvalNumberRaw } : {}),
+          ...(cardLabelRaw ? { cardLabel: cardLabelRaw } : {}),
+          ...(dueDate ? { dueDate } : {}),
+          ...(raw.__sheetName ? { sourceSheet: raw.__sheetName } : {}),
+          ...(fingerprintParts.length > 0
+            ? { rawRowFingerprint: fingerprintParts.join("|") }
+            : {}),
+        },
+      },
     };
 
     imported.push(row);
