@@ -63,11 +63,13 @@ const NavIcon = ({ name }: { name: IconKey }) => {
         </svg>
       );
     case "subscriptions":
-      // AppShell 의 더보기 칩 안 아이콘과 동일 모양. "정기적으로 다시 결제됨" 의미의 ↻.
+      // 시계 아이콘 — "예정된 결제" 메타포. 회전 화살표(↻)는 "새로고침/재시도" 로
+      // 오해될 여지가 있어 시계로 교체했습니다(2026-04-28).
+      // AppShell 의 더보기 시트 안 아이콘과 모양을 일치시켜 일관성 유지.
       return (
         <svg {...common}>
-          <path d="M13.5 7.5a5.5 5.5 0 1 0-1.6 4" />
-          <path d="M13.5 3v4.5h-4.5" />
+          <circle cx="8" cy="8" r="6" />
+          <path d="M8 4.5v3.7l2.4 1.8" />
         </svg>
       );
     case "settings":

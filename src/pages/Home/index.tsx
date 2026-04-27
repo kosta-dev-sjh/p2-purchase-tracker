@@ -176,11 +176,24 @@ export const HomePage: React.FC = () => {
       }
     >
       <Grid>
-        {/* Home은 상단 요약 → 차트 → 최근 거래 → 인사이트 순서로 읽히도록 구성합니다. */}
+        {/*
+         * Home 읽기 순서(2026-04-28 변경):
+         *   얼마(KPI) → 왜(인사이트) → 어디에/어떻게(차트) → 디테일(최근 거래)
+         *
+         * 이전에는 인사이트가 페이지 맨 아래에 있어 스크롤 없이는 사용자 시야에 들어오지
+         * 않았습니다. KPI 숫자 답을 먼저 보여준 다음 곧바로 ✨ AI 인사이트 + 룰 기반 카드
+         * 3장이 따라오도록 위치를 올렸습니다 — 차트보다 위에 두는 이유는 "왜 이 숫자인가"
+         * 가 차트의 시각 분석보다 인지적으로 한 단계 빠른 정보이기 때문입니다.
+         */}
         {/* data-tour: ProductTour 스포트라이트 타겟. 실제 인증으로 교체되더라도 유지해도 무해합니다. */}
         <div data-tour="home-kpi">
           <KpiStrip kpis={data.kpis} />
         </div>
+        <InsightCards
+          items={data.insights}
+          aiInsightText={currentInsight?.insightText}
+          isAiLoading={isAiLoading}
+        />
         <Row2>
           <PlatformDonut
             total={data.platformDonut.total}
@@ -190,11 +203,6 @@ export const HomePage: React.FC = () => {
           <TrendChart points={data.trend.points} />
         </Row2>
         <RecentTransactions items={data.recent} />
-        <InsightCards 
-          items={data.insights} 
-          aiInsightText={currentInsight?.insightText}
-          isAiLoading={isAiLoading}
-        />
       </Grid>
       {/*
         WelcomeTutorial 표시 우선순위:

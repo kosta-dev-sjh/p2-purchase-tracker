@@ -106,11 +106,11 @@ const NavIcon = ({ name }: { name: IconKey }) => {
         </svg>
       );
     case "subscriptions":
-      // 반복 화살표(↻ 느낌) — "정기적으로 다시 결제됨" 을 시각적으로 전달.
+      // 시계 아이콘 — "예정된 결제" 메타포. Sidebar 와 동일 모양 사용.
       return (
         <svg {...common}>
-          <path d="M13.5 7.5a5.5 5.5 0 1 0-1.6 4" />
-          <path d="M13.5 3v4.5h-4.5" />
+          <circle cx="8" cy="8" r="6" />
+          <path d="M8 4.5v3.7l2.4 1.8" />
         </svg>
       );
     case "settings":
