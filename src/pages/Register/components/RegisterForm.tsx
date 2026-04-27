@@ -104,15 +104,19 @@ export const RegisterForm: React.FC = () => {
           setError("이메일을 입력해 주세요.");
           return;
         }
-        if (!password.trim()) {
+        if (!password) {
           setError("비밀번호를 입력해 주세요.");
           return;
         }
-        if (password.trim().length < 8) {
-          setError("비밀번호는 공백 제외 8자 이상이어야 해요.");
+        if (password !== password.trim()) {
+          setError("비밀번호 앞뒤에 공백을 포함할 수 없어요.");
           return;
         }
-        if (!/\d/.test(password.trim())) {
+        if (password.length < 8) {
+          setError("비밀번호는 8자 이상이어야 해요.");
+          return;
+        }
+        if (!/\d/.test(password)) {
           setError("비밀번호에 숫자를 포함해 주세요.");
           return;
         }
