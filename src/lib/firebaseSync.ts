@@ -17,6 +17,7 @@ import { transactionsStore } from "../stores/transactionsStore";
 import {
   bootstrapCategories,
   bootstrapUserProfile,
+  saveUserProfile,
   subscribeCategories,
   subscribeTransactions,
   subscribeUserProfile,
@@ -100,6 +101,13 @@ export async function registerAccount(payload: {
     email: payload.email.trim(),
     passwordChangedAt: DEFAULT_PROFILE.passwordChangedAt,
     avatarDataUrl: null,
+  });
+  // onAuthStateChanged가 displayName=null 상태에서 먼저 실행되면 bootstrapUserProfile이
+  // DEFAULT_PROFILE("홍길동")로 문서를 쓰고, 이후 호출은 문서가 존재해 스킵됩니다.
+  // saveUserProfile(merge:true)로 올바른 이름을 항상 덮어씁니다.
+  await saveUserProfile(cred.user.uid, {
+    name: payload.name.trim() || DEFAULT_PROFILE.name,
+    nickname: payload.name.trim() || DEFAULT_PROFILE.nickname,
   });
   await bootstrapCategories(cred.user.uid, DEFAULT_CATEGORIES);
   transactionsStore.hydrate([]);
