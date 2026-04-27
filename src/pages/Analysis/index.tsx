@@ -68,6 +68,16 @@ export const AnalysisPage: React.FC = () => {
     () => computeMaxMonthKey(rows.map((row) => row.date)),
     [rows]
   );
+  const markedMonthKeys = useMemo(() => {
+    const monthKeys = rows
+      .map((row) => {
+        const match = row.date.match(/(\d{4})[./-](\d{1,2})/);
+        if (!match) return "";
+        return `${match[1]}-${match[2].padStart(2, "0")}`;
+      })
+      .filter(Boolean);
+    return Array.from(new Set(monthKeys));
+  }, [rows]);
   // 설정에서 바꾼 색이 카테고리별 지출 차트에 즉시 반영되도록 스토어 구독 결과를 그대로 흘려보냅니다.
   const categoryColorMap = useCategoryColorMap();
   const categoryNameMap = useCategoryNameMap();
@@ -101,6 +111,7 @@ export const AnalysisPage: React.FC = () => {
           onChange={setMonth}
           minYear={pickerMinYear}
           maxMonthKey={pickerMaxMonth}
+          markedMonthKeys={markedMonthKeys}
         />
       }
     >
@@ -128,7 +139,11 @@ export const AnalysisPage: React.FC = () => {
         <Row3>
           <RepeatTop3 items={data.repeat} />
           <SubscriptionList items={data.subscriptions} total={data.subscriptionTotal} />
-          <WeeklyPattern days={data.weekly.days} note={data.weekly.note} />
+          <WeeklyPattern
+            days={data.weekly.days}
+            note={data.weekly.note}
+            subtitle={data.weekly.subtitle}
+          />
         </Row3>
       </Grid>
     </AppShell>

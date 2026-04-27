@@ -17,6 +17,8 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
+import { resolveProductLink } from "../../../utils/productSearchUrl";
 
 const HeaderRow = styled.div`
   display: flex;
@@ -116,35 +118,38 @@ const ItemRow = styled.div`
 `;
 
 /**
- * 상품에 link가 걸려있을 때만 노출되는 외부링크 아이콘 버튼입니다.
- * 새 탭으로 열어 탐색 흐름을 끊지 않고, 호버 시 accent 색으로 전환되어 클릭 가능성을 보여줍니다.
+ * 상품 행 우측의 외부링크 아이콘 버튼.
+ *
+ * 두 가지 상태를 지원합니다.
+ * - $fallback=false: 사용자가 등록한 진짜 상품 링크가 걸려 있는 경우. accent 색으로 강조.
+ * - $fallback=true: 링크 미등록이라 플랫폼 검색창으로 폴백된 경우. 톤다운 + 점선 테두리로
+ *   "이건 등록된 링크가 아니라 검색 보조" 라는 점을 시각적으로 구분합니다.
+ *   클릭 시 상품명으로 그 거래의 플랫폼(쿠팡/네이버) 검색 결과 페이지가 열립니다.
  */
-const ItemLink = styled.a`
+const ItemLink = styled.a<{ $fallback?: boolean }>`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid ${tokens.color.line};
+  width: 28px;
+  height: 28px;
+  border: 1px ${({ $fallback }) => ($fallback ? "dashed" : "solid")}
+    ${({ $fallback }) =>
+      $fallback ? tokens.color.line : tokens.color.accentBorder};
   border-radius: ${tokens.radius.control};
-  color: ${tokens.color.ink3};
-  background: ${tokens.color.panel};
+  color: ${({ $fallback }) =>
+    $fallback ? tokens.color.ink4 : tokens.color.accentHover};
+  background: ${({ $fallback }) =>
+    $fallback ? tokens.color.panel : tokens.color.accentSubtle};
   transition:
     color ${tokens.motion.fast} ease,
     border-color ${tokens.motion.fast} ease,
     background ${tokens.motion.fast} ease;
 
   &:hover {
-    color: ${tokens.color.accentHover};
-    border-color: ${tokens.color.accentBorder};
-    background: ${tokens.color.accentSubtle};
+    color: ${tokens.color.accentActive};
+    border-color: ${tokens.color.accent};
+    background: #e5e8ff;
   }
-`;
-
-const ItemLinkPlaceholder = styled.span`
-  display: inline-block;
-  width: 24px;
-  height: 24px;
 `;
 
 /**
@@ -350,6 +355,11 @@ const DetailPanelInner = ({
   const hasMemo = memoText.length > 0;
   const hasCategories = row.categories.length > 0;
   const cardImport = row.detail?.cardImport;
+  const installmentKind = getCardInstallmentKind(cardImport);
+  const installmentLabel = getCardInstallmentLabel(cardImport);
+  const isInstallment =
+    installmentKind === "installment_billing" ||
+    installmentKind === "installment_approval";
 
   return (
     <Card padding={0}>
@@ -365,11 +375,9 @@ const DetailPanelInner = ({
         <Tags>
           <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
           <Tag kind={row.type === "expense" ? "expense" : "income"}>{TYPE_LABELS[row.type]}</Tag>
-          {cardImport?.recordKind === "billing" ? (
-            <Tag kind="billing">할부 청구건</Tag>
-          ) : cardImport?.paymentMode === "installment" ? (
-            <Tag kind="installment">할부 승인건</Tag>
-          ) : cardImport?.paymentMode === "lump_sum" ? (
+          {isInstallment ? (
+            <Tag kind="installment">{installmentLabel ?? "할부"}</Tag>
+          ) : installmentKind === "lump_sum" ? (
             <Tag kind="purchase">일시불</Tag>
           ) : null}
         </Tags>
@@ -461,21 +469,41 @@ const DetailPanelInner = ({
                 </span>
               </PartialNotice>
             )}
-            {row.detail.items.map((item, index) => (
-              <ItemRow key={`${item.name}-${index}`}>
-                <span className="name">{item.name}</span>
-                <span className="price">{formatKRW(item.price)}</span>
-                {item.link ? (
+            {row.detail.items.map((item, index) => {
+              // 사용자가 링크를 직접 달지 않은 상품은 거래 플랫폼(쿠팡/네이버) 검색창으로 폴백.
+              // 미지정 플랫폼이면 네이버쇼핑으로 보내 줍니다(productSearchUrl 정책).
+              const { href, isFallback } = resolveProductLink(item.link, row.platform, item.name);
+              const platformLabel = PLATFORM_LABELS[row.platform];
+              return (
+                <ItemRow key={`${item.name}-${index}`}>
+                  <span className="name">{item.name}</span>
+                  <span className="price">{formatKRW(item.price)}</span>
                   <ItemLink
-                    href={item.link}
+                    href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    title="상품 링크 열기"
-                    aria-label={`${item.name} 상품 링크 새 탭으로 열기`}
+                    $fallback={isFallback}
+                    title={
+                      isFallback
+                        ? `${platformLabel}에서 "${item.name}" 검색`
+                        : "등록된 상품 링크 열기"
+                    }
+                    aria-label={
+                      isFallback
+                        ? `${item.name} 을(를) ${platformLabel} 에서 검색합니다. 새 탭으로 열림`
+                        : `${item.name} 상품 링크 새 탭으로 열기`
+                    }
                   >
+                    {/*
+                     * 외부 링크(↗) 박스 아이콘. fallback / 정식링크 모두 같은 모양을 쓰고,
+                     * 의미 차이는 ItemLink 의 테두리(dashed↔solid)·배경·색으로 구분합니다.
+                     * 이전에 fallback 은 돋보기 아이콘이었지만, "상품 바로가기" 라는 의미가
+                     * 사용자에겐 검색이 아니라 "그 상품 페이지로 이동" 으로 읽히도록
+                     * 박스 모양 외부링크 버튼으로 통일했습니다.
+                     */}
                     <svg
-                      width="12"
-                      height="12"
+                      width="14"
+                      height="14"
                       viewBox="0 0 16 16"
                       fill="none"
                       stroke="currentColor"
@@ -489,11 +517,9 @@ const DetailPanelInner = ({
                       <path d="M12.5 9.5v3a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3" />
                     </svg>
                   </ItemLink>
-                ) : (
-                  <ItemLinkPlaceholder aria-hidden="true" />
-                )}
-              </ItemRow>
-            ))}
+                </ItemRow>
+              );
+            })}
           </Section>
         ) : null}
 
@@ -508,37 +534,33 @@ const DetailPanelInner = ({
             <InfoGrid>
               <div className="key">결제방식</div>
               <div className="value">
-                {cardImport.recordKind === "billing"
-                  ? "할부 청구건"
-                  : cardImport.paymentMode === "installment"
-                    ? "할부 승인건"
-                    : cardImport.paymentMode === "lump_sum"
+                {isInstallment
+                  ? "할부"
+                  : installmentKind === "lump_sum"
                       ? "일시불"
                       : "미기록"}
               </div>
-              {cardImport.installmentMonths ? (
+              {isInstallment && cardImport.installmentMonths ? (
                 <>
-                  <div className="key">할부개월</div>
+                  <div className="key">총 할부기간</div>
                   <div className="value">{cardImport.installmentMonths}개월</div>
                 </>
               ) : null}
-              {cardImport.installmentCurrentCycle && cardImport.installmentCycleTotal ? (
-                <>
-                  <div className="key">현재 회차</div>
-                  <div className="value">
-                    {cardImport.installmentCurrentCycle}/{cardImport.installmentCycleTotal}회차
-                  </div>
-                </>
-              ) : null}
+              {/*
+               * "현재 회차 X/Y" 행은 의도적으로 표시하지 않습니다(2026-04-28).
+               * 입력 경로(수동입력 / CSV) 마다 회차 캡처율이 들쭉날쭉해 같은 데이터셋에서
+               * 어떤 거래는 회차가 보이고 어떤 건 안 보이는 일관성 문제가 있었습니다.
+               * 회차 자체는 cardImport 에 남아 있을 수 있어 호환성은 유지됩니다.
+               */}
               {cardImport.approvedAmount ? (
                 <>
-                  <div className="key">원 승인금액</div>
+                  <div className="key">{isInstallment ? "원 결제금액" : "결제금액"}</div>
                   <div className="value">{formatKRW(cardImport.approvedAmount)}</div>
                 </>
               ) : null}
               {cardImport.billedAmount ? (
                 <>
-                  <div className="key">이번 달 청구액</div>
+                  <div className="key">이번 달 반영금액</div>
                   <div className="value">{formatKRW(cardImport.billedAmount)}</div>
                 </>
               ) : null}
@@ -587,7 +609,7 @@ const DetailPanelInner = ({
           // 편집 페이지 재방문은 불필요한 왕복이 됩니다. 대신 "분석에 사용된 원본 이미지만 보여 주기"로
           // 역할을 좁혀, 필요한 사용자는 캡쳐 원본을 한 번 더 확인할 수 있게 합니다.
           <LinkButton type="button" onClick={onOpenSource}>
-            OCR 분석한 이미지 보기
+            분석한 캡처 보기
           </LinkButton>
         )}
       </CardBd>

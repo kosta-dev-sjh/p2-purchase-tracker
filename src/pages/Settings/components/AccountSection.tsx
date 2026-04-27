@@ -10,6 +10,8 @@ import { SettingsBlock } from "./SettingsSection";
 import { profileStore, useProfile } from "../../../stores/profileStore";
 import { todayAsDotDate } from "../../../utils/date";
 import { media } from "../../../tokens/breakpoints";
+import { useAuthSession } from "../../../stores/authStore";
+import { changeCurrentPassword, getAccountDeletionProvider } from "../../../lib/firebaseSync";
 
 const Item = styled.div`
   display: flex;
@@ -104,9 +106,15 @@ export const AccountSection: React.FC = () => {
   const profile = useProfile();
   const [editing, setEditing] = useState<null | "email" | "password">(null);
   const [emailDraft, setEmailDraft] = useState(profile.email);
+  const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
   const [message, setMessage] = useState<null | { tone: "success" | "error"; text: string }>(null);
+  const { user } = useAuthSession();
+  const passwordProvider = getAccountDeletionProvider(user);
+  const needsCurrentPassword = passwordProvider === "password";
+  const usesGoogleReauth = passwordProvider === "google.com";
 
   const startEmail = () => {
     setEmailDraft(profile.email);
@@ -115,6 +123,7 @@ export const AccountSection: React.FC = () => {
   };
 
   const startPassword = () => {
+    setCurrentPassword("");
     setPassword("");
     setConfirm("");
     setEditing("password");
@@ -136,7 +145,11 @@ export const AccountSection: React.FC = () => {
     setMessage({ tone: "success", text: "이메일을 변경했어요." });
   };
 
-  const savePassword = () => {
+  const savePassword = async () => {
+    if (needsCurrentPassword && !currentPassword) {
+      setMessage({ tone: "error", text: "현재 비밀번호를 입력해 주세요." });
+      return;
+    }
     if (password.length < 8) {
       setMessage({ tone: "error", text: "비밀번호는 8자 이상이어야 해요." });
       return;
@@ -145,10 +158,44 @@ export const AccountSection: React.FC = () => {
       setMessage({ tone: "error", text: "두 비밀번호가 일치하지 않아요." });
       return;
     }
-    // 실제 비밀번호는 저장하지 않고 변경 시각만 기록합니다. 데모 범위에서 필요한 최소치입니다.
-    profileStore.save({ passwordChangedAt: todayAsDotDate() });
-    setEditing(null);
-    setMessage({ tone: "success", text: "비밀번호를 변경했어요." });
+
+    setSavingPassword(true);
+    try {
+      await changeCurrentPassword(password, currentPassword);
+      profileStore.save({ passwordChangedAt: todayAsDotDate() });
+      setEditing(null);
+      setMessage({ tone: "success", text: "비밀번호를 변경했어요." });
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      let text = "비밀번호 변경에 실패했어요. 잠시 후 다시 시도해 주세요.";
+      switch (code) {
+        case "auth/missing-password":
+          text = "현재 비밀번호를 입력해 주세요.";
+          break;
+        case "auth/wrong-password":
+        case "auth/invalid-credential":
+          text = "현재 비밀번호가 일치하지 않아요.";
+          break;
+        case "auth/weak-password":
+          text = "더 강한 비밀번호를 입력해 주세요.";
+          break;
+        case "auth/requires-recent-login":
+          text = "보안을 위해 다시 로그인한 뒤 시도해 주세요.";
+          break;
+        case "auth/popup-closed-by-user":
+          text = "Google 재인증 창이 닫혀 비밀번호를 변경하지 못했어요.";
+          break;
+        case "auth/unsupported-provider":
+          text = "이 로그인 방식에서는 비밀번호를 직접 변경할 수 없어요.";
+          break;
+        case "auth/no-current-user":
+          text = "로그인 상태를 확인한 뒤 다시 시도해 주세요.";
+          break;
+      }
+      setMessage({ tone: "error", text });
+    } finally {
+      setSavingPassword(false);
+    }
   };
 
   return (
@@ -192,27 +239,43 @@ export const AccountSection: React.FC = () => {
         {editing === "password" ? (
           <EditorBody>
             <div className="label">비밀번호 변경</div>
+            {needsCurrentPassword && (
+              <EditorRow>
+                <Input
+                  type="password"
+                  value={currentPassword}
+                  onChange={(event) => setCurrentPassword(event.target.value)}
+                  placeholder="현재 비밀번호"
+                  autoComplete="current-password"
+                />
+              </EditorRow>
+            )}
             <EditorRow>
               <Input
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="새 비밀번호 (8자 이상)"
+                autoComplete="new-password"
               />
               <Input
                 type="password"
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 placeholder="새 비밀번호 확인"
+                autoComplete="new-password"
               />
             </EditorRow>
+            {usesGoogleReauth && (
+              <div className="sub">저장 시 Google 재인증 창이 열립니다.</div>
+            )}
             <EditorRow>
               <SideButtons>
-                <Button variant="secondary" size="sm" onClick={cancel}>
+                <Button variant="secondary" size="sm" onClick={cancel} disabled={savingPassword}>
                   취소
                 </Button>
-                <Button variant="primary" size="sm" onClick={savePassword}>
-                  저장
+                <Button variant="primary" size="sm" onClick={savePassword} disabled={savingPassword}>
+                  {savingPassword ? "변경 중..." : "저장"}
                 </Button>
               </SideButtons>
             </EditorRow>

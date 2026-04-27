@@ -1,11 +1,32 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { initializeApp } from "firebase-admin/app";
+import { getAuth as getAdminAuth, type UserRecord } from "firebase-admin/auth";
+import {
+  FieldValue,
+  getFirestore,
+  Timestamp,
+  type CollectionReference,
+  type DocumentReference,
+} from "firebase-admin/firestore";
 import { HttpsError, onCall } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
 import { defineSecret } from "firebase-functions/params";
+import { createHash } from "node:crypto";
 
 initializeApp();
 
 const geminiApiKey = defineSecret("GEMINI_API_KEY");
+const adminDb = getFirestore();
+const RECENT_AUTH_MAX_AGE_SECONDS = 10 * 60;
+const ACCOUNT_DELETION_GRACE_DAYS = 7;
+const ACCOUNT_DELETION_GRACE_MS = ACCOUNT_DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000;
+// 닉네임 변경 쿨다운(서버 강제). 빈번한 변경(임퍼소네이션, 봇 어뷰즈) 방어가 목적이라
+// 클라이언트 disable 만으로는 부족합니다. 모든 nickname 쓰기는 updateNickname callable
+// 을 통해서만 통과시키고, Firestore users/{uid}.nicknameChangedAt 와 비교해 실패시킵니다.
+const NICKNAME_COOLDOWN_HOURS = 24;
+const NICKNAME_COOLDOWN_MS = NICKNAME_COOLDOWN_HOURS * 60 * 60 * 1000;
+const NICKNAME_MIN_LENGTH = 1;
+const NICKNAME_MAX_LENGTH = 20;
 
 type Status = "purchase" | "refund" | "cancel" | "sub";
 type Platform = "coupang" | "naver";
@@ -43,6 +64,26 @@ type GeminiProxyRequest =
   | { action: "fallbackCsv"; payload: { text: string } }
   | { action: "fallbackOcrProducts"; payload: FallbackOcrProductsInput };
 
+interface DeleteAccountRequest {
+  reauthProvider?: string;
+  reason?: string;
+}
+
+interface DeleteAccountResponse {
+  ok: true;
+  logId: string;
+  status: "scheduled";
+  purgeAt: string;
+  graceDays: number;
+}
+
+interface RestoreAccountResponse {
+  status: "noop" | "restored" | "purged";
+  logId?: string;
+  purgeAt?: string | null;
+  restoredAt?: string;
+}
+
 const FAST_GENERATION_CONFIG = {
   temperature: 0,
   topP: 0.1,
@@ -62,6 +103,154 @@ function getGenAI(): GoogleGenerativeAI {
     throw new HttpsError("failed-precondition", "GEMINI_API_KEY secret is not configured.");
   }
   return new GoogleGenerativeAI(apiKey);
+}
+
+function sha256Hex(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function maskEmail(email: string): string {
+  const [localPart, domain] = email.split("@");
+  if (!localPart || !domain) return "";
+  const safeLocal =
+    localPart.length <= 2 ? `${localPart[0] ?? "*"}*` : `${localPart.slice(0, 2)}***`;
+  return `${safeLocal}@${domain}`;
+}
+
+function requireRecentAuth(authTime: unknown): number {
+  const seconds = typeof authTime === "number" ? authTime : Number(authTime);
+  if (!Number.isFinite(seconds) || seconds <= 0) {
+    throw new HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+  }
+  const age = Math.floor(Date.now() / 1000) - seconds;
+  if (age > RECENT_AUTH_MAX_AGE_SECONDS) {
+    throw new HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+  }
+  return seconds;
+}
+
+async function countCollectionDocsDeep(collectionRef: CollectionReference): Promise<number> {
+  const snap = await collectionRef.get();
+  let total = snap.size;
+  for (const docSnap of snap.docs) {
+    const nestedCollections = await docSnap.ref.listCollections();
+    for (const nestedCollection of nestedCollections) {
+      total += await countCollectionDocsDeep(nestedCollection);
+    }
+  }
+  return total;
+}
+
+async function deleteCollectionDeep(collectionRef: CollectionReference): Promise<void> {
+  const snap = await collectionRef.get();
+  for (const docSnap of snap.docs) {
+    const nestedCollections = await docSnap.ref.listCollections();
+    for (const nestedCollection of nestedCollections) {
+      await deleteCollectionDeep(nestedCollection);
+    }
+    await docSnap.ref.delete();
+  }
+}
+
+async function collectDeletionSummary(userRef: DocumentReference): Promise<{
+  userDocExisted: boolean;
+  topLevelCounts: Record<string, number>;
+  totalDocsDeleted: number;
+}> {
+  const [userSnap, topLevelCollections] = await Promise.all([userRef.get(), userRef.listCollections()]);
+  const topLevelCounts: Record<string, number> = {};
+  let totalDocsDeleted = 0;
+  for (const collectionRef of topLevelCollections) {
+    const count = await countCollectionDocsDeep(collectionRef);
+    topLevelCounts[collectionRef.id] = count;
+    totalDocsDeleted += count;
+  }
+  return {
+    userDocExisted: userSnap.exists,
+    topLevelCounts,
+    totalDocsDeleted,
+  };
+}
+
+async function deleteUserDataTree(userRef: DocumentReference): Promise<void> {
+  const topLevelCollections = await userRef.listCollections();
+  for (const collectionRef of topLevelCollections) {
+    await deleteCollectionDeep(collectionRef);
+  }
+  await userRef.delete();
+}
+
+function toDateOrNull(value: unknown): Date | null {
+  if (value instanceof Timestamp) return value.toDate();
+  if (value instanceof Date) return value;
+  return null;
+}
+
+function lifecycleLogCollection() {
+  return adminDb.collection("accountLifecycleLogs");
+}
+
+async function loadUserRecordOrNull(uid: string): Promise<UserRecord | null> {
+  try {
+    return await getAdminAuth().getUser(uid);
+  } catch (error) {
+    if ((error as { code?: string }).code === "auth/user-not-found") {
+      return null;
+    }
+    throw error;
+  }
+}
+
+function buildIdentityPayload(uid: string, userRecord: UserRecord | null) {
+  const normalizedEmail = (userRecord?.email ?? "").trim().toLowerCase();
+  return {
+    uid,
+    providerIds: userRecord?.providerData.map((item) => item.providerId).filter(Boolean) ?? [],
+    emailMasked: normalizedEmail ? maskEmail(normalizedEmail) : null,
+    emailHash: normalizedEmail ? sha256Hex(normalizedEmail) : null,
+  };
+}
+
+async function writeLifecycleLog(
+  uid: string,
+  userRecord: UserRecord | null,
+  payload: Record<string, unknown>,
+): Promise<DocumentReference> {
+  const ref = lifecycleLogCollection().doc();
+  await ref.set({
+    ...buildIdentityPayload(uid, userRecord),
+    ...payload,
+  });
+  return ref;
+}
+
+async function purgeUserAccount(
+  uid: string,
+  options: {
+    userRecord: UserRecord | null;
+    reason: string;
+    purgeSource: "scheduler" | "restore-check";
+    reauthProvider?: string | null;
+    authTime?: string | null;
+  },
+): Promise<{ logId: string; dataSummary: Awaited<ReturnType<typeof collectDeletionSummary>> }> {
+  const userRef = adminDb.collection("users").doc(uid);
+  const summary = await collectDeletionSummary(userRef);
+  await deleteUserDataTree(userRef);
+  if (options.userRecord) {
+    await getAdminAuth().deleteUser(uid);
+  }
+  const logRef = await writeLifecycleLog(uid, options.userRecord, {
+    eventType: "deletion_purged",
+    status: "completed",
+    reason: options.reason,
+    purgeSource: options.purgeSource,
+    reauthProvider: options.reauthProvider ?? null,
+    authTime: options.authTime ?? null,
+    dataSummary: summary,
+    purgedAt: FieldValue.serverTimestamp(),
+  });
+  return { logId: logRef.id, dataSummary: summary };
 }
 
 function createModel() {
@@ -377,6 +566,274 @@ ${productsBlock}`;
 
   return { products, changedIds: [...changedIds] };
 }
+
+export const deleteAccount = onCall(
+  {
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인된 사용자만 계정을 삭제할 수 있습니다.");
+    }
+
+    const authTimeSeconds = requireRecentAuth(request.auth.token.auth_time);
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const userRecord = await getAdminAuth().getUser(uid);
+    const data = (request.data ?? {}) as DeleteAccountRequest;
+    const reason =
+      typeof data.reason === "string" && data.reason.trim() ? data.reason.trim() : "self-service";
+    const reauthProvider =
+      typeof data.reauthProvider === "string" && data.reauthProvider.trim()
+        ? data.reauthProvider.trim()
+        : null;
+    const purgeAt = new Date(Date.now() + ACCOUNT_DELETION_GRACE_MS);
+
+    try {
+      await userRef.set(
+        {
+          accountStatus: "pending_deletion",
+          deletionRequestedAt: FieldValue.serverTimestamp(),
+          purgeAt: Timestamp.fromDate(purgeAt),
+          restoredAt: FieldValue.delete(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      const logRef = await writeLifecycleLog(uid, userRecord, {
+        eventType: "deletion_requested",
+        status: "scheduled",
+        reason,
+        reauthProvider,
+        authTime: new Date(authTimeSeconds * 1000).toISOString(),
+        requestedAt: FieldValue.serverTimestamp(),
+        purgeAt: Timestamp.fromDate(purgeAt),
+        graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+      });
+      return {
+        ok: true,
+        logId: logRef.id,
+        status: "scheduled",
+        purgeAt: purgeAt.toISOString(),
+        graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+      } satisfies DeleteAccountResponse;
+    } catch (error) {
+      await writeLifecycleLog(uid, userRecord, {
+        eventType: "deletion_request_failed",
+        status: "failed",
+        reason,
+        reauthProvider,
+        authTime: new Date(authTimeSeconds * 1000).toISOString(),
+        failedAt: FieldValue.serverTimestamp(),
+        errorCode: error instanceof HttpsError ? error.code : error instanceof Error ? error.name : "unknown",
+        errorMessage: error instanceof Error ? error.message : "unknown error",
+      });
+      if (error instanceof HttpsError) {
+        throw error;
+      }
+      throw new HttpsError("internal", "계정 삭제 예약 중 오류가 발생했습니다.");
+    }
+  },
+);
+
+export const restorePendingDeletion = onCall(
+  {
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인된 사용자만 계정 상태를 확인할 수 있습니다.");
+    }
+
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const [userSnap, userRecord] = await Promise.all([userRef.get(), loadUserRecordOrNull(uid)]);
+    if (!userSnap.exists) {
+      return { status: "noop" } satisfies RestoreAccountResponse;
+    }
+
+    const data = userSnap.data() ?? {};
+    const accountStatus = typeof data.accountStatus === "string" ? data.accountStatus : "active";
+    const purgeAt = toDateOrNull(data.purgeAt);
+    if (accountStatus !== "pending_deletion" || !purgeAt) {
+      return { status: "noop" } satisfies RestoreAccountResponse;
+    }
+
+    if (purgeAt.getTime() <= Date.now()) {
+      const result = await purgeUserAccount(uid, {
+        userRecord,
+        reason: "deletion-window-expired",
+        purgeSource: "restore-check",
+      });
+      return {
+        status: "purged",
+        logId: result.logId,
+        purgeAt: purgeAt.toISOString(),
+      } satisfies RestoreAccountResponse;
+    }
+
+    await userRef.set(
+      {
+        accountStatus: "active",
+        deletionRequestedAt: FieldValue.delete(),
+        purgeAt: FieldValue.delete(),
+        restoredAt: FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      { merge: true },
+    );
+    const restoredAt = new Date();
+    const logRef = await writeLifecycleLog(uid, userRecord, {
+      eventType: "deletion_restored",
+      status: "completed",
+      restoredAt: FieldValue.serverTimestamp(),
+      purgeAt: Timestamp.fromDate(purgeAt),
+      restoreSource: "login",
+    });
+    return {
+      status: "restored",
+      logId: logRef.id,
+      purgeAt: purgeAt.toISOString(),
+      restoredAt: restoredAt.toISOString(),
+    } satisfies RestoreAccountResponse;
+  },
+);
+
+/**
+ * 닉네임 변경 callable.
+ *
+ * 정책(2026-04-28 합의):
+ * - 클라이언트의 nickname 직접 쓰기를 막고, 모든 변경은 이 함수만 통과합니다.
+ * - 같은 사용자가 24시간 안에 다시 변경할 수 없습니다(쿨다운).
+ * - 트리밍 후 길이 1~20자만 허용하고, 그 외 입력은 invalid-argument 로 반려합니다.
+ * - 동일 닉네임으로의 "변경"은 쿨다운을 갱신하지 않고 noop 으로 둡니다(공격용 더미
+ *   업데이트로 쿨다운을 리셋시키는 우회를 방지).
+ * - 트랜잭션 안에서 nicknameChangedAt 와 비교 + 갱신을 한 번에 수행해, 동시 호출에서도
+ *   하나만 통과합니다.
+ */
+export const updateNickname = onCall<{ nickname?: unknown }>(
+  {
+    region: "asia-northeast3",
+    timeoutSeconds: 30,
+    memory: "256MiB",
+    invoker: "public",
+    cors: true,
+  },
+  async (request) => {
+    if (!request.auth) {
+      throw new HttpsError("unauthenticated", "로그인된 사용자만 닉네임을 변경할 수 있습니다.");
+    }
+
+    const raw = request.data?.nickname;
+    if (typeof raw !== "string") {
+      throw new HttpsError("invalid-argument", "닉네임 값이 올바르지 않습니다.");
+    }
+    const next = raw.trim();
+    if (next.length < NICKNAME_MIN_LENGTH || next.length > NICKNAME_MAX_LENGTH) {
+      throw new HttpsError(
+        "invalid-argument",
+        `닉네임은 ${NICKNAME_MIN_LENGTH}~${NICKNAME_MAX_LENGTH}자 사이여야 합니다.`,
+      );
+    }
+    // 줄바꿈/제어문자 차단. 닉네임에 들어갈 이유가 없고, UI 에서 표시 깨짐의 원인이 됩니다.
+    if (/[\x00-\x1f\x7f]/.test(next)) {
+      throw new HttpsError("invalid-argument", "닉네임에 사용할 수 없는 문자가 포함돼 있어요.");
+    }
+
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const now = Date.now();
+
+    // 트랜잭션으로 cooldown 검사 + 쓰기를 원자화해, 동시에 들어온 두 요청 중 하나만 성공.
+    const result = await adminDb.runTransaction(async (tx) => {
+      const snap = await tx.get(userRef);
+      if (!snap.exists) {
+        // 정상 흐름이면 bootstrap 이 끝난 뒤이므로 doc 이 있어야 합니다.
+        throw new HttpsError("failed-precondition", "사용자 프로필이 아직 준비되지 않았어요.");
+      }
+      const data = snap.data() ?? {};
+      const currentNickname = typeof data.nickname === "string" ? data.nickname : "";
+      const lastChangedAt = toDateOrNull(data.nicknameChangedAt);
+
+      // 같은 값이면 cooldown 도 안 건드리고 그냥 끝냅니다(어뷰즈 방지 + 무의미한 쓰기 절약).
+      if (currentNickname === next) {
+        return {
+          changed: false,
+          nicknameChangedAt: lastChangedAt ? lastChangedAt.toISOString() : null,
+        };
+      }
+
+      if (lastChangedAt) {
+        const elapsed = now - lastChangedAt.getTime();
+        if (elapsed < NICKNAME_COOLDOWN_MS) {
+          const retryAfterMs = NICKNAME_COOLDOWN_MS - elapsed;
+          throw new HttpsError(
+            "resource-exhausted",
+            `닉네임은 ${NICKNAME_COOLDOWN_HOURS}시간에 한 번만 변경할 수 있어요.`,
+            {
+              retryAfterMs,
+              nextAvailableAt: new Date(lastChangedAt.getTime() + NICKNAME_COOLDOWN_MS).toISOString(),
+            },
+          );
+        }
+      }
+
+      tx.set(
+        userRef,
+        {
+          nickname: next,
+          nicknameChangedAt: FieldValue.serverTimestamp(),
+          updatedAt: FieldValue.serverTimestamp(),
+        },
+        { merge: true },
+      );
+      return {
+        changed: true,
+        // 클라이언트에 즉시 보여줄 ISO. serverTimestamp 는 응답에는 안 실리니 now 를 씁니다.
+        nicknameChangedAt: new Date(now).toISOString(),
+      };
+    });
+
+    return {
+      ok: true,
+      changed: result.changed,
+      nickname: next,
+      nicknameChangedAt: result.nicknameChangedAt,
+      cooldownHours: NICKNAME_COOLDOWN_HOURS,
+    };
+  },
+);
+
+export const purgeExpiredDeletedAccounts = onSchedule(
+  {
+    region: "asia-northeast3",
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Seoul",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+  },
+  async () => {
+    const snap = await adminDb.collection("users").where("purgeAt", "<=", new Date()).get();
+    for (const userSnap of snap.docs) {
+      const data = userSnap.data();
+      if (data.accountStatus !== "pending_deletion") continue;
+      const userRecord = await loadUserRecordOrNull(userSnap.id);
+      await purgeUserAccount(userSnap.id, {
+        userRecord,
+        reason: "deletion-window-expired",
+        purgeSource: "scheduler",
+      });
+    }
+  },
+);
 
 export const geminiProxy = onCall(
   {

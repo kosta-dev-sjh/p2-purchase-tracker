@@ -62,6 +62,11 @@ export async function bootstrapUserProfile(
     email: seed?.email ?? user.email ?? "",
     avatarDataUrl: seed?.avatarDataUrl ?? null,
     passwordChangedAt: seed?.passwordChangedAt ?? "",
+    // 최초 부트스트랩 시점에는 변경 이력이 없는 상태로 두어, 사용자가 첫 변경을
+    // 시도할 때 쿨다운에 걸리지 않게 합니다. updateNickname callable 가 첫 변경 시
+    // serverTimestamp 로 채워 줍니다.
+    nicknameChangedAt: null,
+    accountStatus: "active",
     onboardingSeen: false,
     createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
@@ -93,6 +98,20 @@ export function subscribeUserProfile(
   return onSnapshot(userDoc(uid), (snap) => {
     const data = snap.data();
     if (!data) return;
+    // Firestore Timestamp -> ISO 문자열 변환. 클라이언트(profileStore/ProfileSection)는
+    // ISO 문자열만 다루도록 통일해서, 쿨다운 계산도 일관됩니다.
+    // 기존 사용자(필드 없음)와 신규 사용자(null), 변경 이력 있음(Timestamp) 셋 다 다룹니다.
+    const rawNickAt = data.nicknameChangedAt;
+    let nicknameChangedAtPatch: { nicknameChangedAt: string | null } | object = {};
+    if (rawNickAt === null) {
+      nicknameChangedAtPatch = { nicknameChangedAt: null };
+    } else if (rawNickAt && typeof rawNickAt.toDate === "function") {
+      nicknameChangedAtPatch = {
+        nicknameChangedAt: (rawNickAt.toDate() as Date).toISOString(),
+      };
+    } else if (typeof rawNickAt === "string") {
+      nicknameChangedAtPatch = { nicknameChangedAt: rawNickAt };
+    }
     onValue({
       name: typeof data.displayName === "string" ? data.displayName : undefined,
       nickname: typeof data.nickname === "string" ? data.nickname : undefined,
@@ -103,6 +122,7 @@ export function subscribeUserProfile(
           : undefined,
       passwordChangedAt:
         typeof data.passwordChangedAt === "string" ? data.passwordChangedAt : undefined,
+      ...nicknameChangedAtPatch,
     });
   });
 }
@@ -148,11 +168,18 @@ export async function saveUserProfile(
     updatedAt: serverTimestamp(),
   };
   if (partial.name !== undefined) payload.displayName = partial.name;
-  if (partial.nickname !== undefined) payload.nickname = partial.nickname;
+  // 닉네임은 보안 정책상 이 직접 쓰기 경로로 저장하지 않습니다.
+  // 모든 변경은 Cloud Function `updateNickname` 을 통해서만 통과시키고,
+  // 그 함수가 nicknameChangedAt 와 함께 트랜잭션으로 갱신합니다.
+  // (정책: 임퍼소네이션/봇 어뷰즈 방어, 클라이언트 disable 만으로는 부족)
   if (partial.email !== undefined) payload.email = partial.email;
   if (partial.avatarDataUrl !== undefined) payload.avatarDataUrl = partial.avatarDataUrl;
   if (partial.passwordChangedAt !== undefined) {
     payload.passwordChangedAt = partial.passwordChangedAt;
+  }
+  if (Object.keys(payload).length === 1) {
+    // updatedAt 만 있으면 굳이 쓸 필요 없음(불필요한 listener 알림 방지).
+    return;
   }
   await setDoc(userDoc(uid), payload, { merge: true });
 }

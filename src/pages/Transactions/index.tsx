@@ -35,6 +35,7 @@ import type {
   TxRow,
   TxPlatform,
 } from "./components/TransactionTable";
+import { getCardInstallmentKind } from "../../utils/cardInstallment";
 
 const Body = styled.div<{ $hasPanel: boolean }>`
   display: grid;
@@ -198,33 +199,21 @@ export const TransactionsPage: React.FC = () => {
     () => computeMaxMonthKey(allRows.map((row) => row.date)),
     [allRows]
   );
+  const markedMonthKeys = useMemo(
+    () => Array.from(new Set(allRows.map((row) => toMonthKey(row.date)).filter(Boolean))),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
   );
 
-  /**
-   * 사용자가 검색어를 입력했을 때 현재 월에는 매치가 없는데 다른 달에 매치가 있는 경우의 안내.
-   * 화면 아래 빈 상태 영역에 "다른 달에서 X건 발견 — 그 달로 이동" 같은 안내를 띄워 사용자가
-   * 검색 결과를 놓치지 않게 합니다. monthRows 매치 0건 + allRows 전역 매치 ≥ 1건일 때만 활성화됩니다.
-   */
-  const crossMonthMatches = useMemo(() => {
-    const query = search.trim().toLowerCase();
-    if (!query) return [] as { date: string; monthKey: string; title: string }[];
-    return allRows
-      .filter((row) => {
-        if (toMonthKey(row.date) === month) return false; // 같은 달 매치는 정상 흐름
-        const itemText = row.detail?.items.map((item) => item.name).join(" ").toLowerCase() ?? "";
-        return row.title.toLowerCase().includes(query) || itemText.includes(query);
-      })
-      .map((row) => ({ date: row.date, monthKey: toMonthKey(row.date), title: row.title }));
-  }, [allRows, month, search]);
-
   const filteredRows = useMemo(() => {
-    // 검색어, 플랫폼, 카테고리 조건을 한 번에 적용해 실제 표에 보여줄 후보 목록을 만듭니다.
     const query = search.trim().toLowerCase();
+    // 검색이 들어오면 현재 월에 갇히지 않고 전체 거래 기간에서 찾습니다.
+    const candidateRows = query ? allRows : monthRows;
 
-    const matched = monthRows.filter((row) => {
+    const matched = candidateRows.filter((row) => {
       if (typeFilter !== "all" && row.type !== typeFilter) {
         return false;
       }
@@ -243,13 +232,15 @@ export const TransactionsPage: React.FC = () => {
       }
 
       const cardImport = row.detail?.cardImport;
-      if (installmentFilter === "lump_sum" && cardImport?.paymentMode !== "lump_sum") {
+      const installmentKind = getCardInstallmentKind(cardImport);
+      if (installmentFilter === "lump_sum" && installmentKind !== "lump_sum") {
         return false;
       }
-      if (installmentFilter === "installment" && !(cardImport?.paymentMode === "installment" && cardImport?.recordKind === "approval")) {
-        return false;
-      }
-      if (installmentFilter === "billing" && cardImport?.recordKind !== "billing") {
+      if (
+        installmentFilter === "installment" &&
+        installmentKind !== "installment_approval" &&
+        installmentKind !== "installment_billing"
+      ) {
         return false;
       }
 
@@ -275,12 +266,12 @@ export const TransactionsPage: React.FC = () => {
       return sortOrder === "desc" ? -diff : diff;
     });
     return sorted;
-  }, [category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  }, [allRows, category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
 
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
-  const [selectedId, setSelectedId] = useState<string | null>(monthRows[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const resetVisibleCount = useCallback(() => {
     setVisibleCount(INITIAL_VISIBLE);
@@ -521,49 +512,12 @@ export const TransactionsPage: React.FC = () => {
           onChange={handleMonthChange}
           minYear={pickerMinYear}
           maxMonthKey={pickerMaxMonth}
+          markedMonthKeys={markedMonthKeys}
         />
       }
     >
       <Grid>
         <SummaryStrip summary={summary} filteredCount={filteredRows.length} />
-        {/*
-          검색어를 입력했는데 현재 월에는 매치가 없고 다른 달에 매치가 있는 경우 안내 배너.
-          이전에는 검색이 '현재 월 안에서만' 동작해서 사용자가 결과를 못 찾고 좌절하는 경우가 있었어요.
-          첫 매치 거래의 월로 이동할 수 있는 바로가기를 함께 제공해 검색 흐름이 끊기지 않게 합니다.
-        */}
-        {filteredRows.length === 0 && crossMonthMatches.length > 0 && (
-          <div
-            role="status"
-            style={{
-              padding: "10px 14px",
-              border: `1px solid ${tokens.color.accentBorder}`,
-              borderRadius: tokens.radius.card,
-              background: tokens.color.accentSubtle,
-              color: tokens.color.ink2,
-              fontSize: 13,
-              lineHeight: 1.55,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              gap: 12,
-              flexWrap: "wrap",
-            }}
-          >
-            <span>
-              현재 월에는 일치하는 거래가 없어요. 다른 달에 <strong>{crossMonthMatches.length}건</strong>이
-              발견됐어요.
-            </span>
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={() => {
-                handleMonthChange(crossMonthMatches[0].monthKey);
-              }}
-            >
-              {`${crossMonthMatches[0].monthKey.replace("-", "년 ")}월로 이동`}
-            </Button>
-          </div>
-        )}
         <Body $hasPanel={isOpen}>
           <Left>
             {/* 왼쪽 영역은 필터와 표, 오른쪽 영역은 상세 패널로 역할을 분리합니다.
@@ -656,14 +610,14 @@ export const TransactionsPage: React.FC = () => {
         <Modal
           isOpen
           onClose={() => setSourceImageUrl(null)}
-          title="OCR 분석한 이미지"
+          title="분석에 사용된 원본 캡처"
         >
           {/* 이미지 URL이 비어 있는 경우(mock/구데이터)엔 플레이스홀더로 떨어뜨려,
             "버튼은 보이는데 눌러도 아무것도 안 뜬다"는 상태를 피합니다. */}
           {sourceImageUrl ? (
             <img
               src={sourceImageUrl}
-              alt="OCR 분석에 사용된 원본 캡쳐"
+              alt="주문 캡처 분석에 사용된 원본 이미지"
               style={{
                 display: "block",
                 width: "100%",

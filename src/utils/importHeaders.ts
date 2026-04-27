@@ -14,6 +14,7 @@ export const DATE_HEADERS = [
 ] as const;
 
 export const MERCHANT_HEADERS = [
+  "이용가맹점명",
   "이용가맹점",
   "가맹점명",
   "가맹점",
@@ -70,11 +71,13 @@ export const APPROVAL_NUMBER_HEADERS = [
 export const CARD_LABEL_HEADERS = [
   "카드명",
   "카드명(카드뒤4자리)",
+  "카드별명",
   "이용카드",
   "카드번호",
 ] as const;
 
 export const PAYMENT_DUE_DATE_HEADERS = [
+  "결제예정일자",
   "결제예정일",
   "결제일",
   "청구일",

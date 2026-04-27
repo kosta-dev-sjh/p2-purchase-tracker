@@ -41,10 +41,12 @@ export interface MetaFieldValues {
   date: string;
   categories: string[];
   memo: string;
-  installmentKind: "none" | "lump_sum" | "installment_approval" | "installment_billing";
+  installmentKind: "none" | "lump_sum" | "installment";
   installmentMonths: string;
-  installmentCurrentCycle: string;
-  installmentCycleTotal: string;
+  // 회차(현재/전체) 입력은 데이터 일관성 정책으로 입력 surface 에서 제거됐습니다(2026-04-28).
+  // CSV import 가 카드사마다 회차를 잡는 비율이 들쭉날쭉해서, 수동입력에서만 잘 들어오면
+  // 결국 데이터셋이 섞여 보이는 문제. 타입(`cardImport.installmentCurrentCycle/Total`) 은
+  // 호환성 위해 남겨 두지만, 새 입력 경로에서는 채우지 않습니다.
   billedAmount: string;
   dueDate: string;
 }
@@ -186,8 +188,8 @@ export const MetaFields: React.FC<{
 }> = ({ value, onChange, fieldIdPrefix = "meta" }) => {
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
-  const isInstallment = value.installmentKind === "installment_approval" || value.installmentKind === "installment_billing";
-  const isBillingInstallment = value.installmentKind === "installment_billing";
+  const isInstallment = value.installmentKind === "installment";
+  const hasBilledAmount = value.billedAmount.trim().length > 0;
 
   // 카테고리 목록은 스토어 전체 항목을 사용합니다.
   // 정렬 정책은 한 곳(constants/labels.sortCategoriesByStandard)에서 결정해 다른 페이지와 일관성을 맞춥니다.
@@ -273,7 +275,7 @@ export const MetaFields: React.FC<{
         </FormField>
       </Field>
       <Field>
-        <FormField label="결제방식" helpText="거래가 일시불인지, 할부 승인건인지, 이번 달 할부 청구건인지 구분해요.">
+        <FormField label="결제방식" helpText="사용자 화면에서는 일시불과 할부만 구분해 보여줘요.">
           <PlatformSelect
             value={value.installmentKind}
             onChange={(event) =>
@@ -285,8 +287,7 @@ export const MetaFields: React.FC<{
           >
             <option value="none">선택 안 함</option>
             <option value="lump_sum">일시불</option>
-            <option value="installment_approval">할부 승인건</option>
-            <option value="installment_billing">할부 청구건</option>
+            <option value="installment">할부</option>
           </PlatformSelect>
         </FormField>
       </Field>
@@ -304,7 +305,7 @@ export const MetaFields: React.FC<{
         <Field>
           <FormField
             label="할부개월"
-            helpText={isBillingInstallment ? "총 할부 개월 수를 입력해 회차와 함께 추적해요." : "총 할부 개월 수를 입력해요."}
+            helpText="총 할부 개월 수를 입력해요."
           >
             <AmountInput
               id={`${fieldIdPrefix}-installment-months`}
@@ -315,37 +316,24 @@ export const MetaFields: React.FC<{
           </FormField>
         </Field>
       )}
-      {isBillingInstallment && (
+      {/*
+       * 회차(현재/전체) 입력은 의도적으로 제거했습니다.
+       * 카드사 CSV 가 회차를 잡는 정도가 일정하지 않아 데이터셋이 섞여 보이는 문제 해결을
+       * 위함. 회차 정보가 필요한 사용자는 "이번 달 청구금액 + 할부개월 + 결제예정일" 조합으로
+       * 충분히 진행 상황을 추적할 수 있습니다.
+       */}
+      {isInstallment && (
         <Field>
-          <FormField label="이번 달 청구금액" helpText="이번 달 카드값에 실제로 반영되는 금액이에요.">
+          <FormField label="이번 달 청구금액" helpText="선택 항목 · 청구형 자료처럼 실제 반영 금액을 아는 경우에만 입력해요.">
             <AmountInput
               id={`${fieldIdPrefix}-billed-amount`}
               placeholder="예: 27,472"
               value={value.billedAmount}
               onChange={(rawDigits) => patch({ billedAmount: rawDigits })}
             />
-          </FormField>
-        </Field>
-      )}
-      {isBillingInstallment && (
-        <Field>
-          <FormField label="현재 회차" helpText="예: 전체 5개월 중 이번 달이 2회차라면 2 / 5">
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 20px 1fr", gap: 8, alignItems: "center" }}>
-              <AmountInput
-                id={`${fieldIdPrefix}-installment-current-cycle`}
-                placeholder="2"
-                value={value.installmentCurrentCycle}
-                onChange={(rawDigits) => patch({ installmentCurrentCycle: rawDigits })}
-              />
-              <div style={{ color: tokens.color.ink4, textAlign: "center", fontWeight: 700 }}>/</div>
-              <AmountInput
-                id={`${fieldIdPrefix}-installment-cycle-total`}
-                placeholder="5"
-                value={value.installmentCycleTotal}
-                onChange={(rawDigits) => patch({ installmentCycleTotal: rawDigits })}
-              />
-            </div>
-            <InlineHint>회차를 입력하면 거래내역에서 `할부 2/5회차`처럼 바로 보이게 됩니다.</InlineHint>
+            {hasBilledAmount && (
+              <InlineHint>청구금액을 입력하면 내부적으로 더 정확한 할부 정보로 저장해요.</InlineHint>
+            )}
           </FormField>
         </Field>
       )}

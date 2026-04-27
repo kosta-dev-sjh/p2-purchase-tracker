@@ -172,20 +172,15 @@ function rowToMeta(row: TxRow): MetaFieldValues {
     categories: [...row.categories],
     memo: row.memo ?? "",
     installmentKind:
-      cardImport?.recordKind === "billing"
-        ? "installment_billing"
-        : cardImport?.paymentMode === "installment"
-          ? "installment_approval"
-          : cardImport?.paymentMode === "lump_sum"
-            ? "lump_sum"
-            : "none",
+      cardImport?.paymentMode === "installment"
+        ? "installment"
+        : cardImport?.paymentMode === "lump_sum"
+          ? "lump_sum"
+          : "none",
     installmentMonths: cardImport?.installmentMonths ? String(cardImport.installmentMonths) : "",
-    installmentCurrentCycle: cardImport?.installmentCurrentCycle
-      ? String(cardImport.installmentCurrentCycle)
-      : "",
-    installmentCycleTotal: cardImport?.installmentCycleTotal
-      ? String(cardImport.installmentCycleTotal)
-      : "",
+    // 회차 입력 surface 가 제거돼 폼이 더 이상 해당 키를 읽지 않습니다(2026-04-28).
+    // cardImport 에 회차가 들어 있어도 편집 폼에는 노출되지 않고, 다른 필드 편집 시에도
+    // patch 로 다시 쓰이지 않으므로 그대로 보존됩니다.
     billedAmount: cardImport?.billedAmount ? String(cardImport.billedAmount) : "",
     dueDate: cardImport?.dueDate ?? "",
   };
@@ -454,6 +449,8 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
           </SectionHint>
           <ProductRows
             products={products}
+            // 편집 중인 거래의 플랫폼을 그대로 넘겨, 링크 미등록 상품을 그 플랫폼 검색창으로 보낼 수 있게 합니다.
+            platform={row.platform}
             onEdit={(id) => setProductModal({ type: "edit", id })}
             onRemove={(id) =>
               setProducts((current) => current.filter((p) => p.id !== id))

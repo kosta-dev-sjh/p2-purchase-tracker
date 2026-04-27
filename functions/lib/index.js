@@ -1,12 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.geminiProxy = void 0;
+exports.geminiProxy = exports.purgeExpiredDeletedAccounts = exports.restorePendingDeletion = exports.deleteAccount = void 0;
 const generative_ai_1 = require("@google/generative-ai");
 const app_1 = require("firebase-admin/app");
+const auth_1 = require("firebase-admin/auth");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
+const scheduler_1 = require("firebase-functions/v2/scheduler");
 const params_1 = require("firebase-functions/params");
+const node_crypto_1 = require("node:crypto");
 (0, app_1.initializeApp)();
 const geminiApiKey = (0, params_1.defineSecret)("GEMINI_API_KEY");
+const adminDb = (0, firestore_1.getFirestore)();
+const RECENT_AUTH_MAX_AGE_SECONDS = 10 * 60;
+const ACCOUNT_DELETION_GRACE_DAYS = 7;
+const ACCOUNT_DELETION_GRACE_MS = ACCOUNT_DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000;
 const FAST_GENERATION_CONFIG = {
     temperature: 0,
     topP: 0.1,
@@ -24,6 +32,127 @@ function getGenAI() {
         throw new https_1.HttpsError("failed-precondition", "GEMINI_API_KEY secret is not configured.");
     }
     return new generative_ai_1.GoogleGenerativeAI(apiKey);
+}
+function sha256Hex(value) {
+    return (0, node_crypto_1.createHash)("sha256").update(value).digest("hex");
+}
+function maskEmail(email) {
+    const [localPart, domain] = email.split("@");
+    if (!localPart || !domain)
+        return "";
+    const safeLocal = localPart.length <= 2 ? `${localPart[0] ?? "*"}*` : `${localPart.slice(0, 2)}***`;
+    return `${safeLocal}@${domain}`;
+}
+function requireRecentAuth(authTime) {
+    const seconds = typeof authTime === "number" ? authTime : Number(authTime);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new https_1.HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+    }
+    const age = Math.floor(Date.now() / 1000) - seconds;
+    if (age > RECENT_AUTH_MAX_AGE_SECONDS) {
+        throw new https_1.HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+    }
+    return seconds;
+}
+async function countCollectionDocsDeep(collectionRef) {
+    const snap = await collectionRef.get();
+    let total = snap.size;
+    for (const docSnap of snap.docs) {
+        const nestedCollections = await docSnap.ref.listCollections();
+        for (const nestedCollection of nestedCollections) {
+            total += await countCollectionDocsDeep(nestedCollection);
+        }
+    }
+    return total;
+}
+async function deleteCollectionDeep(collectionRef) {
+    const snap = await collectionRef.get();
+    for (const docSnap of snap.docs) {
+        const nestedCollections = await docSnap.ref.listCollections();
+        for (const nestedCollection of nestedCollections) {
+            await deleteCollectionDeep(nestedCollection);
+        }
+        await docSnap.ref.delete();
+    }
+}
+async function collectDeletionSummary(userRef) {
+    const [userSnap, topLevelCollections] = await Promise.all([userRef.get(), userRef.listCollections()]);
+    const topLevelCounts = {};
+    let totalDocsDeleted = 0;
+    for (const collectionRef of topLevelCollections) {
+        const count = await countCollectionDocsDeep(collectionRef);
+        topLevelCounts[collectionRef.id] = count;
+        totalDocsDeleted += count;
+    }
+    return {
+        userDocExisted: userSnap.exists,
+        topLevelCounts,
+        totalDocsDeleted,
+    };
+}
+async function deleteUserDataTree(userRef) {
+    const topLevelCollections = await userRef.listCollections();
+    for (const collectionRef of topLevelCollections) {
+        await deleteCollectionDeep(collectionRef);
+    }
+    await userRef.delete();
+}
+function toDateOrNull(value) {
+    if (value instanceof firestore_1.Timestamp)
+        return value.toDate();
+    if (value instanceof Date)
+        return value;
+    return null;
+}
+function lifecycleLogCollection() {
+    return adminDb.collection("accountLifecycleLogs");
+}
+async function loadUserRecordOrNull(uid) {
+    try {
+        return await (0, auth_1.getAuth)().getUser(uid);
+    }
+    catch (error) {
+        if (error.code === "auth/user-not-found") {
+            return null;
+        }
+        throw error;
+    }
+}
+function buildIdentityPayload(uid, userRecord) {
+    const normalizedEmail = (userRecord?.email ?? "").trim().toLowerCase();
+    return {
+        uid,
+        providerIds: userRecord?.providerData.map((item) => item.providerId).filter(Boolean) ?? [],
+        emailMasked: normalizedEmail ? maskEmail(normalizedEmail) : null,
+        emailHash: normalizedEmail ? sha256Hex(normalizedEmail) : null,
+    };
+}
+async function writeLifecycleLog(uid, userRecord, payload) {
+    const ref = lifecycleLogCollection().doc();
+    await ref.set({
+        ...buildIdentityPayload(uid, userRecord),
+        ...payload,
+    });
+    return ref;
+}
+async function purgeUserAccount(uid, options) {
+    const userRef = adminDb.collection("users").doc(uid);
+    const summary = await collectDeletionSummary(userRef);
+    await deleteUserDataTree(userRef);
+    if (options.userRecord) {
+        await (0, auth_1.getAuth)().deleteUser(uid);
+    }
+    const logRef = await writeLifecycleLog(uid, options.userRecord, {
+        eventType: "deletion_purged",
+        status: "completed",
+        reason: options.reason,
+        purgeSource: options.purgeSource,
+        reauthProvider: options.reauthProvider ?? null,
+        authTime: options.authTime ?? null,
+        dataSummary: summary,
+        purgedAt: firestore_1.FieldValue.serverTimestamp(),
+    });
+    return { logId: logRef.id, dataSummary: summary };
 }
 function createModel() {
     return getGenAI().getGenerativeModel({
@@ -218,15 +347,34 @@ async function runFallbackOcrProducts(input) {
 - name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게.
 - **변경은 필요할 때만**: 현재 값이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
   오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임, 날짜 비었는데 이미지엔 보임 등)" 에만.
-- 이름 앞뒤에 붙은 OCR 찌꺼기(예: "개 ", "을 ", "를 ", "판매자정보/문의", "상세보기")는 제거하고 자연스러운 상품명만 남긴다.
+
+이름 정리 규칙:
+- 한글 1글자 + 공백 으로 시작하는 OCR 잔류 prefix 는 제거 (예: "개 체크미..." → "체크미...", "을 띠테르..." → "띠테르...", "에 강블리..." → "강블리...", "를 독거미..." → "독거미...", "이 헬스프랜드..." → "헬스프랜드...", "까 비닐봉투..." → "비닐봉투...").
+- UI 라벨이 이름에 섞이면 제거: "판매자정보/문의", "상세보기", "장바구니 담기", "바로 구매하기", "한달리뷰쓰기", "다시 담기", "한달사용리뷰", "정기구독", "추가상품", "내일배송", "오늘배송", "리뷰 작성".
+- 한글 사이 영문 잔류는 의미 있는 모델명만 남기고 OCR 노이즈는 제거 (예: "리아나 카본히터 2 BH 전기히터" 의 "BH" 같이 의미 없는 약자가 끼면 빼거나 정확한 토큰으로 복원).
 - 띄어쓰기가 과하게 붙어 있으면 한국 쇼핑몰 검색어처럼 자연스럽게 복원한다.
+
+가격·수량:
 - price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
+  - "원" 이 OCR 에서 "8" 또는 "0" 으로 깨질 수 있음 — 마지막 자리가 부자연스러우면 (예: "5,008" 같은 4자리 마지막 그룹) 원래 가격을 추정해 보정.
 - quantity 는 정수, 찾을 수 없으면 1.
-- **date** 는 ISO 형식 \`YYYY-MM-DD\`. 이미지의 "주문/결제" 라벨 옆 날짜를 읽는다.
-  - ${platformKor} 에서 흔한 형식: \`2025.7.3. 19:04 주문\`, \`4. 7. 11:29 결제\`, \`1.26. 15:09 주문\`.
-  - 단축 형식(연도 누락) 이면 현재 연도를 가정하되, 추출 월이 현재 월보다 크면 작년으로.
-  - 정말 안 보이면 빈 문자열(\`\`).
-  - 같은 결제(같은 카드 그룹)의 다른 카드와 다르면 그쪽을 따라가라(같은 결제 → 같은 날짜).
+
+날짜 (가장 중요):
+- ISO 형식 \`YYYY-MM-DD\`. 이미지의 "주문/결제" 라벨 옆 날짜를 읽는다.
+- ${platformKor} 에서 흔한 형식 (그리고 OCR 깨짐 변형):
+  · \`2025.7.3. 19:04 주문\` / \`2025.7.3 19:04 결제\` (full year)
+  · \`4. 7. 11:29 결제\` / \`1.26. 15:09 주문\` (short)
+  · \`4900원 210 1202긍제\` (압축 — \`긍제\`는 \`결제\` OCR 변형, \`210\`은 \`2.10\`, \`1202\`는 12:02)
+  · \`13,9008 3 24 1526 글제\` (\`글제\`=\`결제\` 변형, \`3 24\`=3.24, \`1526\`=15:26)
+  · \`17.000원 2 6 045 27\` (\`2 6\`=2.6, \`045 27\`=04:54:27 — 결제 키워드 자체 증발)
+- 결제·주문 OCR 변형: \`결제\`→\`결재/즐제/글제/긍제/금지/결자\`, \`주문\`→\`주묘/수문/우문/주둔/주몬\`.
+- 4자리 시각(HHMM) 앞 토큰이 날짜다. 예: \`47 1129\` 에서 \`47\` 이 4.7, \`1129\` 가 11:29.
+- 단축 형식(연도 누락) 이면 현재 연도를 가정하되, 추출 월이 현재 월보다 크면 작년으로.
+- 정말 안 보이면 빈 문자열(\`\`).
+- **같은 결제 묶음**(같은 fold 그룹 / "추가상품" / "총 N건 주문 접기") 의 다른 카드와 날짜가 다르면 일관성을 맞춰라 — 같은 결제는 무조건 같은 날짜.
+- "추가상품" 카드는 위에 있는 본 상품과 같은 결제이므로 같은 날짜.
+
+기타:
 - 입력된 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
 - 설명 문장 추가 금지. 첫 라인부터 데이터다.
 
@@ -296,6 +444,145 @@ ${productsBlock}`;
     });
     return { products, changedIds: [...changedIds] };
 }
+exports.deleteAccount = (0, https_1.onCall)({
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+}, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "로그인된 사용자만 계정을 삭제할 수 있습니다.");
+    }
+    const authTimeSeconds = requireRecentAuth(request.auth.token.auth_time);
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const userRecord = await (0, auth_1.getAuth)().getUser(uid);
+    const data = (request.data ?? {});
+    const reason = typeof data.reason === "string" && data.reason.trim() ? data.reason.trim() : "self-service";
+    const reauthProvider = typeof data.reauthProvider === "string" && data.reauthProvider.trim()
+        ? data.reauthProvider.trim()
+        : null;
+    const purgeAt = new Date(Date.now() + ACCOUNT_DELETION_GRACE_MS);
+    try {
+        await userRef.set({
+            accountStatus: "pending_deletion",
+            deletionRequestedAt: firestore_1.FieldValue.serverTimestamp(),
+            purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+            restoredAt: firestore_1.FieldValue.delete(),
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        const logRef = await writeLifecycleLog(uid, userRecord, {
+            eventType: "deletion_requested",
+            status: "scheduled",
+            reason,
+            reauthProvider,
+            authTime: new Date(authTimeSeconds * 1000).toISOString(),
+            requestedAt: firestore_1.FieldValue.serverTimestamp(),
+            purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+            graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+        });
+        return {
+            ok: true,
+            logId: logRef.id,
+            status: "scheduled",
+            purgeAt: purgeAt.toISOString(),
+            graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+        };
+    }
+    catch (error) {
+        await writeLifecycleLog(uid, userRecord, {
+            eventType: "deletion_request_failed",
+            status: "failed",
+            reason,
+            reauthProvider,
+            authTime: new Date(authTimeSeconds * 1000).toISOString(),
+            failedAt: firestore_1.FieldValue.serverTimestamp(),
+            errorCode: error instanceof https_1.HttpsError ? error.code : error instanceof Error ? error.name : "unknown",
+            errorMessage: error instanceof Error ? error.message : "unknown error",
+        });
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        throw new https_1.HttpsError("internal", "계정 삭제 예약 중 오류가 발생했습니다.");
+    }
+});
+exports.restorePendingDeletion = (0, https_1.onCall)({
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+}, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "로그인된 사용자만 계정 상태를 확인할 수 있습니다.");
+    }
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const [userSnap, userRecord] = await Promise.all([userRef.get(), loadUserRecordOrNull(uid)]);
+    if (!userSnap.exists) {
+        return { status: "noop" };
+    }
+    const data = userSnap.data() ?? {};
+    const accountStatus = typeof data.accountStatus === "string" ? data.accountStatus : "active";
+    const purgeAt = toDateOrNull(data.purgeAt);
+    if (accountStatus !== "pending_deletion" || !purgeAt) {
+        return { status: "noop" };
+    }
+    if (purgeAt.getTime() <= Date.now()) {
+        const result = await purgeUserAccount(uid, {
+            userRecord,
+            reason: "deletion-window-expired",
+            purgeSource: "restore-check",
+        });
+        return {
+            status: "purged",
+            logId: result.logId,
+            purgeAt: purgeAt.toISOString(),
+        };
+    }
+    await userRef.set({
+        accountStatus: "active",
+        deletionRequestedAt: firestore_1.FieldValue.delete(),
+        purgeAt: firestore_1.FieldValue.delete(),
+        restoredAt: firestore_1.FieldValue.serverTimestamp(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    const restoredAt = new Date();
+    const logRef = await writeLifecycleLog(uid, userRecord, {
+        eventType: "deletion_restored",
+        status: "completed",
+        restoredAt: firestore_1.FieldValue.serverTimestamp(),
+        purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+        restoreSource: "login",
+    });
+    return {
+        status: "restored",
+        logId: logRef.id,
+        purgeAt: purgeAt.toISOString(),
+        restoredAt: restoredAt.toISOString(),
+    };
+});
+exports.purgeExpiredDeletedAccounts = (0, scheduler_1.onSchedule)({
+    region: "asia-northeast3",
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Seoul",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+}, async () => {
+    const snap = await adminDb.collection("users").where("purgeAt", "<=", new Date()).get();
+    for (const userSnap of snap.docs) {
+        const data = userSnap.data();
+        if (data.accountStatus !== "pending_deletion")
+            continue;
+        const userRecord = await loadUserRecordOrNull(userSnap.id);
+        await purgeUserAccount(userSnap.id, {
+            userRecord,
+            reason: "deletion-window-expired",
+            purgeSource: "scheduler",
+        });
+    }
+});
 exports.geminiProxy = (0, https_1.onCall)({
     region: "asia-northeast3",
     timeoutSeconds: 120,

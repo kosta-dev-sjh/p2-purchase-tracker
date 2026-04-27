@@ -56,9 +56,9 @@ export const UploadPage: React.FC = () => (
           {/* 첫 진입 시 왼쪽 → 오른쪽 순으로 140ms 간격씩 아래에서 올라오며 등장합니다. */}
           <MethodCard
             icon={<CameraIcon />}
-            title="OCR로 입력"
+            title="주문 캡처로 입력"
             description={`쇼핑몰 주문내역 캡처를 인식해\n자동으로 입력합니다.`}
-            ctaLabel="OCR 업로드 시작"
+            ctaLabel="주문 캡처 시작하기"
             ctaVariant="primary"
             footnote="취소, 반품, 환불, 정기결제까지 함께 감지"
             href="/ocr-upload"

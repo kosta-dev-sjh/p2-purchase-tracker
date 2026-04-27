@@ -37,7 +37,10 @@ export const TYPE_LABELS = {
 } as const;
 
 export const SOURCE_LABELS = {
-  OCR: "OCR",
+  // 사용자 피드백: "OCR" 이라는 약어가 직관적이지 않다는 피드백을 받아, 화면에 노출되는 모든 곳에서
+  // "주문 캡처" 라는 표현으로 통일합니다. 내부 코드 식별자(detail.source: "OCR")는 그대로 유지되어
+  // 기존 저장된 거래 데이터·라우트와 호환됩니다(2026-04-28).
+  OCR: "주문 캡처",
   MANUAL: "수동 입력",
 } as const;
 

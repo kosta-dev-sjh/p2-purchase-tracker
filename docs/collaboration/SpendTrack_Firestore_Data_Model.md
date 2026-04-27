@@ -21,6 +21,9 @@
 
 즉 1차 Firestore 연동 범위는 `프로필`, `거래`, `카테고리` 3축으로 잡는 것이 가장 안전합니다.
 
+운영/감사 목적의 보조 컬렉션으로는 `accountLifecycleLogs`를 최상위에 별도로 두는 것을 권장합니다.  
+이 컬렉션은 제품 기능의 핵심 엔티티는 아니지만, 탈퇴 예약 / 복구 / 최종 삭제 이력을 남길 때 유용합니다.
+
 추가로 필요한 가벼운 설정값은 `users/{uid}` 문서 안에 함께 두고, OCR 원본 이미지나 대규모 AI 호출 로그 같은 기능은 2차 확장으로 미룹니다.  
 다만 현재 기획 기준상 `Tesseract 기본 + Vision fallback`, `SummaryBanner AI 문장화`가 다음 구현 범위에 들어오므로, 최소 메타데이터는 거래 문서와 사용자 문서에 함께 둘 수 있게 여지를 남겨두는 편이 좋습니다.
 
@@ -62,6 +65,10 @@ users/{uid}
   email
   avatarUrl
   passwordChangedAt
+  accountStatus
+  deletionRequestedAt
+  purgeAt
+  restoredAt
   onboardingSeen
   analysisCache
   createdAt
@@ -94,6 +101,23 @@ users/{uid}/categories/{categoryId}
   sortOrder
   createdAt
   updatedAt
+
+accountLifecycleLogs/{logId}
+  uid
+  eventType
+  emailHash
+  emailMasked
+  providerIds[]
+  reauthProvider
+  reason
+  status
+  authTime
+  dataSummary
+  requestedAt
+  restoredAt
+  purgedAt
+  purgeAt
+  failedAt
 ```
 
 ## 4. 최상위 문서 설계
@@ -114,6 +138,10 @@ users/{uid}/categories/{categoryId}
 | `email` | string | O | 화면 표시 및 보조 조회용 |
 | `avatarUrl` | string \| null | O | 권장: Cloud Storage URL. 현재 `avatarDataUrl`는 장기적으로 대체 |
 | `passwordChangedAt` | string | X | 현재 UI 표시용 문자열 유지 가능 |
+| `accountStatus` | `"active" \| "pending_deletion"` | O | 계정 활성/삭제 예약 상태 |
+| `deletionRequestedAt` | Timestamp | X | 삭제 예약 요청 시각 |
+| `purgeAt` | Timestamp | X | 실제 영구 삭제 예정 시각 |
+| `restoredAt` | Timestamp | X | 삭제 예약 후 다시 로그인으로 복구된 시각 |
 | `onboardingSeen` | boolean | O | 현재 localStorage 플래그 대체 가능 |
 | `analysisCache` | map | X | 월별 AI 요약 문장을 짧게 캐시할 경우 사용 가능 |
 | `createdAt` | Timestamp | O | 문서 생성 시간 |
@@ -134,11 +162,65 @@ users/{uid}/categories/{categoryId}
   "email": "hong@example.com",
   "avatarUrl": null,
   "passwordChangedAt": "2025.02.10",
+  "accountStatus": "active",
   "onboardingSeen": false,
   "createdAt": "serverTimestamp()",
   "updatedAt": "serverTimestamp()"
 }
 ```
+
+### 4-2. `accountLifecycleLogs/{logId}`
+
+역할:
+- 회원 탈퇴 예약, 재활성화, 최종 삭제를 남기는 감사 로그
+- `users/{uid}` 삭제 이후에도 남아 있어야 하므로 사용자 문서 바깥 최상위 컬렉션에 저장
+- 운영 확인용 최소 메타데이터만 보관하고, 거래 원문이나 프로필 전체 스냅샷은 남기지 않음
+
+권장 필드:
+
+| 필드 | 타입 | 필수 | 설명 |
+| --- | --- | --- | --- |
+| `uid` | string | O | 대상 Auth uid |
+| `eventType` | `"deletion_requested" \| "deletion_restored" \| "deletion_purged" \| "deletion_request_failed"` | O | 계정 수명주기 이벤트 |
+| `emailHash` | string \| null | X | 이메일 원문 대신 남기는 SHA-256 해시 |
+| `emailMasked` | string \| null | X | 운영자가 식별 가능한 최소 표시값 |
+| `providerIds` | string[] | O | 이벤트 당시 연결된 로그인 수단 |
+| `reauthProvider` | string \| null | X | 삭제 예약 직전 재인증에 사용한 provider |
+| `reason` | string | O | 예: `self-service` |
+| `status` | `"scheduled" \| "completed" \| "failed"` | O | 이벤트 처리 상태 |
+| `authTime` | string \| null | X | 삭제 예약 직전 최근 인증 시각(ISO 문자열) |
+| `dataSummary.userDocExisted` | boolean | X | 최종 삭제 시 `users/{uid}` 문서 존재 여부 |
+| `dataSummary.topLevelCounts` | map | X | 예: `transactions: 142`, `categories: 6` |
+| `dataSummary.totalDocsDeleted` | number | X | 실제 삭제된 문서 총합 |
+| `requestedAt` | Timestamp | X | 삭제 예약 시각 |
+| `restoredAt` | Timestamp | X | 재로그인 복구 시각 |
+| `purgedAt` | Timestamp | X | 최종 영구 삭제 시각 |
+| `purgeAt` | Timestamp | X | 삭제 예정 시각 |
+| `failedAt` | Timestamp | X | 실패 시각 |
+
+예시:
+
+```json
+{
+  "uid": "uid_12345",
+  "eventType": "deletion_requested",
+  "emailHash": "8b7d...c91",
+  "emailMasked": "ho***@example.com",
+  "providerIds": ["password"],
+  "reauthProvider": "password",
+  "reason": "self-service",
+  "status": "scheduled",
+  "authTime": "2026-04-27T09:45:00.000Z",
+  "requestedAt": "serverTimestamp()",
+  "purgeAt": "serverTimestamp() + 7d"
+}
+```
+
+주의:
+- 삭제 로그는 `users/{uid}` 아래에 두면 회원 탈퇴 시 함께 사라지므로 안 됩니다.
+- 개인정보 최소화 원칙상 이메일 원문, 거래 상세 내용, avatarDataUrl 같은 필드는 보관하지 않는 편이 좋습니다.
+- 재로그인 복구를 허용하려면 삭제 요청 시점에 Firebase Auth 사용자를 즉시 지우면 안 됩니다.
+- 운영 정책이 정해지면 TTL 또는 주기 삭제 배치로 로그 보관 기간을 제한하는 것이 좋습니다.
 
 ## 5. 핵심 거래 컬렉션 설계
 

@@ -209,8 +209,6 @@ const EMPTY_META: MetaFieldValues = {
   memo: "",
   installmentKind: "none",
   installmentMonths: "",
-  installmentCurrentCycle: "",
-  installmentCycleTotal: "",
   billedAmount: "",
   dueDate: "",
 };
@@ -325,8 +323,6 @@ export const ManualEntryPage: React.FC = () => {
   const buildRowFromForm = (onError: (message: string) => void): TxRow | null => {
     const amountNumber = Number(meta.amount.replace(/[^0-9]/g, ""));
     const installmentMonths = Number(meta.installmentMonths.replace(/[^0-9]/g, ""));
-    const installmentCurrentCycle = Number(meta.installmentCurrentCycle.replace(/[^0-9]/g, ""));
-    const installmentCycleTotal = Number(meta.installmentCycleTotal.replace(/[^0-9]/g, ""));
     const billedAmountNumber = Number(meta.billedAmount.replace(/[^0-9]/g, ""));
 
     // 누락된 필드를 모두 모아 한 번에 노출. 첫 누락 필드에는 포커스도 같이 줘 사용자가 곧바로 입력을
@@ -346,21 +342,10 @@ export const ManualEntryPage: React.FC = () => {
       if (!firstMissingField) firstMissingField = "date";
     }
     if (
-      (meta.installmentKind === "installment_approval" ||
-        meta.installmentKind === "installment_billing") &&
+      meta.installmentKind === "installment" &&
       (!installmentMonths || Number.isNaN(installmentMonths))
     ) {
       missing.push("할부개월");
-    }
-    if (meta.installmentKind === "installment_billing") {
-      if (
-        !installmentCurrentCycle ||
-        !installmentCycleTotal ||
-        Number.isNaN(installmentCurrentCycle) ||
-        Number.isNaN(installmentCycleTotal)
-      ) {
-        missing.push("할부 현재/전체 회차");
-      }
     }
     if (missing.length > 0) {
       onError(`다음 항목을 입력해 주세요 — ${missing.join(", ")}`);
@@ -372,12 +357,12 @@ export const ManualEntryPage: React.FC = () => {
     const paymentMode =
       meta.installmentKind === "lump_sum"
         ? "lump_sum"
-        : meta.installmentKind === "installment_approval" ||
-            meta.installmentKind === "installment_billing"
+        : meta.installmentKind === "installment"
           ? "installment"
           : "unknown";
-    const recordKind =
-      meta.installmentKind === "installment_billing" ? "billing" : "approval";
+    // 회차 입력 surface 제거(2026-04-28) 후 recordKind 분기는 청구금액 유무만 본다.
+    // 청구금액이 있으면 "이번 달 청구 단위 행"(billing), 없으면 "승인 단위 행"(approval) 로 둡니다.
+    const recordKind = billedAmountNumber > 0 ? "billing" : "approval";
     const baseDetail =
       products.length > 0
         ? {
@@ -395,18 +380,12 @@ export const ManualEntryPage: React.FC = () => {
             recordKind,
             paymentMode,
             ...(installmentMonths > 0 ? { installmentMonths } : {}),
-            ...(meta.installmentKind === "installment_billing" &&
-            installmentCurrentCycle > 0 &&
-            installmentCycleTotal > 0
-              ? {
-                  installmentCurrentCycle,
-                  installmentCycleTotal,
-                }
-              : {}),
-            ...(meta.installmentKind === "installment_billing" && billedAmountNumber > 0
+            // 회차(installmentCurrentCycle/Total) 는 입력 surface 에서 제거됐기 때문에
+            // 신규 수동입력 거래에서는 채우지 않습니다(2026-04-28).
+            ...(billedAmountNumber > 0
               ? { billedAmount: billedAmountNumber }
               : {}),
-            ...(meta.installmentKind !== "installment_billing"
+            ...(recordKind !== "billing"
               ? { approvedAmount: amountNumber }
               : amountNumber > 0
                 ? { approvedAmount: amountNumber }
@@ -663,6 +642,9 @@ export const ManualEntryPage: React.FC = () => {
           </SectionHint>
           <ProductRows
             products={products}
+            // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
+            // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
+            platform={mapPlatform(meta.platform)}
             onEdit={(id) => setModal({ type: "edit", id })}
             onRemove={(id) =>
               setProducts((current) =>

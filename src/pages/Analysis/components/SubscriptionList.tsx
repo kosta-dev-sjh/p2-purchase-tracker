@@ -84,17 +84,17 @@ export const SubscriptionList: React.FC<{ items: SubscriptionItem[]; total: numb
   items,
   total,
 }) => (
-  <Card>
+    <Card>
     <CardHd>
-      <CardTitle>정기결제 감지</CardTitle>
+      <CardTitle>고정지출 감지</CardTitle>
       <Chip $tone="info">자동 감지됨</Chip>
     </CardHd>
     <CardBd>
       {items.length === 0 ? (
         <EmptyState>
-          아직 감지된 정기결제가 없어요.
+          아직 감지된 고정지출이 없어요.
           <br />
-          매달 결제되는 항목을 ‘정기결제’ 상태로 입력하면 여기에 모여요.
+          정기결제, 공과금, 보험, 통신비나 월반복 지출이 쌓이면 여기에 모여요.
         </EmptyState>
       ) : (
         <List>
@@ -112,7 +112,7 @@ export const SubscriptionList: React.FC<{ items: SubscriptionItem[]; total: numb
       )}
     </CardBd>
     <CardFoot>
-      <span>이번 달 정기결제 합계</span>
+      <span>이번 달 고정지출 합계</span>
       <span
         className="tnum"
         style={{ fontWeight: 600, color: tokens.color.ink2, fontFamily: tokens.font.mono }}
@@ -122,4 +122,3 @@ export const SubscriptionList: React.FC<{ items: SubscriptionItem[]; total: numb
     </CardFoot>
   </Card>
 );
-

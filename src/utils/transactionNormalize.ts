@@ -1,4 +1,5 @@
 import type { TxRow } from "../pages/Transactions/components/TransactionTable";
+import { getCardInstallmentKind } from "./cardInstallment";
 
 function normalizeNumber(value: unknown): number | undefined {
   if (typeof value === "number") {
@@ -37,8 +38,14 @@ function normalizeCardImport(detail: TxRow["detail"]): TxRow["detail"] {
   const remainingBalance = normalizeNumber(raw.remainingBalance);
   const installmentMonths = normalizeNumber(raw.installmentMonths);
 
-  const cardImport: NonNullable<TxRow["detail"]>["cardImport"] = {
+  const inferredKind = getCardInstallmentKind({
+    ...raw,
     recordKind: raw.recordKind === "billing" ? "billing" : "approval",
+    paymentMode,
+  } as NonNullable<NonNullable<TxRow["detail"]>["cardImport"]>);
+
+  const cardImport: NonNullable<TxRow["detail"]>["cardImport"] = {
+    recordKind: inferredKind === "installment_billing" ? "billing" : "approval",
     paymentMode,
     ...(installmentMonths !== undefined ? { installmentMonths } : {}),
     ...(installmentCurrentCycle !== undefined
@@ -59,6 +66,9 @@ function normalizeCardImport(detail: TxRow["detail"]): TxRow["detail"] {
       : {}),
     ...(normalizeString(raw.sourceSheet)
       ? { sourceSheet: normalizeString(raw.sourceSheet) }
+      : {}),
+    ...(normalizeString(raw.originalMerchant)
+      ? { originalMerchant: normalizeString(raw.originalMerchant) }
       : {}),
     ...(normalizeString(raw.rawRowFingerprint)
       ? { rawRowFingerprint: normalizeString(raw.rawRowFingerprint) }

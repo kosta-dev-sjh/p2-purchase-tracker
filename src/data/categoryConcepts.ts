@@ -21,6 +21,8 @@ export type ConceptId =
   | "mart"
   | "transport"
   | "subscription"
+  | "utility"
+  | "insurance"
   | "fashion"
   | "digital"
   | "health"
@@ -202,6 +204,31 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /통신요금|통신료/i,
     ],
     fallbackStandard: "etc",
+  },
+  {
+    id: "utility",
+    aliases: ["공과금", "관리비", "전기", "가스", "수도", "utility", "bill"],
+    patterns: [
+      /한국전력|한전|kepco/i,
+      /전기요금|전기료/i,
+      /도시가스|가스요금|가스료/i,
+      /수도요금|상하수도|water/i,
+      /관리비|아파트관리비|오피스텔관리비/i,
+      /난방비|지역난방/i,
+      /환경개선부담금|전기차충전/i,
+    ],
+    fallbackStandard: "living",
+  },
+  {
+    id: "insurance",
+    aliases: ["보험", "보험료", "insurance"],
+    patterns: [
+      /삼성화재|현대해상|kb손해보험|db손해보험|메리츠화재|한화손해보험/i,
+      /교보생명|한화생명|삼성생명|신한라이프|흥국생명|미래에셋생명/i,
+      /보험료|손해보험|생명보험|화재보험/i,
+      /건강보험|국민건강보험|장기요양보험/i,
+    ],
+    fallbackStandard: "living",
   },
   {
     id: "fashion",

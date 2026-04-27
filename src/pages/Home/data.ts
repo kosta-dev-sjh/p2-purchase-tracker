@@ -15,6 +15,7 @@ import type {
 import { tokens } from "../../styles/tokens";
 import { PLATFORM_LABELS } from "../../constants/labels";
 import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
+import { objectParticle } from "../../utils/koreanParticle";
 
 export interface HomeMockData {
   kpis: KpiItem[];
@@ -182,6 +183,16 @@ function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
     }
   }
   const topCategory = Object.entries(categoryCount).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const repeatCount: Record<string, { count: number; title: string }> = {};
+  for (const row of thisMonth) {
+    if (row.type !== "expense" || row.status === "cancel") continue;
+    const key = (row.detail?.cardImport?.originalMerchant || row.title).trim();
+    if (!key) continue;
+    const existing = repeatCount[key];
+    if (existing) existing.count += 1;
+    else repeatCount[key] = { count: 1, title: row.title };
+  }
+  const topRepeat = Object.values(repeatCount).sort((a, b) => b.count - a.count)[0];
   const CATEGORY_LABEL: Record<string, string> = {
     living: "생활용품",
     fashion: "패션/의류",
@@ -193,11 +204,14 @@ function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
   const insights: InsightItem[] = [];
 
   if (top) {
+    const platformLabel = PLATFORM_LABELS[top.platform];
+    // "쿠팡이/네이버쇼핑이" 등 주격 조사도 받침 유무로 분기. 이전에는 "비중이"로 둘러서 회피했는데
+    // 본문 쪽 "쿠팡에서/네이버쇼핑에서" 처럼 부사격 조사는 받침 영향이 없어 안전합니다.
     insights.push({
       id: "i1",
       kind: "warn",
-      title: `${PLATFORM_LABELS[top.platform]} 비중이 가장 높아요.`,
-      body: `이번 달 전체 지출의 약 ${top.share}%가 ${PLATFORM_LABELS[top.platform]}에서 발생했어요.`,
+      title: `${platformLabel} 비중이 가장 높아요.`,
+      body: `이번 달 전체 지출의 약 ${top.share}%가 ${platformLabel}에서 발생했어요.`,
     });
   }
 
@@ -207,6 +221,17 @@ function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
       kind: "category",
       title: `${CATEGORY_LABEL[topCategory] ?? topCategory} 구매가 가장 잦았어요.`,
       body: `이 카테고리에서 ${categoryCount[topCategory]}건의 지출이 있었어요. 비슷한 주문이 반복되고 있는지 점검해 보세요.`,
+    });
+  }
+
+  if (topRepeat && topRepeat.count >= 2) {
+    // 거래명에 따라 "쿠팡을 사셨어요" / "네이버를 사셨어요" 가 자연스럽게 갈리도록 조사를 자동 선택합니다.
+    // 이전에는 무조건 `${title}를` 이어서 "쿠팡를 사셨어요" 같은 어색한 출력 회귀가 있었습니다(QA Findings v1, ISSUE-02).
+    insights.push({
+      id: "i-repeat",
+      kind: "repeat",
+      title: `주로 ${topRepeat.title}${objectParticle(topRepeat.title)} 사셨어요.`,
+      body: `이번 달에 같은 결제가 ${topRepeat.count}번 반복됐어요. 반복 구매나 고정지출인지 확인해 보세요.`,
     });
   }
 
@@ -235,7 +260,7 @@ function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
       id: "i0",
       kind: "category",
       title: "아직 이번 달 거래가 없어요.",
-      body: "수동 입력이나 OCR 업로드로 거래를 추가하면 인사이트가 생성됩니다.",
+      body: "수동 입력이나 주문 캡처로 거래를 추가하면 인사이트가 생성됩니다.",
     });
   }
   return insights.slice(0, 3);

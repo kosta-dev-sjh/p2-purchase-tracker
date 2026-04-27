@@ -444,7 +444,7 @@ export async function analyzeUploadedImages(
       }
 
       // ── Tesseract ── 진행률은 logger 가 0→0.5 스케일로 자동 흘려보냄.
-      const preprocessed = await preprocessImageForOcr(image.file);
+      const preprocessed = await preprocessImageForOcr(image.file, { platform: image.platform });
       const result = await worker.recognize(preprocessed);
       // 후처리는 platform-aware. Coupang 전용 ribbon noise 제거가 네이버 결제 라인을 잘못
       // 떨어뜨릴 위험 때문에 platform 을 같이 넘겨줍니다(ocrCorrection.applyOcrCorrections 분기).

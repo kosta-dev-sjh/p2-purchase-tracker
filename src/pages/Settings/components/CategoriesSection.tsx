@@ -167,8 +167,15 @@ type ModalState =
 export const CategoriesSection: React.FC = () => {
   const rows = useTransactionsStore();
   const rawCategories = useCategoriesStore();
-  // 정렬 정책을 한 곳(constants/labels.sortCategoriesByStandard)에 모아 다른 화면들과 일치시킵니다.
-  const categories = useMemo(() => sortCategoriesByStandard(rawCategories), [rawCategories]);
+  // 설정 화면은 "기타"를 시스템 폴백 카테고리로 맨 위에 고정합니다.
+  // 다른 표준/커스텀 카테고리는 기존 공통 정렬 정책을 그대로 따르되,
+  // "기타"만 따로 빼서 가장 먼저 보여 UX 설명과 실제 순서를 일치시킵니다.
+  const categories = useMemo(() => {
+    const ordered = sortCategoriesByStandard(rawCategories);
+    const etc = ordered.find((category) => category.id === "etc");
+    const rest = ordered.filter((category) => category.id !== "etc");
+    return etc ? [etc, ...rest] : rest;
+  }, [rawCategories]);
   const [modal, setModal] = useState<ModalState>({ kind: "closed" });
   /**
    * 삭제 확인 모달 대상. 카테고리 삭제는 "이 카테고리에 묶여 있던 거래는 어떻게 되나"라는 부수효과가

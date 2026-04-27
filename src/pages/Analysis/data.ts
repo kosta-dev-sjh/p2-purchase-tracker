@@ -18,6 +18,9 @@ import type {
 import { tokens } from "../../styles/tokens";
 import { PLATFORM_LABELS, CATEGORY_LABELS } from "../../constants/labels";
 import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
+import { detectConcept } from "../../data/categoryConcepts";
+import { normalizeMerchantKey } from "../../utils/categoryInference";
+import { subjectParticle } from "../../utils/koreanParticle";
 
 export interface AnalysisMockData {
   summary: string;
@@ -33,7 +36,7 @@ export interface AnalysisMockData {
   subscriptions: SubscriptionItem[];
   subscriptionTotal: number;
   trend: { points: { label: string; value: number }[]; average: number };
-  weekly: { days: WeeklyDay[]; note: string };
+  weekly: { days: WeeklyDay[]; note: string; subtitle: string };
 }
 
 function toMonthKey(dateStr: string): string {
@@ -174,20 +177,22 @@ function buildCategory(
 }
 
 function buildRepeat(rows: TxRow[], nameMap?: Record<string, string>): RepeatItem[] {
-  // 같은 상품을 여러 번 구매한 경향을 잡기 위해 제목을 키로 집계합니다.
-  // 반복구매 카드는 카테고리 라벨을 한 개만 표시하므로 대표 카테고리(categories[0])를 사용합니다.
+  // 같은 가맹점/상호의 표기 차이("주식회사", "(주)" 등)를 흡수해 반복구매를 조금 더 안정적으로 잡습니다.
   const byTitle = new Map<
     string,
     { title: string; platform: TxPlatform; category: TxCategory; count: number; amount: number }
   >();
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
-    const existing = byTitle.get(row.title);
+    const merchantKey = normalizeMerchantKey(
+      row.detail?.cardImport?.originalMerchant || row.title,
+    ) || row.title;
+    const existing = byTitle.get(merchantKey);
     if (existing) {
       existing.count += 1;
       existing.amount += Math.abs(row.amount);
     } else {
-      byTitle.set(row.title, {
+      byTitle.set(merchantKey, {
         title: row.title,
         platform: row.platform,
         category: row.categories[0] ?? "etc",
@@ -223,23 +228,74 @@ const SUB_COLOR: Record<string, string> = {
   "밀리의 서재": tokens.color.cat4,
 };
 
+const FIXED_EXPENSE_CONCEPTS = new Set(["subscription", "telecom", "utility", "insurance"]);
+
 function buildSubscriptions(rows: TxRow[], monthKey: string): { items: SubscriptionItem[]; total: number } {
-  const subs = rows.filter((row) => row.status === "sub");
-  const byName = new Map<string, { name: string; amount: number; nextDate: string }>();
-  for (const row of subs) {
-    const parsed = parseDate(row.date);
-    const nextDate = parsed ? `${parsed.month}.${parsed.day}` : "";
-    const existing = byName.get(row.title);
-    if (!existing) {
-      byName.set(row.title, { name: row.title, amount: Math.abs(row.amount), nextDate });
+  const buckets = new Map<
+    string,
+    {
+      rows: TxRow[];
+      months: Set<string>;
+      currentMonthRows: TxRow[];
+      concept: string | null;
     }
+  >();
+
+  for (const row of rows) {
+    if (row.type !== "expense" || row.status === "cancel") continue;
+    const merchantBase = row.detail?.cardImport?.originalMerchant || row.title;
+    const key = normalizeMerchantKey(merchantBase) || row.title;
+    const bucket = buckets.get(key) ?? {
+      rows: [],
+      months: new Set<string>(),
+      currentMonthRows: [],
+      concept: detectConcept(merchantBase),
+    };
+    bucket.rows.push(row);
+    bucket.months.add(toMonthKey(row.date));
+    if (toMonthKey(row.date) === monthKey) {
+      bucket.currentMonthRows.push(row);
+    }
+    if (!bucket.concept) {
+      bucket.concept = detectConcept(merchantBase);
+    }
+    buckets.set(key, bucket);
   }
-  const items = Array.from(byName.values())
+
+  const items = Array.from(buckets.values())
+    .filter((bucket) => bucket.currentMonthRows.length > 0)
+    .filter((bucket) => {
+      const hasExplicitSubscription = bucket.rows.some((row) => row.status === "sub");
+      const isFixedConcept = bucket.concept ? FIXED_EXPENSE_CONCEPTS.has(bucket.concept) : false;
+      const hasMonthlyRepeat =
+        bucket.months.size >= 2 &&
+        bucket.rows.some((row) => row.detail?.cardImport?.paymentMode !== "installment");
+      return hasExplicitSubscription || isFixedConcept || hasMonthlyRepeat;
+    })
+    .map((bucket) => {
+      const latest = [...bucket.currentMonthRows].sort((a, b) => b.date.localeCompare(a.date))[0];
+      const parsed = latest ? parseDate(latest.date) : null;
+      return {
+        name: latest?.title ?? "알 수 없음",
+        amount: latest ? Math.abs(latest.amount) : 0,
+        nextDate: parsed ? `${parsed.month}.${parsed.day}` : "",
+        color:
+          SUB_COLOR[latest?.title ?? ""] ??
+          (bucket.concept === "utility"
+            ? tokens.color.cat2
+            : bucket.concept === "insurance"
+              ? tokens.color.cat4
+              : bucket.concept === "telecom"
+                ? tokens.color.cat3
+                : tokens.color.accent),
+      };
+    })
+    .sort((a, b) => b.amount - a.amount)
     .slice(0, 5)
     .map((sub, index) => ({
       id: `${monthKey}-sub-${index}`,
       name: sub.name,
-      color: SUB_COLOR[sub.name] ?? tokens.color.accent,
+      color: sub.color,
       nextDate: sub.nextDate,
       amount: sub.amount,
     }));
@@ -256,7 +312,7 @@ function weekdayIndex(dateStr: string): number {
   return (d.getDay() + 6) % 7;
 }
 
-function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string } {
+function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string; subtitle: string } {
   const buckets = [0, 0, 0, 0, 0, 0, 0];
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
@@ -286,7 +342,16 @@ function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string } {
       : weekendShare >= 50
         ? `${activeWeekendLabel}에 전체의 **${weekendShare}%**가 집중돼요. 주말 쇼핑 한도를 정하면 지출 조절에 도움이 돼요.`
         : `평일 쪽 지출이 **${100 - weekendShare}%**로 더 많아요. 주말 쇼핑을 의식적으로 덜 하는 흐름이에요.`;
-  return { days, note };
+  // 카드 부제는 본문(note)과 같은 분기 기준으로 산출해, 헤더와 본문이 어긋나는 회귀를 차단합니다.
+  // 이전에는 "주말에 집중되는 경향" 이 컴포넌트에 하드코딩되어 있어, 평일 비중이 더 큰 달에 정반대
+  // 메시지가 동시에 노출되는 회귀가 있었습니다(QA Findings v1, ISSUE-01).
+  const subtitle =
+    total === 0
+      ? "이번 달 요일별 분포"
+      : weekendShare >= 50
+        ? "주말에 집중되는 경향"
+        : "평일에 더 분산된 흐름";
+  return { days, note, subtitle };
 }
 
 function buildKpis(
@@ -392,7 +457,11 @@ function buildSummary(
   const topPlatform = [...platform.items].sort((a, b) => b.value - a.value)[0];
   const parts: string[] = [];
   if (topCategory && topCategory.percent > 0) {
-    parts.push(`**${topCategory.label}(${topCategory.percent}%)**가 가장 많이 쓰고 있고`);
+    // 카테고리명은 종성에 따라 "기타(92%)가" / "생활용품(20%)이" 가 갈립니다.
+    // 라벨 자체(괄호 앞)의 받침 유무가 자연스러운 발음 기준이라 label 만 검사합니다.
+    parts.push(
+      `**${topCategory.label}(${topCategory.percent}%)**${subjectParticle(topCategory.label)} 가장 많이 쓰고 있고`,
+    );
   }
   if (topPlatform && topPlatform.percent > 0) {
     parts.push(`**${topPlatform.label}** 비중이 가장 높아요`);
@@ -430,7 +499,7 @@ export const buildAnalysisData = (
   const platform = buildPlatform(thisMonth);
   const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap);
   const repeat = buildRepeat(thisMonth, categoryNameMap);
-  const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(thisMonth, monthKey);
+  const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(rows, monthKey);
   const trend = buildTrend(rows, monthKey);
   const weekly = buildWeekly(thisMonth);
   const kpis = buildKpis(thisMonth, prevMonth);

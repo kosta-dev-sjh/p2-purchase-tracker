@@ -43,6 +43,11 @@ interface MonthPickerProps {
    * 넘겨 사용자가 자기 거래에 접근할 수 없는 "데이터 노출 사각지대"를 막습니다.
    */
   maxMonthKey?: string;
+  /**
+   * 거래가 1건 이상 존재하는 "YYYY-MM" 키 목록.
+   * 팝업 안에서 해당 월을 눈에 띄는 색/점으로 표시해 사용자가 기록이 있는 달을 빠르게 찾게 합니다.
+   */
+  markedMonthKeys?: readonly string[];
 }
 
 const Wrap = styled.div`
@@ -205,18 +210,41 @@ const MonthGrid = styled.div`
   gap: ${tokens.space[2]};
 `;
 
-const MonthCell = styled.button<{ $selected: boolean }>`
+/**
+ * 달 셀의 시각 상태는 세 가지가 동시에 다뤄집니다.
+ * - selected: 현재 사용자가 보고 있는 달 (인디고 accent 톤)
+ * - marked: 거래 데이터가 1건 이상 있는 달 (앰버 톤 — selected 와 충돌하지 않게 따뜻한 색)
+ * - 기본: 기록 없는 달 (라인 + 패널)
+ *
+ * selected 가 marked 보다 우선합니다(선택된 달이 데이터를 가진 경우, 인디고로만 보여줘
+ * 사용자에게 "이게 지금 보는 달" 이라는 정보가 더 강조되도록).
+ */
+const MonthCell = styled.button<{ $selected: boolean; $marked: boolean }>`
+  position: relative;
   height: 36px;
   border-radius: ${tokens.radius.control};
   border: 1px solid
-    ${({ $selected }) => ($selected ? tokens.color.accent : tokens.color.line)};
-  background: ${({ $selected }) =>
-    $selected ? tokens.color.accentSubtle : tokens.color.panel};
-  color: ${({ $selected }) =>
-    $selected ? tokens.color.accent : tokens.color.ink2};
+    ${({ $selected, $marked }) =>
+      $selected
+        ? tokens.color.accent
+        : $marked
+          ? tokens.color.markerBorder
+          : tokens.color.line};
+  background: ${({ $selected, $marked }) =>
+    $selected
+      ? tokens.color.accentSubtle
+      : $marked
+        ? tokens.color.markerBg
+        : tokens.color.panel};
+  color: ${({ $selected, $marked }) =>
+    $selected
+      ? tokens.color.accent
+      : $marked
+        ? tokens.color.markerFg
+        : tokens.color.ink2};
   font-family: inherit;
   font-size: ${tokens.type.bodySm.size};
-  font-weight: 500;
+  font-weight: ${({ $selected, $marked }) => ($selected || $marked ? 700 : 500)};
   cursor: pointer;
   transition:
     border-color ${tokens.motion.fast} ease,
@@ -254,7 +282,13 @@ function parseKey(key: string): { year: number; month: number } {
 const buildKey = (year: number, month: number) =>
   `${year}-${String(month).padStart(2, "0")}`;
 
-export const MonthPicker = ({ value, onChange, minYear, maxMonthKey }: MonthPickerProps) => {
+export const MonthPicker = ({
+  value,
+  onChange,
+  minYear,
+  maxMonthKey,
+  markedMonthKeys = [],
+}: MonthPickerProps) => {
   // 화면 진입 시점 기준 "오늘". 미래 월 비활성 판정에 쓰입니다.
   // 팝업이 닫힌 채로 며칠 머물러도 다음 렌더링에서 다시 계산되므로 굳이 useState 로 묶지 않습니다.
   const today = new Date();
@@ -284,6 +318,7 @@ export const MonthPicker = ({ value, onChange, minYear, maxMonthKey }: MonthPick
   }, [maxMonthKey, todayYear, todayMonth]);
 
   const { year: selectedYear, month: selectedMonth } = parseKey(value);
+  const markedMonthSet = useMemo(() => new Set(markedMonthKeys), [markedMonthKeys]);
 
   // 팝업이 보여주는 년도. 디폴트는 현재 선택된 값의 년도.
   const [open, setOpen] = useState(false);
@@ -405,13 +440,16 @@ export const MonthPicker = ({ value, onChange, minYear, maxMonthKey }: MonthPick
             <MonthGrid>
               {Array.from({ length: 12 }, (_, idx) => {
                 const month = idx + 1;
+                const monthKey = buildKey(viewYear, month);
                 const enabled = isSelectable(viewYear, month);
                 const selected = viewYear === selectedYear && month === selectedMonth;
+                const marked = markedMonthSet.has(monthKey);
                 return (
                   <MonthCell
                     key={month}
                     type="button"
                     $selected={selected}
+                    $marked={marked}
                     disabled={!enabled}
                     onClick={() => selectMonth(month)}
                     aria-label={`${viewYear}년 ${month}월`}

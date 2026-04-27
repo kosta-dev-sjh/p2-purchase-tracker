@@ -345,7 +345,7 @@ export const OcrUploadPage: React.FC = () => {
   const atCapacity = images.length >= MAX_IMAGES;
 
   return (
-    <AppShell activeNav="upload" crumb="입력 · OCR" title="OCR 업로드">
+    <AppShell activeNav="upload" crumb="입력 · 주문 캡처" title="주문 캡처로 입력">
       <Wrap>
         <GuideCard items={OCR_UPLOAD_GUIDE} />
 
@@ -442,7 +442,7 @@ export const OcrUploadPage: React.FC = () => {
             title="플랫폼이 다른 것 같아요"
           >
             <div style={{ color: tokens.color.ink2, fontSize: 13, lineHeight: 1.6, marginBottom: 16 }}>
-              아래 이미지들은 OCR 분석 결과 다른 플랫폼 캡쳐로 보입니다.
+              아래 이미지들은 분석 결과 다른 플랫폼 캡쳐로 보입니다.
               실제 플랫폼이 맞는지 확인해 주세요.
               <ul style={{ marginTop: 10, paddingLeft: 20 }}>
                 {mismatched.map((img) => (

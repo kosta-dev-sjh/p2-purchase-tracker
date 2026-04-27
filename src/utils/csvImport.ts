@@ -26,6 +26,7 @@ import {
 } from "./importHeaders";
 import { parseCsv, type CsvRow } from "./csvParse";
 import { normalizeMerchant } from "./merchantNormalize";
+import { inferCardRecordKind } from "./cardInstallment";
 
 const CATEGORY_MAP: Record<string, TxCategory> = {
   생활용품: "living",
@@ -167,13 +168,7 @@ export interface CsvImportResult {
   skipped: CsvImportSkipped[];
 }
 
-type CardRecordKind = "approval" | "billing";
 type CardPaymentMode = "lump_sum" | "installment" | "unknown";
-
-function hasAnyHeader(row: CsvRow, headers: readonly string[]): boolean {
-  const keys = Object.keys(row);
-  return headers.some((header) => keys.some((key) => key.includes(header)));
-}
 
 function parsePositiveInteger(raw: string): number | null {
   const digits = String(raw || "").match(/\d+/g);
@@ -210,38 +205,10 @@ function parsePaymentMode(
   return "unknown";
 }
 
-function inferRecordKind(input: {
-  raw: CsvRow;
-  amount: number | null;
-  billedAmount: number | null;
-  cycle: { current: number; total: number } | null;
-  remainingBalance: number | null;
-  paymentMode: CardPaymentMode;
-}): CardRecordKind {
-  if (input.cycle) return "billing";
-  if (input.remainingBalance !== null) return "billing";
-  if (
-    hasAnyHeader(input.raw, [...INSTALLMENT_CYCLE_HEADERS, ...REMAINING_BALANCE_HEADERS]) &&
-    (input.billedAmount !== null || input.paymentMode === "installment")
-  ) {
-    return "billing";
-  }
-  if (
-    input.paymentMode === "installment" &&
-    input.amount !== null &&
-    input.billedAmount !== null &&
-    input.billedAmount > 0 &&
-    input.billedAmount < input.amount
-  ) {
-    return "billing";
-  }
-  return "approval";
-}
-
 function looksLikeSummaryRow(raw: CsvRow, merchantRaw: string, dateRaw: string): boolean {
   const joined = Object.values(raw).join(" ");
   if (/총\s*합계|합계|소계|누계|건수합계/.test(joined)) return true;
-  if (!hasAnyHeader(raw, MERCHANT_HEADERS)) return true;
+  if (!Object.keys(raw).some((key) => MERCHANT_HEADERS.some((header) => key.includes(header)))) return true;
   if (String(dateRaw || "").includes("~")) return true;
   if (!merchantRaw && !dateRaw) return true;
   return false;
@@ -280,13 +247,16 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
     const installmentCycle = parseInstallmentCycle(installmentCycleRaw);
     const remainingBalance = parseAmount(remainingBalanceRaw);
     const paymentMode = parsePaymentMode(paymentModeRaw, installmentMonths, installmentCycle);
-    const recordKind = inferRecordKind({
+    const recordKind = inferCardRecordKind({
       raw,
       amount,
       billedAmount,
       cycle: installmentCycle,
       remainingBalance,
       paymentMode,
+      installmentCycleHeaders: INSTALLMENT_CYCLE_HEADERS,
+      remainingBalanceHeaders: REMAINING_BALANCE_HEADERS,
+      billingAmountHeaders: BILLING_AMOUNT_HEADERS,
     });
     const effectiveAmount =
       recordKind === "billing" ? (billedAmount ?? amount) : (amount ?? billedAmount);
@@ -348,6 +318,7 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
           ...(cardLabelRaw ? { cardLabel: cardLabelRaw } : {}),
           ...(dueDate ? { dueDate } : {}),
           ...(raw.__sheetName ? { sourceSheet: raw.__sheetName } : {}),
+          ...(effectiveMerchantRaw ? { originalMerchant: effectiveMerchantRaw } : {}),
           ...(fingerprintParts.length > 0
             ? { rawRowFingerprint: fingerprintParts.join("|") }
             : {}),

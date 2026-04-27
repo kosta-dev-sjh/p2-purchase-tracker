@@ -749,7 +749,7 @@ export const OcrEditPage: React.FC = () => {
   const currentMatch = matchQueue[0];
 
   return (
-    <AppShell activeNav="upload" crumb="입력 · OCR" title="OCR 결과 확인 및 수정">
+    <AppShell activeNav="upload" crumb="입력 · 주문 캡처" title="주문 캡처 결과 확인 및 수정">
       <Body>
         {/* OCR 편집 화면은 목록, 미리보기, 수정 폼의 3단 구성을 사용합니다. */}
         <ImageList
@@ -771,7 +771,7 @@ export const OcrEditPage: React.FC = () => {
       </Body>
       <Footer>
         <Button variant="ghost" size="lg" onClick={() => navigate("/ocr-upload")}>
-          다시 OCR 분석
+          캡처 다시 올리기
         </Button>
         <Button variant="primary" size="lg" onClick={handleSave}>
           저장

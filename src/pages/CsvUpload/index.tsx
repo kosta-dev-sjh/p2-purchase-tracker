@@ -25,6 +25,7 @@ import { PreviewTable } from "./components/PreviewTable";
 import { AiLoadingIndicator } from "./components/AiLoadingIndicator";
 import { SaveResultModal } from "../../components/modal/SaveResultModal";
 import type { TxRow } from "../Transactions/components/TransactionTable";
+import { getCardInstallmentKind } from "../../utils/cardInstallment";
 
 /**
  * 1차 파서가 이 비율 미만으로 인식했을 때만 AI fallback을 시도합니다.
@@ -295,9 +296,8 @@ export const CsvUploadPage: React.FC = () => {
   const installmentCount = useMemo(() => {
     if (!result) return 0;
     return result.imported.reduce((acc, row) => {
-      const mode = row.detail?.cardImport?.paymentMode;
-      const kind = row.detail?.cardImport?.recordKind;
-      if (mode === "installment" || kind === "billing") return acc + 1;
+      const kind = getCardInstallmentKind(row.detail?.cardImport);
+      if (kind === "installment_approval" || kind === "installment_billing") return acc + 1;
       return acc;
     }, 0);
   }, [result]);
@@ -523,7 +523,7 @@ export const CsvUploadPage: React.FC = () => {
           </CardBd>
         </Card>
 
-        {result && dupCheck && (
+        {result && dupCheck && !saveResult && (
           <Card padding={0}>
             <CardHd>
               <CardTitle>파싱 결과 미리보기</CardTitle>
@@ -656,7 +656,8 @@ export const CsvUploadPage: React.FC = () => {
           </Card>
         )}
 
-        <Actions>
+        {!saveResult && (
+          <Actions>
           <Button variant="ghost" size="lg" onClick={handleReset}>
             다시 선택
           </Button>
@@ -668,7 +669,8 @@ export const CsvUploadPage: React.FC = () => {
           >
             {confirmLabel}
           </Button>
-        </Actions>
+          </Actions>
+        )}
       </Body>
 
       {saveResult && (

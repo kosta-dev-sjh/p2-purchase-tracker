@@ -15,6 +15,7 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
 
 export type TxType = "expense" | "income";
 /**
@@ -120,21 +121,23 @@ export interface TxRow {
       dueDate?: string;
       sourceSheet?: string;
       rawRowFingerprint?: string;
+      originalMerchant?: string;
     };
   };
 }
 
 const Table = styled.div`
   display: grid;
-  /* 카테고리 컬럼은 색상 사각형 + 1순위 라벨을 같이 보여주기 위해 폭을 늘렸습니다.
-     이전 52/44px(색만 표시)보다 넓어져 사용자가 마우스 hover 없이도 카테고리를 인지할 수 있습니다. */
-  grid-template-columns: 76px 110px 108px 1fr 120px 140px 96px;
+  /* 컬럼 순서: 유형 / 주문일 / 플랫폼 / 거래명 / 상품(+N개) / 카테고리 / 금액 / 상태·결제.
+     상품 컬럼은 detail.items 가 있을 때만 "+N개" 칩을 노출해 거래명을 어지럽히지 않으면서
+     "이 거래엔 상세 상품이 따로 있다"를 한눈에 알 수 있게 합니다. */
+  grid-template-columns: 76px 110px 108px 1fr 84px 132px 140px 124px;
   font-size: 13px;
-  min-width: 800px;
+  min-width: 920px;
 
   ${media.tablet} {
-    grid-template-columns: 76px 96px 100px 1fr 108px 132px 96px;
-    min-width: 740px;
+    grid-template-columns: 76px 96px 100px 1fr 80px 124px 132px 116px;
+    min-width: 856px;
   }
 `;
 
@@ -263,25 +266,6 @@ const MobileFooter = styled.div`
   gap: 12px;
 `;
 
-function getInstallmentLabel(row: TxRow): string | null {
-  const cardImport = row.detail?.cardImport;
-  if (!cardImport) return null;
-  if (
-    cardImport.recordKind === "billing" &&
-    cardImport.installmentCurrentCycle &&
-    cardImport.installmentCycleTotal
-  ) {
-    return `${cardImport.installmentCurrentCycle}/${cardImport.installmentCycleTotal}회차`;
-  }
-  if (cardImport.paymentMode === "installment" && cardImport.installmentMonths) {
-    return `${cardImport.installmentMonths}개월`;
-  }
-  if (cardImport.paymentMode === "lump_sum") {
-    return "일시불";
-  }
-  return null;
-}
-
 const MobileCategories = styled.div`
   display: flex;
   align-items: center;
@@ -409,65 +393,47 @@ const DataCell = styled.div<{
 `;
 
 /**
- * 카테고리 색상 셀의 hover 범위. 한 거래가 여러 카테고리에 속할 수 있어
- * 정사각형들을 수평으로 나란히 배치합니다(최대 MAX_CATEGORIES_PER_TX개).
- * 부모 DataCell 폭을 가득 채워 정사각형 묶음이 컬럼 정중앙에 오게 합니다.
- *
- * 1순위 카테고리는 정사각형 옆에 짧은 텍스트 라벨도 함께 표시합니다(이전엔 색만 표시되어
- * 사용자가 어떤 카테고리인지 hover로만 알 수 있었음 → 데스크톱 마우스 사용자 외에는 인지 어려움).
+ * 한 거래의 카테고리(최대 MAX_CATEGORIES_PER_TX=3개)를 모두 줄 단위로 보여주는 컨테이너.
+ * 이전엔 1순위만 라벨 + "+N" 카운트로 압축했지만, 사용자가 모든 카테고리를 한눈에 확인하길
+ * 원해서 세로 스택으로 풀어 줬습니다. 라벨이 길면 ellipsis 로 잘리지만 title 속성으로 풀텍스트
+ * 확인이 가능합니다.
  */
 const CategoryCell = styled.div`
   display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   width: 100%;
   min-width: 0;
 `;
 
-/**
- * 1순위 카테고리 옆에 함께 노출하는 짧은 라벨. 다중 카테고리가 있어도 첫 번째만 표시하고
- * 나머지는 정사각형으로 처리해 컬럼 폭을 무너뜨리지 않습니다.
- */
-const PrimaryCategoryLabel = styled.span`
+const CategoryItem = styled.span`
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+`;
+
+const CategoryLabel = styled.span`
   color: ${tokens.color.ink2};
   font-size: 11.5px;
   font-weight: 500;
   letter-spacing: -0.01em;
-  white-space: nowrap;
+  line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 70px;
-`;
-
-/**
- * 두 번째 이후 카테고리가 있을 때 "+1" 같은 추가 카운트 표시. 컬럼 폭이 좁기 때문에
- * 모든 라벨을 같이 적기보다 첫 번째만 라벨로, 나머지는 카운트로 압축합니다.
- */
-const ExtraBadge = styled.span`
-  color: ${tokens.color.ink4};
-  font-size: 11px;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-`;
-
-/**
- * 정사각형 + 툴팁을 묶는 wrapper. 각 정사각형마다 자기 카테고리 툴팁이 떠야 해서
- * 툴팁 기준점이 정사각형 단위로 잡혀야 합니다.
- */
-const SquareWrap = styled.span`
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
+  white-space: nowrap;
 `;
 
 /**
  * 카테고리 색을 보여주는 정사각형. 각 행에서 "이 거래가 어느 카테고리인지"를
  * 최소 시각 노이즈로 전달하는 역할이라 테두리 없이 배경색만 씁니다.
- * 다중 카테고리일 때 좁은 폭에 여러 개를 욱여넣어야 해서 11px로 약간 줄였습니다.
+ * PC 표에서는 옆에 텍스트 라벨이 함께 나오므로 툴팁이 더 이상 필요하지 않습니다(접근성용 aria-label만 유지).
+ * 모바일 카드에서는 라벨 없이 정사각형만 노출되지만, ColorSquare 의 aria-label 로 충분히 식별됩니다.
  */
 const ColorSquare = styled.span<{ $color: string }>`
+  flex: 0 0 auto;
   width: 11px;
   height: 11px;
   border-radius: 3px;
@@ -476,45 +442,39 @@ const ColorSquare = styled.span<{ $color: string }>`
   box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.08);
 `;
 
-/**
- * 카테고리 이름을 카테고리 색으로 보여주는 툴팁.
- * 평소엔 hidden, 부모(SquareWrap) hover 시에만 opacity/translate로 부드럽게 등장합니다.
- * 색상 가독성을 위해 흰 배경/그림자를 깔고 글씨만 해당 카테고리 색으로 강조합니다.
- */
-const CategoryTooltip = styled.span<{ $color: string }>`
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translate(-50%, 4px);
-  padding: 4px 8px;
-  border: 1px solid ${tokens.color.line};
-  border-radius: ${tokens.radius.control};
-  background: ${tokens.color.panel};
-  box-shadow: ${tokens.shadow.cardHover};
-  color: ${({ $color }) => $color};
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity ${tokens.motion.fast} ease,
-    transform ${tokens.motion.fast} ease;
-  z-index: 2;
-
-  ${SquareWrap}:hover & {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-`;
-
 const Amount = styled.span<{ $positive?: boolean }>`
   color: ${({ $positive }) => ($positive ? tokens.color.pos : tokens.color.neg)};
   font-family: ${tokens.font.mono};
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+`;
+
+/**
+ * "+N개" 형태로 거래에 묶인 상품 수를 표시하는 칩.
+ * 상품이 0개인 거래(단일 결제·청구건 등)는 셀을 비워 두어 시각 노이즈를 줄입니다.
+ */
+const ItemCountChip = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: ${tokens.color.posBg};
+  color: ${tokens.color.pos};
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  white-space: nowrap;
+`;
+
+const StatusCell = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
 `;
 
 const Footer = styled.div`
@@ -643,13 +603,15 @@ export const TransactionTable = memo<Props>(({
           </SortableHeader>
           <HeaderCell className="tag">플랫폼</HeaderCell>
           <HeaderCell>거래명</HeaderCell>
-          {/* 카테고리 컬럼은 색상 정사각형만 표시하고 제목도 짧게 표기합니다. */}
-          <HeaderCell style={{ textAlign: "center", padding: "10px 0" }}>분류</HeaderCell>
+          <HeaderCell className="tag">상품</HeaderCell>
+          <HeaderCell style={{ padding: "10px 12px" }}>카테고리</HeaderCell>
           <HeaderCell className="right">금액</HeaderCell>
-          <HeaderCell className="tag">상태</HeaderCell>
+          <HeaderCell className="tag">상태/결제</HeaderCell>
           {rows.map((row, rowIndex) => {
             const active = row.id === selectedId;
             const hovered = row.id === hoveredId && !active;
+            const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
+            const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
             /**
              * 첫 렌더에서 잡힌 행 중 현재 위치에 있는 경우에만 stagger 인덱스를 내려보냅니다.
              * 인피니트 스크롤로 추가된 행이나 필터 변경 후 새로 등장한 행은 undefined가 되어
@@ -679,43 +641,24 @@ export const TransactionTable = memo<Props>(({
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                 </DataCell>
                 <DataCell {...common}>{row.title}</DataCell>
-                <DataCell {...common} style={{ ...common.style, padding: "12px 8px" }}>
-                  {/*
-                    색상 정사각형 + 1순위 카테고리 라벨 + 추가 카운트.
-                    이전엔 색만 보여서 사용자가 어떤 카테고리인지 마우스 hover로만 확인할 수 있었어요.
-                    이제 1순위는 텍스트로 직접 노출하고, 다중 카테고리는 정사각형(+nN 배지)로 압축합니다.
-                  */}
+                <DataCell {...common}>
+                  {(row.detail?.items?.length ?? 0) > 0 && (
+                    <ItemCountChip>+{row.detail!.items.length}개</ItemCountChip>
+                  )}
+                </DataCell>
+                <DataCell {...common} style={{ ...common.style, padding: "10px 12px" }}>
                   <CategoryCell>
-                    {row.categories.slice(0, 1).map((cat) => (
-                      <SquareWrap key={cat}>
+                    {row.categories.map((cat) => (
+                      <CategoryItem key={cat}>
                         <ColorSquare
                           $color={categoryColorMap[cat]}
                           aria-label={getCategoryName(cat)}
                         />
-                        <CategoryTooltip role="tooltip" $color={categoryColorMap[cat]}>
+                        <CategoryLabel title={getCategoryName(cat)}>
                           {getCategoryName(cat)}
-                        </CategoryTooltip>
-                      </SquareWrap>
+                        </CategoryLabel>
+                      </CategoryItem>
                     ))}
-                    {row.categories.length > 0 && (
-                      <PrimaryCategoryLabel title={getCategoryName(row.categories[0])}>
-                        {getCategoryName(row.categories[0])}
-                      </PrimaryCategoryLabel>
-                    )}
-                    {row.categories.slice(1).map((cat) => (
-                      <SquareWrap key={cat}>
-                        <ColorSquare
-                          $color={categoryColorMap[cat]}
-                          aria-label={getCategoryName(cat)}
-                        />
-                        <CategoryTooltip role="tooltip" $color={categoryColorMap[cat]}>
-                          {getCategoryName(cat)}
-                        </CategoryTooltip>
-                      </SquareWrap>
-                    ))}
-                    {row.categories.length > 2 && (
-                      <ExtraBadge>+{row.categories.length - 2}</ExtraBadge>
-                    )}
                   </CategoryCell>
                 </DataCell>
                 <DataCell {...common} $right>
@@ -725,14 +668,14 @@ export const TransactionTable = memo<Props>(({
                   </Amount>
                 </DataCell>
                 <DataCell {...common}>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <StatusCell>
                     <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
-                    {row.detail?.cardImport?.recordKind === "billing" ? (
-                      <Tag kind="billing">할부 {getInstallmentLabel(row) ?? ""}</Tag>
-                    ) : row.detail?.cardImport?.paymentMode === "installment" ? (
-                      <Tag kind="installment">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                    {(installmentKind === "installment_billing" ||
+                      installmentKind === "installment_approval") &&
+                    installmentLabel ? (
+                      <Tag kind="installment">{installmentLabel}</Tag>
                     ) : null}
-                  </div>
+                  </StatusCell>
                 </DataCell>
               </React.Fragment>
             );
@@ -742,6 +685,8 @@ export const TransactionTable = memo<Props>(({
       <MobileList>
         {rows.map((row) => {
           const isActive = row.id === selectedId;
+          const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
+          const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
           return (
             <MobileGroup key={row.id} $active={isActive}>
               <MobileRow
@@ -769,10 +714,10 @@ export const TransactionTable = memo<Props>(({
                   </Tag>
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                   <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
-                  {row.detail?.cardImport?.recordKind === "billing" ? (
-                    <Tag kind="billing">할부 {getInstallmentLabel(row) ?? ""}</Tag>
-                  ) : row.detail?.cardImport?.paymentMode === "installment" ? (
-                    <Tag kind="installment">할부 {getInstallmentLabel(row) ?? ""}</Tag>
+                  {(installmentKind === "installment_billing" ||
+                    installmentKind === "installment_approval") &&
+                  installmentLabel ? (
+                    <Tag kind="installment">{installmentLabel}</Tag>
                   ) : null}
                 </MobileTags>
                 <MobileFooter>

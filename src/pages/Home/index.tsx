@@ -96,6 +96,16 @@ export const HomePage: React.FC = () => {
     () => computeMaxMonthKey(rows.map((row) => row.date)),
     [rows]
   );
+  const markedMonthKeys = useMemo(() => {
+    const monthKeys = rows
+      .map((row) => {
+        const match = row.date.match(/(\d{4})[./-](\d{1,2})/);
+        if (!match) return "";
+        return `${match[1]}-${match[2].padStart(2, "0")}`;
+      })
+      .filter(Boolean);
+    return Array.from(new Set(monthKeys));
+  }, [rows]);
 
   const { getInsight, setInsight } = useAiInsightsStore();
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -157,6 +167,7 @@ export const HomePage: React.FC = () => {
             onChange={setMonth}
             minYear={pickerMinYear}
             maxMonthKey={pickerMaxMonth}
+            markedMonthKeys={markedMonthKeys}
           />
           {/* "오늘:" 라벨을 명시해 헤더 월(선택한 달)과 우상단 stamp(오늘 날짜)의 의미가 헷갈리지 않게 합니다.
               이전에는 "2026.04.27"만 적혀 있어 사용자가 헤더의 "2026년 3월"과 무엇이 다른지 한눈에 못 알아챘어요. */}

@@ -29,6 +29,12 @@ export const tokens = {
     negSubtle: "#FEF2F2",
     negBorder: "#FECACA",
     warnBg: "#FEF3C7",
+    // 데이터 마커(예: MonthPicker 의 "거래가 있는 달") 전용 톤.
+    // warn 과 같은 앰버 계열이지만, "경고"가 아니라 "여기 데이터 있음"이라는 다른 의미라
+    // 별도 슬롯으로 분리합니다. 인디고 accent(선택 상태)와 명확히 구분되는 따뜻한 톤.
+    markerFg: "#92400E", // amber-800: 글자/숫자 가독성 확보
+    markerBorder: "#FCD34D", // amber-300: 너무 튀지 않게 한 단계 옅은 테두리
+    markerBg: "#FFFBEB", // amber-50: 셀 배경. 선택(accentSubtle)과 충분히 구분됨
     cat1: "#4F46E5",
     cat2: "#0E9488",
     cat3: "#B45309",

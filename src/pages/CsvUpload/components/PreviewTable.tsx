@@ -11,6 +11,7 @@ import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { TxRow } from "../../Transactions/components/TransactionTable";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
 
 const Table = styled.div`
   display: grid;
@@ -23,9 +24,9 @@ const Table = styled.div`
 `;
 
 /**
- * 거래명 셀 내부에서 제목 텍스트와 할부/일시불 태그를 함께 보여주기 위한 래퍼.
+ * 거래명 셀 내부에서 제목 텍스트와 할부 태그를 함께 보여주기 위한 래퍼.
  * 제목이 길어지면 ellipsis 로 줄이되, 태그는 항상 우선 노출되도록 우측에 고정 배치합니다.
- * Transactions 테이블의 cardImport 태그(할부/billing)와 시각 가중치를 맞춥니다.
+ * Transactions 테이블의 할부 태그와 시각 가중치를 맞춥니다.
  */
 const TitleCellInner = styled.div`
   display: flex;
@@ -105,28 +106,14 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
         const platformLabel = PLATFORM_LABELS[platformKey] || "미지정";
         const cardImport = row.detail?.cardImport;
 
-        // 카드 청구내역(billing) 행이면 회차 정보(예: "할부 1/3회차")를 우선 노출하고,
-        // 승인내역(approval)이라도 paymentMode 가 installment 이면 "할부 N개월" 태그를 보입니다.
-        // Transactions 테이블의 동일 로직과 시각 가중치를 맞춰 사용자에게 일관된 경험을 제공합니다.
-        const installmentTag: { kind: "billing" | "installment"; label: string } | null = (() => {
-          if (!cardImport) return null;
-          if (
-            cardImport.recordKind === "billing" &&
-            cardImport.installmentCurrentCycle &&
-            cardImport.installmentCycleTotal
-          ) {
-            return {
-              kind: "billing",
-              label: `할부 ${cardImport.installmentCurrentCycle}/${cardImport.installmentCycleTotal}회차`,
-            };
-          }
-          if (cardImport.paymentMode === "installment") {
-            return {
-              kind: "installment",
-              label: cardImport.installmentMonths
-                ? `할부 ${cardImport.installmentMonths}개월`
-                : "할부",
-            };
+        // 미리보기에서도 사용자에게는 내부 승인/청구 구분을 노출하지 않고,
+        // 메인 거래표와 동일하게 "일시불 / 할부" 수준으로만 보여줍니다.
+        const installmentTag: { kind: "installment"; label: string } | null = (() => {
+          const label = getCardInstallmentLabel(cardImport);
+          const kind = getCardInstallmentKind(cardImport);
+          if (!label) return null;
+          if (kind === "installment_billing" || kind === "installment_approval") {
+            return { kind: "installment", label };
           }
           return null;
         })();

@@ -17,7 +17,7 @@ import type { TxPlatform, TxStatus, TxType } from "./TransactionTable";
 
 export type TypeFilter = "all" | TxType;
 export type StatusFilter = "all" | TxStatus;
-export type InstallmentFilter = "all" | "lump_sum" | "installment" | "billing";
+export type InstallmentFilter = "all" | "lump_sum" | "installment";
 
 interface FilterBarProps {
   search: string;
@@ -436,8 +436,7 @@ export const FilterBar = memo(({
         >
           <option value="all">결제방식 전체</option>
           <option value="lump_sum">일시불</option>
-          <option value="installment">할부 승인건</option>
-          <option value="billing">할부 청구건</option>
+          <option value="installment">할부</option>
         </Select>
       </DesktopBar>
 
@@ -562,8 +561,7 @@ export const FilterBar = memo(({
             >
               <option value="all">결제방식 전체</option>
               <option value="lump_sum">일시불</option>
-              <option value="installment">할부 승인건</option>
-              <option value="billing">할부 청구건</option>
+              <option value="installment">할부</option>
             </Select>
           </FilterPanel>
         </CollapsiblePanel>

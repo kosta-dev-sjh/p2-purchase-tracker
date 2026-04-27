@@ -1309,6 +1309,138 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       return `${packedFull[1]}-${packedFull[2].padStart(2, "0")}-${packedFull[3].padStart(2, "0")}`;
     }
 
+    // Y-anchored 패턴들 (hasPayKeyword 무관) — `20\d{2}` 풀 연도 + 구조적 시각 (`\d{1,2}[:.]\d{2}` 또는
+    // `\d{4}` HHMM) anchor 가 있어 false positive 위험이 매우 낮다. 키워드 변형이 OCR 에서 완전히
+    // 깨진 케이스 (예: "주문" → "210850" 같은 숫자 잡음) 도 잡기 위해 키워드 체크 밖에 둔다.
+    const hhmmValid = (hh: number, mn: number) => hh >= 0 && hh <= 23 && mn >= 0 && mn <= 59;
+
+    // 0a. Y.MD.HH:MM — 풀 연도 + M+D 압축 + 시각.
+    //     예: "2025.73.19:04 주문" = 2025-07-03, "2023.16.16:23 주문" = 2023-01-06.
+    //     MD 길이별로 split: 2자리=M(1)+D(1), 3자리=M(1)+D(2) 또는 M(2)+D(1), 4자리=M(2)+D(2).
+    const ymdCompact = line.match(/(?:^|[^\d])(20\d{2})\s*\.\s*(\d{2,4})\s*\.\s*\d{1,2}[:.]\d{2}/);
+    if (ymdCompact) {
+      const yyyy = ymdCompact[1];
+      const md = ymdCompact[2];
+      const tries: Array<[number, number]> = [];
+      if (md.length === 2) tries.push([Number(md[0]), Number(md[1])]);
+      else if (md.length === 3) {
+        tries.push([Number(md[0]), Number(md.slice(1))]);
+        tries.push([Number(md.slice(0, 2)), Number(md[2])]);
+      } else if (md.length === 4) {
+        tries.push([Number(md.slice(0, 2)), Number(md.slice(2))]);
+        tries.push([Number(md[0]), Number(md.slice(1, 3))]);
+      }
+      for (const [m, d] of tries) {
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          return `${yyyy}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        }
+      }
+    }
+
+    // 0b. YM.D.HH:MM — 풀 연도와 M 이 압축 + . + D + . + 시각.
+    //     예: "20256.26.09:48 주문" = 2025-06-26, "20219.4.06:38 주문" = 2021-09-04.
+    const ymCompact = line.match(/(?:^|[^\d])(20\d{2})(\d{1,2})\s*\.\s*(\d{1,2})\s*\.\s*\d{1,2}[:.]\d{2}/);
+    if (ymCompact) {
+      const yyyy = ymCompact[1];
+      const m = Number(ymCompact[2]);
+      const d = Number(ymCompact[3]);
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+        return `${yyyy}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      }
+    }
+
+    // 0c. Y+MD 압축 (Y 와 M.D 사이 dot 둘 다 누락) + dot + HH:MM.
+    //     예: "2025513.17:156 주문" = 2025-05-13, "2025728.11:02주문" 도 같이 매치.
+    const ymdNoDot = line.match(/(?:^|[^\d])(20\d{2})(\d{2,4})\s*\.\s*\d{1,2}[:.]\d{2}/);
+    if (ymdNoDot) {
+      const yyyy = ymdNoDot[1];
+      const md = ymdNoDot[2];
+      const tries: Array<[number, number]> = [];
+      if (md.length === 2) tries.push([Number(md[0]), Number(md[1])]);
+      else if (md.length === 3) {
+        tries.push([Number(md[0]), Number(md.slice(1))]);
+        tries.push([Number(md.slice(0, 2)), Number(md[2])]);
+      } else if (md.length === 4) {
+        tries.push([Number(md.slice(0, 2)), Number(md.slice(2))]);
+        tries.push([Number(md[0]), Number(md.slice(1, 3))]);
+      }
+      for (const [m, d] of tries) {
+        if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+          return `${yyyy}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+        }
+      }
+    }
+
+    // 0d. YM.DHHMM — 키워드 OCR 깨진 케이스. Y + M + . + D + HHMM (시간 앵커가 시각 검증 통과하면).
+    //     예: "20257. 210850" = 2025-07-21 08:50.  HHMM 검증 (0000-2359) 으로 false positive 방어.
+    const ymDotDHm = line.match(/(?:^|[^\d])(20\d{2})(\d{1,2})\s*\.\s*(\d{1,2})(\d{4})(?=[^\d]|$)/);
+    if (ymDotDHm) {
+      const yyyy = ymDotDHm[1];
+      const m = Number(ymDotDHm[2]);
+      const d = Number(ymDotDHm[3]);
+      const hh = Number(ymDotDHm[4].slice(0, 2));
+      const mn = Number(ymDotDHm[4].slice(2));
+      if (m >= 1 && m <= 12 && d >= 1 && d <= 31 && hhmmValid(hh, mn)) {
+        return `${yyyy}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+      }
+    }
+
+    // 0d2. 가격원 + 압축 MD + HHMMSS — pay keyword 가 OCR 에서 완전히 잡음으로 깨진 케이스.
+    //     예: "18,300원 120 000027" = 18,300원 + 1.20 00:00:27, "39,800 원! 122 211227" = 1.22.
+    //     가격 anchor (`[\d,]+\s*[원8]`) + 시간 검증 (HH<24, MM<60) 으로 false positive 방어.
+    const priceMdHm = line.match(/[\d,]+\s*[원8][^\d]+(\d{2,4})\s+(\d{4,6})\s*$/);
+    if (priceMdHm) {
+      const md = priceMdHm[1];
+      const hhmmss = priceMdHm[2];
+      const hh = Number(hhmmss.slice(0, 2));
+      const mn = Number(hhmmss.slice(2, 4));
+      if (hhmmValid(hh, mn)) {
+        const tries: Array<[number, number]> = [];
+        if (md.length === 2) tries.push([Number(md[0]), Number(md[1])]);
+        else if (md.length === 3) {
+          tries.push([Number(md[0]), Number(md.slice(1))]);
+          tries.push([Number(md.slice(0, 2)), Number(md[2])]);
+        } else if (md.length === 4) {
+          tries.push([Number(md.slice(0, 2)), Number(md.slice(2))]);
+          tries.push([Number(md[0]), Number(md.slice(1, 3))]);
+        }
+        for (const [m, d] of tries) {
+          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            return `${inferYear(m)}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          }
+        }
+      }
+    }
+
+    // 0e. YMDHHMM 완전 압축 — 키워드 OCR 깨진 + 모든 separator 누락. 11~12 자리 통째.
+    //     예: "20255131716 58" = 2025-05-13 17:16, "20255101555" = 2025-05-10 15:55.
+    //     Y(4) + M(1-2) + D(1-2) + HH(2) + MM(2). MD 분할 모호하므로 모든 가능 split 시도 + HHMM 검증.
+    const yFullPack = line.match(/(?:^|[^\d])(20\d{2})(\d{7,8})(?=[^\d]|$)/);
+    if (yFullPack) {
+      const yyyy = yFullPack[1];
+      const tail = yFullPack[2];
+      // tail 끝 4자리는 HHMM 으로 가정. 앞 3-4자리가 MD.
+      const hhmmStr = tail.slice(-4);
+      const mdStr = tail.slice(0, -4);
+      const hh = Number(hhmmStr.slice(0, 2));
+      const mn = Number(hhmmStr.slice(2));
+      if (hhmmValid(hh, mn)) {
+        const tries: Array<[number, number]> = [];
+        if (mdStr.length === 3) {
+          tries.push([Number(mdStr[0]), Number(mdStr.slice(1))]);
+          tries.push([Number(mdStr.slice(0, 2)), Number(mdStr[2])]);
+        } else if (mdStr.length === 4) {
+          tries.push([Number(mdStr.slice(0, 2)), Number(mdStr.slice(2))]);
+          tries.push([Number(mdStr[0]), Number(mdStr.slice(1, 3))]);
+        }
+        for (const [m, d] of tries) {
+          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            return `${yyyy}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          }
+        }
+      }
+    }
+
     const hasPayKeyword = PAY_KEYWORD_REGEX.test(line);
 
     // 단축 — `결제` / `주문` (또는 OCR 변형) 키워드가 같은 라인에 있어야 함 (false positive 방어).
@@ -1363,6 +1495,51 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
           }
         }
       }
+      // 3b. MD.HHMM — 연도/공백 없이 "MD.HHMM 주문/결제" 만 보일 때.
+      //     예: "325.1522 주문" = 3.25 15:22, "22.1734 주문" = 2.2 17:34.
+      //     dotShort 가 잘못된 경계로 잡힐 수 있는 (e.g. "22.17" → mm=22 invalid) 케이스를
+      //     HHMM 시간 검증으로 정확히 잡는다. dotShort/compactMD 다음에 둬서 우선순위를 낮춤
+      //     ("3.28.1141주문" 같은 케이스에서 dotShort 가 먼저 잡도록).
+      const mdHhmm = line.match(/(?:^|[^\d])(\d{2,4})\s*\.\s*(\d{4})(?=[^\d]|$)/);
+      if (mdHhmm) {
+        const md = mdHhmm[1];
+        const hhmm = mdHhmm[2];
+        const hh = Number(hhmm.slice(0, 2));
+        const mn = Number(hhmm.slice(2));
+        if (hh <= 23 && mn <= 59) {
+          const tries: Array<[number, number]> = [];
+          if (md.length === 2) tries.push([Number(md[0]), Number(md[1])]);
+          else if (md.length === 3) {
+            tries.push([Number(md[0]), Number(md.slice(1))]);
+            tries.push([Number(md.slice(0, 2)), Number(md[2])]);
+          } else if (md.length === 4) {
+            tries.push([Number(md.slice(0, 2)), Number(md.slice(2))]);
+            tries.push([Number(md[0]), Number(md.slice(1, 3))]);
+          }
+          for (const [m, d] of tries) {
+            if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+              return `${inferYear(m)}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+            }
+          }
+        }
+      }
+
+      // 3c. MD 압축 + dot + 시각 — "33.11:56 주문" 같이 dotShort 가 mm=33 invalid 로 실패한
+      //     케이스를 시각 anchor (`\d{1,2}[:.]\d{2}`) 로 정확히 잡는다. 2-digit 첫 그룹만 허용해서
+      //     dotShort 가 정상 매치되는 케이스 (e.g. "3.28...")에 영향 안 주게 함.
+      const compMd2 = line.match(/(?:^|[^\d])(\d{2})\s*\.\s*\d{1,2}[:.]\d{2}/);
+      if (compMd2) {
+        const md = compMd2[1];
+        const mm = Number(md);
+        const m1 = Number(md[0]);
+        const d1 = Number(md[1]);
+        // dotShort 가 이미 시도했을 mm in [1,12] 범위는 건너뛰고 (그건 dotShort 가 처리),
+        // 여기서는 mm > 12 인 케이스만 MD 압축으로 재해석.
+        if (mm > 12 && m1 >= 1 && m1 <= 9 && d1 >= 1 && d1 <= 9) {
+          return `${inferYear(m1)}-${String(m1).padStart(2, "0")}-${String(d1).padStart(2, "0")}`;
+        }
+      }
+
       // 4. 완전 압축 — `MDHHMM` 6자리 또는 `MDHHMMSS` 7~8자리.
       //   안전: 가격 라인은 거의 항상 "N원" 또는 "N,NNN원" 으로 시작하므로 그 뒤의 잔여 숫자
       //   덩어리만 본다. 라인 전체를 anchor 로 보면 가격 자체를 날짜로 오인할 위험이 큼.
@@ -1599,6 +1776,31 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // 정책 §6 "정직성" 위반 우려: fold 메타가 sectionTotal 만 보존하고 가격은 추정 안 함과
   // 같은 결의 정직성. 다만 **같은 결제** 라는 사실은 expandedFoldGroup/addonCandidate 신호로
   // 이미 확정이라, 결제 일자 propagate 는 추정이 아니라 동일 사실의 복제. 안전.
+  //
+  // 그룹 backfill: "총 N건 주문 접기" 라벨은 fold group 의 **마지막 카드 섹션 안에만**
+  // 들어있어 앞쪽 (N-1) 장은 expandedFoldGroup=false 로 빠짐. tail 카드의
+  // expandedFoldTailCount=N 을 보고 앞 (N-1) 카드도 같은 그룹 멤버로 표시한다.
+  // (이건 추정이 아니라 UI 상 명시된 그룹 사실의 backfill — 안전.)
+  //
+  // 그룹 ID 로 분리해야 인접한 두 fold group 이 하나로 합쳐지는 사고를 막을 수 있다.
+  // (예: [그룹A 4장][그룹B 3장] 처럼 연속되면 expandedFoldGroup boolean 만으로는 경계 구분 불가.)
+  const foldGroupIds = new Array<number | undefined>(results.length).fill(undefined);
+  let nextGroupId = 0;
+  for (let i = 0; i < results.length; i += 1) {
+    const tailCount = results[i].expandedFoldTailCount;
+    if (!tailCount || tailCount <= 1) continue;
+    const groupStart = Math.max(0, i - (tailCount - 1));
+    nextGroupId += 1;
+    for (let k = groupStart; k <= i; k += 1) {
+      // 이미 다른 group 에 속하면 덮어쓰지 않음 (앞 그룹 침범 방지).
+      if (foldGroupIds[k] !== undefined) continue;
+      foldGroupIds[k] = nextGroupId;
+      if (!results[k].expandedFoldGroup) {
+        results[k] = { ...results[k], expandedFoldGroup: true };
+      }
+    }
+  }
+
   for (let i = 0; i < results.length; i += 1) {
     const r = results[i];
     if (r.date) continue;
@@ -1612,8 +1814,18 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       }
     }
     // 펼쳐진 fold 묶음 — 같은 묶음 내 다른 카드의 date 로 채움.
-    if (r.expandedFoldGroup) {
-      // 같은 묶음 멤버 찾기 — 인접 expandedFoldGroup=true 카드들 (앞뒤로 스캔).
+    // foldGroupIds 가 있으면 그걸 우선 (정확한 그룹 경계). 없으면 fallback 으로 인접 expandedFoldGroup
+    // 스캔 (legacy — 단일 그룹 케이스에선 동일 동작).
+    const myGroupId = foldGroupIds[i];
+    if (myGroupId !== undefined) {
+      for (let k = 0; k < results.length; k += 1) {
+        if (foldGroupIds[k] !== myGroupId) continue;
+        if (results[k].date) {
+          results[i] = { ...r, date: results[k].date };
+          break;
+        }
+      }
+    } else if (r.expandedFoldGroup) {
       let groupStart = i;
       while (groupStart > 0 && results[groupStart - 1].expandedFoldGroup) groupStart -= 1;
       let groupEnd = i;
