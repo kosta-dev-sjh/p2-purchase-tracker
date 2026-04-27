@@ -42,6 +42,10 @@ export const SOURCE_LABELS = {
   // 기존 저장된 거래 데이터·라우트와 호환됩니다(2026-04-28).
   OCR: "주문 캡처",
   MANUAL: "수동 입력",
+  // 카드 CSV/XLSX 업로드 경로로 들어온 거래임을 표시. 이전에는 detail.source 가 "MANUAL" 로 강제
+  // 되어 있어 "카드내역으로 들어왔지만 수동 입력으로 보이는" 표시 회귀가 있었습니다(2026-04-28).
+  // 표시 라벨만 분리하고 "분석한 캡처 보기" 같은 OCR 전용 게이트는 그대로 detail.source === "OCR" 로 둡니다.
+  CARD: "카드내역",
 } as const;
 
 export const CATEGORY_LABELS = {

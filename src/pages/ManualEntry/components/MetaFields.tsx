@@ -93,6 +93,31 @@ const InlineHint = styled.div`
   line-height: 1.45;
 `;
 
+/*
+ * 카드내역 출처 안내 배너.
+ * 거래 편집 모달에서 cardImport 가 있는 거래를 수정할 때, 결제 메타 필드들이 카드사 원본에서
+ * 끌어온 값임을 시각적으로 미리 알립니다. 사용자가 "여기는 손대면 원본과 달라진다" 는 점을
+ * 의식하고 입력하도록 유도하는 것이 목적입니다(완전 차단은 아님 — 파서 오류 시 수정할 수
+ * 있어야 하기 때문).
+ */
+const CardSourceNotice = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong {
+    color: ${tokens.color.ink2};
+    font-weight: 700;
+  }
+`;
+
 const Field = styled.div<{ $span?: number }>`
   grid-column: span ${({ $span }) => $span ?? 1};
 
@@ -185,7 +210,13 @@ export const MetaFields: React.FC<{
   value: MetaFieldValues;
   onChange: (next: MetaFieldValues) => void;
   fieldIdPrefix?: string;
-}> = ({ value, onChange, fieldIdPrefix = "meta" }) => {
+  /**
+   * true 면 결제방식 필드 위에 "카드사 데이터에서 가져온 값" 안내 배너를 노출합니다.
+   * TransactionEditModal 에서 cardImport 가 있는 거래를 편집할 때만 사용하고,
+   * 수동 입력 신규 작성 화면에서는 의미가 없어 false(기본).
+   */
+  cardSourceNotice?: boolean;
+}> = ({ value, onChange, fieldIdPrefix = "meta", cardSourceNotice = false }) => {
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
   const isInstallment = value.installmentKind === "installment";
@@ -274,6 +305,18 @@ export const MetaFields: React.FC<{
           />
         </FormField>
       </Field>
+      {cardSourceNotice && (
+        <Field $span={2}>
+          <CardSourceNotice role="note">
+            <span aria-hidden="true">💳</span>
+            <span>
+              <strong>카드사 데이터에서 가져온 값이에요.</strong>{" "}
+              결제방식·할부개월·결제예정일·청구금액은 카드 원본을 기반으로 채워져 있어요.
+              수정하면 원본과 달라져요.
+            </span>
+          </CardSourceNotice>
+        </Field>
+      )}
       <Field>
         <FormField label="결제방식" helpText="사용자 화면에서는 일시불과 할부만 구분해 보여줘요.">
           <PlatformSelect

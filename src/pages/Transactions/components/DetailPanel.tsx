@@ -588,12 +588,36 @@ const DetailPanelInner = ({
           </Section>
         )}
 
-        {row.detail?.source && (
-          <Section>
-            <div className="label">입력 방식</div>
-            <Tag kind="purchase">{SOURCE_LABELS[row.detail.source]}</Tag>
-          </Section>
-        )}
+        {(() => {
+          /*
+           * 입력 방식 표시 라벨 결정.
+           *
+           * 신규 데이터(2026-04-28 이후): csvImport 가 detail.source = "CARD" 로 저장.
+           * 레거시 데이터: 카드 CSV 로 들어온 거래도 detail.source = "MANUAL" 로 잘못 찍혀
+           *   있어서 row.source === "csv" 폴백으로 보정합니다(레거시 호환).
+           * 그 외는 detail.source 가 그대로 표시 키입니다(OCR / MANUAL).
+           *
+           * 주의: "분석한 캡처 보기" 버튼 게이트(아래) 는 그대로 detail.source === "OCR" 만
+           * 봅니다 — 표시 라벨과 OCR 전용 기능을 분리해야 카드내역 거래에 캡처 버튼이 새지 않음.
+           */
+          const sourceKey: keyof typeof SOURCE_LABELS | null =
+            row.detail?.source === "OCR"
+              ? "OCR"
+              : row.detail?.source === "CARD"
+                ? "CARD"
+                : row.source === "csv"
+                  ? "CARD"
+                  : row.detail?.source === "MANUAL"
+                    ? "MANUAL"
+                    : null;
+          if (!sourceKey) return null;
+          return (
+            <Section>
+              <div className="label">입력 방식</div>
+              <Tag kind="purchase">{SOURCE_LABELS[sourceKey]}</Tag>
+            </Section>
+          );
+        })()}
 
         <Actions>
           <Button variant="primary" size="lg" block onClick={onEdit}>

@@ -226,7 +226,7 @@ interface TransactionsState {
   appendItemsToTransaction: (
     id: string,
     items: { name: string; price: number; link?: string }[],
-    source?: "OCR" | "MANUAL"
+    source?: "OCR" | "MANUAL" | "CARD"
   ) => void;
   /** 저장된 거래를 모두 지워 "빈 계정" 상태로 돌립니다. */
   clearAll: () => TxRow[];
@@ -413,7 +413,7 @@ export const transactionsStore = {
   appendItemsToTransaction(
     id: string,
     items: { name: string; price: number; link?: string }[],
-    source: "OCR" | "MANUAL" = "OCR"
+    source: "OCR" | "MANUAL" | "CARD" = "OCR"
   ): void {
     useTransactionsStoreBase.getState().appendItemsToTransaction(id, items, source);
   },

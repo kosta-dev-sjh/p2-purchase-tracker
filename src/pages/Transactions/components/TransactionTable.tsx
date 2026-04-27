@@ -69,7 +69,12 @@ export interface TxRow {
   memo?: string;
   detail?: {
     items: { name: string; price: number; link?: string }[];
-    source?: "OCR" | "MANUAL";
+    /**
+     * 거래 상세의 출처 식별자. "OCR" 은 캡처 분석으로 들어온 거래로, 이 값일 때만 DetailPanel 의
+     * "분석한 캡처 보기" 버튼이 노출됩니다. "CARD" 는 카드 CSV/XLSX 업로드, "MANUAL" 은 수동 입력.
+     * 표시용 라벨은 SOURCE_LABELS 에서 변환합니다.
+     */
+    source?: "OCR" | "MANUAL" | "CARD";
     /**
      * OCR 경로로 저장된 거래일 때, 분석에 사용된 원본 캡쳐의 URL(또는 data URL).
      * 거래내역 상세에서 "OCR 분석한 이미지 보기" 모달이 이 값을 읽어 원본을 그대로 띄웁니다.

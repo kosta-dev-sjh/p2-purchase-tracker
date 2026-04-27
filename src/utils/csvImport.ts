@@ -300,7 +300,12 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       source: "csv",
       detail: {
         items: [],
-        source: "MANUAL",
+        // 카드 CSV/XLSX 업로드 경로의 거래는 "CARD" 로 마킹해 DetailPanel 의 입력 방식 태그가
+        // "카드내역" 으로 표시되도록 합니다(2026-04-28). 이전에는 "MANUAL" 로 강제되어 사용자
+        // 입장에서 "카드로 올렸는데 수동 입력으로 보이는" 표시 회귀가 있었습니다.
+        // 레거시 데이터(이미 "MANUAL" 로 저장된 csv 거래) 는 DetailPanel 의 getEffectiveSource
+        // 게터가 row.source === "csv" 폴백으로 호환합니다.
+        source: "CARD",
         cardImport: {
           recordKind,
           paymentMode,
