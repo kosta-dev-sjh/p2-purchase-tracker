@@ -110,7 +110,39 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
     if (aoa.length === 0) continue;
 
     const matrix = aoa.map((cells) => cells.map((cell) => String(cell ?? "").trim()));
-    const sheetRows = rowsToCsvRows(matrix, findHeaderRowIndex(matrix));
+    const headerIdx = findHeaderRowIndex(matrix);
+
+    // BC카드처럼 병합셀 상위헤더(row N) + 서브헤더(row N+1) 2행 구조 감지.
+    // 상위 헤더 행의 빈 칸(병합셀 연속 위치)에 서브헤더 행이 값을 채우는 패턴이면
+    // 두 행을 병합해 유효 헤더로 쓰고, 데이터는 N+2행부터 읽습니다.
+    const mainHeader = (matrix[headerIdx] ?? []).map((h) =>
+      h.replace(/[\r\n]+/g, "").trim()
+    );
+    const subRow = (matrix[headerIdx + 1] ?? []).map((h) =>
+      h.replace(/[\r\n]+/g, "").trim()
+    );
+    const hasSubHeader = mainHeader.some((h, i) => h === "" && subRow[i] !== "");
+
+    let sheetRows: CsvRow[];
+    if (hasSubHeader) {
+      // 서브헤더가 있는 컬럼은 서브헤더 우선, 없으면 주 헤더 사용
+      const mergedHeader = mainHeader.map((h, i) => (subRow[i] !== "" ? subRow[i] : h));
+      sheetRows = matrix.slice(headerIdx + 2).reduce<CsvRow[]>((acc, cells) => {
+        const row: CsvRow = {};
+        let hasValue = false;
+        mergedHeader.forEach((header, index) => {
+          if (!header) return;
+          const value = (cells[index] ?? "").trim();
+          row[header] = value;
+          if (value !== "") hasValue = true;
+        });
+        if (hasValue) acc.push(row);
+        return acc;
+      }, []);
+    } else {
+      sheetRows = rowsToCsvRows(matrix, headerIdx);
+    }
+
     if (sheetRows.length > 0) {
       allRows.push(...sheetRows);
     }
