@@ -4,11 +4,12 @@
  */
 import { memo, useRef, useState } from "react";
 import styled, { css } from "styled-components";
-import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
+import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import { SegmentedControl } from "../../../components/primitives/SegmentedControl";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
-import type { TxCategory, TxPlatform, TxStatus, TxType } from "./TransactionTable";
+import { useCategoriesStore } from "../../../stores/categoriesStore";
+import type { TxPlatform, TxStatus, TxType } from "./TransactionTable";
 
 export type TypeFilter = "all" | TxType;
 export type StatusFilter = "all" | TxStatus;
@@ -17,7 +18,7 @@ interface FilterBarProps {
   search: string;
   typeFilter: TypeFilter;
   platform: "all" | TxPlatform;
-  category: "all" | TxCategory;
+  category: "all" | string;
   statusFilter: StatusFilter;
   /** 모바일 아이콘 바의 정렬 토글을 여기서 함께 다루기 위해 받아 둡니다. PC 에서는 테이블 헤더가 정렬을 담당합니다. */
   sortOrder: "desc" | "asc";
@@ -25,7 +26,7 @@ interface FilterBarProps {
   onSearchChange: (value: string) => void;
   onTypeChange: (value: TypeFilter) => void;
   onPlatformChange: (value: "all" | TxPlatform) => void;
-  onCategoryChange: (value: "all" | TxCategory) => void;
+  onCategoryChange: (value: "all" | string) => void;
   onStatusChange: (value: StatusFilter) => void;
 }
 
@@ -334,6 +335,7 @@ export const FilterBar = memo(({
   onCategoryChange,
   onStatusChange,
 }: FilterBarProps) => {
+  const storeCategories = useCategoriesStore();
   // 모바일 아이콘 바 상태. 검색/필터 패널은 서로 독립적으로 열고 닫힐 수 있습니다.
   // 검색어가 이미 들어가 있는 상태로 페이지에 다시 들어오면 검색 패널을 자동으로 펼쳐 두어,
   // 사용자가 "왜 필터링이 되어 있지?" 하고 당황하지 않게 합니다.
@@ -397,15 +399,12 @@ export const FilterBar = memo(({
         </Select>
         <Select
           value={category}
-          onChange={(event) => onCategoryChange(event.target.value as "all" | TxCategory)}
+          onChange={(event) => onCategoryChange(event.target.value)}
         >
           <option value="all">카테고리 전체</option>
-          <option value="living">{CATEGORY_LABELS.living}</option>
-          <option value="fashion">{CATEGORY_LABELS.fashion}</option>
-          <option value="digital">{CATEGORY_LABELS.digital}</option>
-          <option value="food">{CATEGORY_LABELS.food}</option>
-          {/* "기타"는 카테고리 미지정 거래를 걸러볼 수 있는 단일 진입점입니다. */}
-          <option value="etc">{CATEGORY_LABELS.etc}</option>
+          {storeCategories.map((cat) => (
+            <option key={cat.id} value={cat.id}>{cat.name}</option>
+          ))}
         </Select>
         <Select
           value={statusFilter}
@@ -516,14 +515,12 @@ export const FilterBar = memo(({
             <FilterGroupLabel>카테고리</FilterGroupLabel>
             <Select
               value={category}
-              onChange={(event) => onCategoryChange(event.target.value as "all" | TxCategory)}
+              onChange={(event) => onCategoryChange(event.target.value)}
             >
               <option value="all">카테고리 전체</option>
-              <option value="living">{CATEGORY_LABELS.living}</option>
-              <option value="fashion">{CATEGORY_LABELS.fashion}</option>
-              <option value="digital">{CATEGORY_LABELS.digital}</option>
-              <option value="food">{CATEGORY_LABELS.food}</option>
-              <option value="etc">{CATEGORY_LABELS.etc}</option>
+              {storeCategories.map((cat) => (
+                <option key={cat.id} value={cat.id}>{cat.name}</option>
+              ))}
             </Select>
             <FilterGroupLabel>상태</FilterGroupLabel>
             <Select

@@ -69,6 +69,12 @@ export interface OcrImageItem {
   id: string;
   fileName: string;
   thumbUrl: string;
+  /**
+   * 저장 후 거래내역에서 "OCR 이미지 보기" 시 사용하는 압축 data URL (base64 JPEG).
+   * thumbUrl(blob URL)은 세션 종료/새로고침 시 무효화되므로, 영속이 필요한 곳에는 이 값을 씁니다.
+   * 업로드 직후 canvas 압축으로 생성되며, 없으면 빈 문자열로 대체됩니다.
+   */
+  sourceDataUrl?: string;
   status: "analyzed" | "pending";
   platform: Platform;
   /** 이미지 전체 OCR 원문. 각 order.rawText는 이 값의 일부 구간입니다. */

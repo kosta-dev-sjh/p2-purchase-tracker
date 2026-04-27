@@ -16,11 +16,12 @@ import {
 } from "../../../constants/labels";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
+import { useCategoriesStore } from "../../../stores/categoriesStore";
 
 export type CategoryKey = keyof typeof CATEGORY_LABELS;
 
-// "기타"를 맨 뒤에 두어, 사용자가 특정 카테고리를 고르지 못했을 때 마지막 선택지로 눈에 띄게 합니다.
-const CATEGORY_OPTIONS: CategoryKey[] = ["living", "fashion", "digital", "food", "etc"];
+// 표시 순서의 기준. 스토어에 동일한 id가 있으면 스토어 이름이 우선됩니다.
+const CATEGORY_ORDER: CategoryKey[] = ["living", "fashion", "digital", "food", "etc"];
 
 /**
  * 수동 입력 폼의 메타 필드들. 상위 ManualEntry 페이지가 저장 버튼을 눌렀을 때
@@ -36,7 +37,7 @@ export interface MetaFieldValues {
   amount: string;
   platform: string;
   date: string;
-  categories: CategoryKey[];
+  categories: string[];
   memo: string;
 }
 
@@ -171,10 +172,23 @@ export const MetaFields: React.FC<{
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
 
+  // 카테고리 목록은 스토어 전체 항목을 사용합니다.
+  // 표준 카테고리는 기존 순서(CATEGORY_ORDER)로 먼저 정렬하고, 커스텀 카테고리는 뒤에 이어 붙입니다.
+  const storeCategories = useCategoriesStore();
+  const categoryOptions = [
+    ...CATEGORY_ORDER.flatMap((key) => {
+      const entry = storeCategories.find((c) => c.id === key);
+      return entry ? [{ key: entry.id, label: entry.name }] : [];
+    }),
+    ...storeCategories
+      .filter((c) => !CATEGORY_ORDER.includes(c.id as CategoryKey))
+      .map((c) => ({ key: c.id, label: c.name })),
+  ];
+
   // 카테고리 상한(MAX_CATEGORIES_PER_TX)에 도달했으면 새로 추가하는 토글은 무시합니다.
   // 이미 체크된 항목을 끄는 동작은 항상 허용되어야 하므로 가드는 "체크 시도"에만 걸립니다.
   const atLimit = value.categories.length >= MAX_CATEGORIES_PER_TX;
-  const toggle = (key: CategoryKey) => {
+  const toggle = (key: string) => {
     const isChecked = value.categories.includes(key);
     if (!isChecked && atLimit) return;
     patch({
@@ -255,7 +269,7 @@ export const MetaFields: React.FC<{
           helpText={`하나의 거래가 여러 카테고리에 걸칠 수 있어요. 최대 ${MAX_CATEGORIES_PER_TX}개까지 선택할 수 있어요.`}
         >
           <CheckGroup>
-            {CATEGORY_OPTIONS.map((key) => {
+            {categoryOptions.map(({ key, label }) => {
               const checked = value.categories.includes(key);
               // 상한 도달 + 아직 체크되지 않은 칩만 비활성화. 이미 켠 칩은 항상 끌 수 있어야 합니다.
               const disabled = !checked && atLimit;
@@ -292,7 +306,7 @@ export const MetaFields: React.FC<{
                       </svg>
                     )}
                   </span>
-                  {CATEGORY_LABELS[key]}
+                  {label}
                 </CheckChip>
               );
             })}

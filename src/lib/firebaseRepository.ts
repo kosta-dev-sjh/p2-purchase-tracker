@@ -49,17 +49,19 @@ export async function bootstrapUserProfile(
 ): Promise<void> {
   const ref = userDoc(user.uid);
   const snap = await getDoc(ref);
-  const payload = {
+  // 이미 문서가 있으면 사용자가 수정한 필드(nickname, avatarDataUrl 등)를 덮어쓰지 않습니다.
+  // 최초 1회만 초기값을 씁니다.
+  if (snap.exists()) return;
+  await setDoc(ref, {
     displayName: seed?.name ?? user.displayName ?? "사용자",
     nickname: seed?.nickname ?? "새 사용자",
     email: seed?.email ?? user.email ?? "",
     avatarDataUrl: seed?.avatarDataUrl ?? null,
     passwordChangedAt: seed?.passwordChangedAt ?? "",
     onboardingSeen: false,
+    createdAt: serverTimestamp(),
     updatedAt: serverTimestamp(),
-    ...(snap.exists() ? {} : { createdAt: serverTimestamp() }),
-  };
-  await setDoc(ref, payload, { merge: true });
+  });
 }
 
 export async function bootstrapCategories(

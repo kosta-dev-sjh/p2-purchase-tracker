@@ -12,10 +12,11 @@ import styled from "styled-components";
 import { Card, CardBd } from "../../../components/primitives/Card";
 import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
-import { CATEGORY_LABELS, PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
+import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder, Status } from "../data";
 import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 import { detectTruncation } from "../../../utils/ocrTruncation";
+import { useCategoriesStore } from "../../../stores/categoriesStore";
 import { OrderCard, type CategoryOption } from "./OrderCard";
 
 const ImageSummary = styled.div`
@@ -134,14 +135,6 @@ const TruncationBanner = styled.div`
   }
 `;
 
-/**
- * 기본 카테고리 목록. CATEGORY_LABELS의 key/label을 그대로 펼쳐 두고,
- * 사용자가 추가한 항목은 시간값 기반 key로 뒤에 쌓입니다.
- */
-const DEFAULT_CATEGORIES: CategoryOption[] = Object.entries(CATEGORY_LABELS).map(
-  ([key, label]) => ({ key, label })
-);
-
 interface EditFormProps {
   image?: OcrImageItem;
   /**
@@ -157,17 +150,21 @@ interface EditFormProps {
    * 주문 블록 삭제 요청. 실제 삭제(마지막 1건이면 이미지 캐스케이드 + 확인 모달)는 OcrEditPage에서 처리합니다.
    */
   onDeleteOrder?: (orderId: string) => void;
+  /** 주문별로 선택된 카테고리 키 목록. orderId → 선택된 키 배열. 상위(OcrEditPage)에서 관리합니다. */
+  selectedByOrder: Record<string, string[]>;
+  /** 특정 주문의 카테고리 체크/해제. 상위에서 상태를 보관해 저장 시 반영합니다. */
+  onToggleCategoryFor: (orderId: string, key: string) => void;
 }
 
-export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProductsChange, onDeleteOrder }) => {
+export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProductsChange, onDeleteOrder, selectedByOrder, onToggleCategoryFor }) => {
   /**
-   * 카테고리 목록 자체는 화면 전체에서 공유합니다. 사용자가 한 주문 카드에서 "뷰티"를 추가해도
-   * 같은 이미지 안 다른 카드에 곧바로 칩이 보여야 자연스럽고, 다른 이미지를 선택했을 때도
-   * 직전까지 쓰던 목록이 그대로 남아 있어야 재입력 비용이 없어집니다.
-   * 반면 어떤 카테고리를 "체크했는가"는 주문 단위로 저장되어야 해서 selectedByOrder를 orderId 키로 둡니다.
+   * 카테고리 목록은 설정(categoriesStore)에서 초기값을 가져와 세션 내에서 추가/삭제할 수 있습니다.
+   * 선택 상태(selectedByOrder)는 저장 시 TxRow에 반영해야 해서 상위(OcrEditPage)에서 관리합니다.
    */
-  const [categories, setCategories] = useState<CategoryOption[]>(DEFAULT_CATEGORIES);
-  const [selectedByOrder, setSelectedByOrder] = useState<Record<string, string[]>>({});
+  const storeCategories = useCategoriesStore();
+  const [categories, setCategories] = useState<CategoryOption[]>(() =>
+    storeCategories.map((entry) => ({ key: entry.id, label: entry.name }))
+  );
 
   if (!image) {
     return (
@@ -181,16 +178,6 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
     );
   }
 
-  const toggleCategoryFor = (orderId: string, key: string) => {
-    setSelectedByOrder((prev) => {
-      const current = prev[orderId] ?? [];
-      const next = current.includes(key)
-        ? current.filter((k) => k !== key)
-        : [...current, key];
-      return { ...prev, [orderId]: next };
-    });
-  };
-
   const handleAddCategory = (label: string) => {
     const trimmed = label.trim();
     if (!trimmed) return;
@@ -203,14 +190,8 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
 
   const handleRemoveCategory = (key: string) => {
     setCategories((prev) => prev.filter((category) => category.key !== key));
-    // 삭제한 카테고리가 선택 상태였던 주문이 있다면 그 선택 목록에서도 제거해 둡니다.
-    setSelectedByOrder((prev) => {
-      const next: Record<string, string[]> = {};
-      for (const [orderId, keys] of Object.entries(prev)) {
-        next[orderId] = keys.filter((selectedKey) => selectedKey !== key);
-      }
-      return next;
-    });
+    // 선택 상태는 OcrEditPage의 selectedByOrder에 보관됩니다.
+    // 삭제된 키는 저장 시 buildCandidateFromOrder의 VALID_TX_CATEGORIES 필터로 걸러집니다.
   };
 
   return (
@@ -292,7 +273,7 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
           onDelete={onDeleteOrder ? () => onDeleteOrder(order.id) : undefined}
           categories={categories}
           selectedKeys={selectedByOrder[order.id] ?? []}
-          onToggleCategory={(key) => toggleCategoryFor(order.id, key)}
+          onToggleCategory={(key) => onToggleCategoryFor(order.id, key)}
           onAddCategory={handleAddCategory}
           onRemoveCategory={handleRemoveCategory}
         />
