@@ -14,7 +14,6 @@ import { Tag } from "../../../components/primitives/Tag";
 import { tokens } from "../../../styles/tokens";
 import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
 import type { OcrImageItem, OcrOrder, Status } from "../data";
-import { DEBUG_OCR_AI } from "../../../utils/ocrAiDebug";
 import { detectTruncation } from "../../../utils/ocrTruncation";
 import { useCategoriesStore } from "../../../stores/categoriesStore";
 import { OrderCard, type CategoryOption } from "./OrderCard";
@@ -40,24 +39,6 @@ const Hint = styled.div`
   line-height: 1.55;
 `;
 
-/**
- * DEBUG 전용 chip — AI 가 이 이미지를 한 번이라도 봤는지 한 눈에 확인용. 실사용자는 AI 존재를
- * 모르는 게 UX 목표라 평상시 숨기고, 개발 중(ocrAiDebug.ts 의 DEBUG_OCR_AI=true) 에만 노출.
- *
- * 색은 경고 톤(노랑)으로 화면 노이즈와 섞여도 곧바로 눈에 띄게. "DEBUG:" 프리픽스 고정.
- */
-const DebugAiChip = styled.span`
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 7px;
-  border-radius: ${tokens.radius.chip};
-  background: ${tokens.color.warnBg};
-  color: #92400e;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.02em;
-`;
 
 /**
  * 일괄 상태 변경 툴바. 한 캡쳐에 주문이 2건 이상일 때만 노출되며, 사용자가 OrderCard 마다
@@ -210,14 +191,6 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
         <span>
           상품 {image.orders.reduce((acc, o) => acc + o.products.length, 0)}개
         </span>
-        {/* ───── DEBUG 전용 (DEBUG_OCR_AI=true 일 때만 렌더됨) ─────
-            이 이미지가 AI 2차 확인을 거쳤는지 표시. 배포 전 ocrAiDebug.ts 의 상수를 false 로
-            돌리거나 이 블록 + DebugAiChip styled 컴포넌트를 grep 후 통째 제거. */}
-        {DEBUG_OCR_AI && image.aiInvoked && (
-          <DebugAiChip title="[DEBUG] Gemini Vision 으로 2차 확인된 이미지">
-            🛠 DEBUG: AI 인식됨
-          </DebugAiChip>
-        )}
       </ImageSummary>
 
       {/*

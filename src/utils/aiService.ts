@@ -36,8 +36,8 @@ export async function generateInsight(rulesText: string): Promise<string | null>
     const data = result.data as { text?: string };
     const text = data.text?.trim();
     return text ? text : null;
-  } catch (error) {
-    console.error("AI Insight Generation Failed:", error);
+  } catch {
+    // 인사이트 생성 실패는 사용자 흐름을 막지 않습니다. null 반환으로 호출부가 폴백을 그립니다.
     return null;
   }
 }
@@ -50,8 +50,8 @@ export async function fallbackOcr(text: string): Promise<Status | undefined> {
     });
     const data = result.data as { status?: Status | null };
     return data.status ?? undefined;
-  } catch (error) {
-    console.error("OCR Fallback Failed:", error);
+  } catch {
+    // OCR 보정 실패 시 undefined 반환 — 호출부가 1차 파서 결과를 그대로 사용합니다.
     return undefined;
   }
 }
@@ -64,8 +64,8 @@ export async function fallbackCsv(text: string): Promise<CsvRow[]> {
     });
     const data = result.data as { rows?: CsvRow[] };
     return Array.isArray(data.rows) ? data.rows : [];
-  } catch (error) {
-    console.error("CSV Fallback Failed:", error);
+  } catch {
+    // CSV 보정 실패 시 빈 배열을 돌려 호출부가 친화적인 메시지로 사용자에게 알립니다.
     return [];
   }
 }
@@ -143,8 +143,8 @@ export async function fallbackOcrProducts(
       products: data.products,
       changedIds: new Set(Array.isArray(data.changedIds) ? data.changedIds : []),
     };
-  } catch (error) {
-    console.error("OCR Products Fallback Failed:", error);
+  } catch {
+    // 상품 단위 AI 보정 실패 시 null 반환 — 호출부가 1차 파서 결과를 그대로 유지합니다.
     return null;
   }
 }

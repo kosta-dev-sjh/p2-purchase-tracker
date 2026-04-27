@@ -119,9 +119,8 @@ export async function runAiOcrFallback(
   try {
     const real = await callRealAi(request);
     if (real) return real;
-  } catch (e) {
-    // real API 에서 예외가 났어도 UX 를 끊지 않고 스텁으로 빠진다.
-    console.warn("[aiOcrFallback] callRealAi failed, falling back to stub:", e);
+  } catch {
+    // real API 에서 예외가 났어도 UX 를 끊지 않고 아래 스텁으로 빠집니다.
   }
 
   // 스텁 경로: 1.2s 지연만 시뮬레이션하고 카드는 **변경 없이** 그대로 반환. 내용이 바뀌지

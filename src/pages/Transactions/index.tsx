@@ -15,11 +15,13 @@ import { SummaryStrip } from "./components/SummaryStrip";
 import { FilterBar, type InstallmentFilter } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
-import { buildTransactionSummary, getPrevMonthKey } from "./data";
+import { buildTransactionSummary } from "./data";
 import {
+  computeMaxMonthKey,
   computeMinYear,
   getCurrentMonthKey,
   getMonthOption,
+  getPrevMonthKey,
 } from "../../constants/months";
 import {
   transactionsStore,
@@ -191,10 +193,32 @@ export const TransactionsPage: React.FC = () => {
     () => computeMinYear(allRows.map((row) => row.date)),
     [allRows]
   );
+  // 미래 거래(과거 데이터 정합 케이스)가 있으면 그 월까지 자동 노출. 새 거래는 거래일자 maxDate로 차단.
+  const pickerMaxMonth = useMemo(
+    () => computeMaxMonthKey(allRows.map((row) => row.date)),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
   );
+
+  /**
+   * 사용자가 검색어를 입력했을 때 현재 월에는 매치가 없는데 다른 달에 매치가 있는 경우의 안내.
+   * 화면 아래 빈 상태 영역에 "다른 달에서 X건 발견 — 그 달로 이동" 같은 안내를 띄워 사용자가
+   * 검색 결과를 놓치지 않게 합니다. monthRows 매치 0건 + allRows 전역 매치 ≥ 1건일 때만 활성화됩니다.
+   */
+  const crossMonthMatches = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    if (!query) return [] as { date: string; monthKey: string; title: string }[];
+    return allRows
+      .filter((row) => {
+        if (toMonthKey(row.date) === month) return false; // 같은 달 매치는 정상 흐름
+        const itemText = row.detail?.items.map((item) => item.name).join(" ").toLowerCase() ?? "";
+        return row.title.toLowerCase().includes(query) || itemText.includes(query);
+      })
+      .map((row) => ({ date: row.date, monthKey: toMonthKey(row.date), title: row.title }));
+  }, [allRows, month, search]);
 
   const filteredRows = useMemo(() => {
     // 검색어, 플랫폼, 카테고리 조건을 한 번에 적용해 실제 표에 보여줄 후보 목록을 만듭니다.
@@ -496,11 +520,50 @@ export const TransactionsPage: React.FC = () => {
           value={month}
           onChange={handleMonthChange}
           minYear={pickerMinYear}
+          maxMonthKey={pickerMaxMonth}
         />
       }
     >
       <Grid>
-        <SummaryStrip summary={summary} />
+        <SummaryStrip summary={summary} filteredCount={filteredRows.length} />
+        {/*
+          검색어를 입력했는데 현재 월에는 매치가 없고 다른 달에 매치가 있는 경우 안내 배너.
+          이전에는 검색이 '현재 월 안에서만' 동작해서 사용자가 결과를 못 찾고 좌절하는 경우가 있었어요.
+          첫 매치 거래의 월로 이동할 수 있는 바로가기를 함께 제공해 검색 흐름이 끊기지 않게 합니다.
+        */}
+        {filteredRows.length === 0 && crossMonthMatches.length > 0 && (
+          <div
+            role="status"
+            style={{
+              padding: "10px 14px",
+              border: `1px solid ${tokens.color.accentBorder}`,
+              borderRadius: tokens.radius.card,
+              background: tokens.color.accentSubtle,
+              color: tokens.color.ink2,
+              fontSize: 13,
+              lineHeight: 1.55,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <span>
+              현재 월에는 일치하는 거래가 없어요. 다른 달에 <strong>{crossMonthMatches.length}건</strong>이
+              발견됐어요.
+            </span>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => {
+                handleMonthChange(crossMonthMatches[0].monthKey);
+              }}
+            >
+              {`${crossMonthMatches[0].monthKey.replace("-", "년 ")}월로 이동`}
+            </Button>
+          </div>
+        )}
         <Body $hasPanel={isOpen}>
           <Left>
             {/* 왼쪽 영역은 필터와 표, 오른쪽 영역은 상세 패널로 역할을 분리합니다.

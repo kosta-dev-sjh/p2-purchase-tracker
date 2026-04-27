@@ -79,6 +79,18 @@ export interface PurchaseOCRResult {
    *   - expandedFoldGroup=true: 펼친 상태 (모든 카드 visible). products[] N개로 합쳐야.
    */
   expandedFoldGroup?: boolean;
+  /**
+   * 펼쳐진 fold 그룹의 마지막 카드에만 채우는 힌트.
+   * 예: 마지막 카드 섹션 하단에 `총 3건 주문 접기` 가 보이면 3.
+   * caller(buildFlatOrders)는 이 값을 보고 "직전 N개 카드 + 현재 카드"를 한 주문으로 합칩니다.
+   */
+  expandedFoldTailCount?: number;
+  /**
+   * 네이버 `추가상품` 카드처럼 "날짜가 없고, 바로 위 메인 상품의 결제에 붙어야 하는" 후보.
+   * 현재 1차 파서는 화면의 배지를 항상 읽어내지 못하므로, 날짜 부재 + 배송조회-only 섹션 등
+   * 구조 신호로 추정해 caller 가 이전 주문에 붙일 수 있게 힌트만 남깁니다.
+   */
+  addonCandidate?: boolean;
 }
 
 /**
@@ -1010,16 +1022,32 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   const mall = '네이버';
 
-  // 카드 시작 신호 — 네이버 주문 카드 상단의 상태 라벨. OCR 변형까지 흡수하기 시작하면
-  // 끝없는 wordlist 가 되므로 정확한 라벨 5종만 인정. 빠지면 1차 파서가 카드를 못 잡고 빈
-  // 결과로 떨어지지만, ocrQuality 가 그걸 잡아 AI 호출 게이트를 발동한다.
+  // 카드 시작 신호 — 네이버 주문 카드 상단의 상태 라벨.
+  //
+  // 기본은 literal 라벨을 우선 신뢰하되, 실측에서 반복된 **안전한 OCR 변형**만 제한적으로
+  // 흡수한다. 목적은 "카드 자체를 못 잡아 parser missed 로 빠지는" 케이스 완화이지,
+  // 임의의 한글 문장을 status 로 과감히 추정하는 것이 아니다.
+  //
+  // 허용 기준:
+  // - 실제 GT/console 에서 반복 관찰된 변형만
+  // - 길고 특이한 status ("구매확정완료", "반품환불완료", "상품준비중") 위주
+  // - 일반 상품명/설명 문장에서 우연히 나올 가능성이 낮은 조합만
   const STATUS_KEYWORDS = [
     '구매확정완료', '결제완료', '결제취소', '취소완료', '환불완료',
     '반품완료', '반품환불완료', // 2026-04-27 — web/184818 GT 관찰 (한일의료기 전기매트). docs/Naver_OCR_Pattern_Catalog §3.
     '교환완료', // 2026-04-27 — web3/2.59.31 GT 관찰 (아유아유 페이스 제모기). literal 추가.
-    '배송완료', '배송중', '주문완료',
+    '배송완료', '배송중', '주문완료', '상품준비중',
   ];
-  const statusRegex = new RegExp(`(?:${STATUS_KEYWORDS.join('|')})`);
+  const STATUS_VARIANT_REGEXES = [
+    /구\s*매\s*확\s*정\s*완\s*료/,
+    /구\s*확정\s*완료/,
+    /구\s*매확정\s*완료/,
+    /매화정오/, // docs/Naver_OCR_Pattern_Catalog §3 실측
+    /상품\s*준비\s*중/,
+  ];
+  const hasStatusKeyword = (line: string): boolean =>
+    STATUS_KEYWORDS.some((keyword) => line.includes(keyword)) ||
+    STATUS_VARIANT_REGEXES.some((regex) => regex.test(line));
 
   // 라인 정규화 — 쿠팡과 같은 가벼운 전처리
   let lines = rawText
@@ -1037,17 +1065,13 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // 정책: 명시적 UI 라벨이라 §5 "OCR 변형 wordlist 하드코딩"에 해당하지 않음. 광고 섹션 안의
   // 카드 정확도 측정도 무의미하므로(어차피 사용자 거래 아님) 컷이 안전.
   const AD_START_REGEX = /관심\s*있(?:을|는)\s*만?한\s*상품/;
-  const STATUS_KW_FOR_AD_BREAK = new RegExp(`(?:${[
-    '구매확정완료', '결제완료', '결제취소', '취소완료', '환불완료',
-    '반품완료', '배송완료', '배송중', '주문완료',
-  ].join('|')})`);
   const filtered: string[] = [];
   let inAd = false;
   for (const line of lines) {
     if (!inAd) {
       if (AD_START_REGEX.test(line)) { inAd = true; continue; }
       filtered.push(line);
-    } else if (STATUS_KW_FOR_AD_BREAK.test(line)) {
+    } else if (hasStatusKeyword(line)) {
       inAd = false;
       filtered.push(line);
     }
@@ -1059,8 +1083,12 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // 2026-04-27: "최대 N원" 의 끝 "원" 의무 제거. OCR 가 "원" 을 "8" 로 변형해 "최대 2508" 형태로
   // 들어오는 케이스(web2/10.01.50)도 aux 로 인식되어야 가짜 itemName "최대 2508" 누수 방지.
   // 컨텍스트 키워드 "최대 " 가 선두에 있으면 단위가 "원" 이든 "8" 이든 거의 확실히 보상 안내.
+  // 2026-04-27: 사용자/사이트 보상 라인 추가:
+  //   "@72원 적립 완료", "@1.685원 적립 완료", "@72 적립" 형태가 web/web2 에서 반복 출현.
+  //   `@` 기호 + 숫자 + 적립 anchor 를 가진 라인은 메인 가격이 아니라 적립 보상이라
+  //   `extractPrice` 에서 메인 가격으로 새지 않게 컷.
   const isAuxLine = (line: string): boolean =>
-    /적립|리뷰\s*쓰|한달(?:사용)?리뷰|다시\s*(?:담기|묶기|구매)|^\s*\+\s*[\d,]+|^\s*최대\s+[\d,]+/.test(line);
+    /적립|리뷰\s*쓰|한달(?:사용)?리뷰|다시\s*(?:담기|묶기|구매)|^\s*\+\s*[\d,]+|^\s*최대\s+[\d,]+|^\s*@/.test(line);
 
   // ── UI 라인 식별 (literal 라벨 — name 후보에서 제외) ─────────────────────
   //
@@ -1087,11 +1115,15 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     '내일\\s*배송',
     '오늘\\s*배송',
     '추가\\s*상품',
-    '정기\\s*구독\\s*재신청', // 2026-04-27 — web3/3.01.16 (제주 삼다수 정기구독)
+    '정기\\s*구독(?:\\s*재신청)?', // 2026-04-27 — web3/3.01.16, 16_59_51 (정기구독 자체가 sub-badge)
     '영수증\\s*조회',         // 2026-04-27 — web3/3.01.16 (선물하기 카드의 액션 버튼)
     '교환\\s*정보',           // 2026-04-27 — web3/2.59.31 (교환완료 카드의 액션 버튼)
     '주문\\s*상세\\s*보기',   // 2026-04-27 — web3 다수 페이지 우측 상단 링크
     '구매\\s*후기',           // 2026-04-27 — web3 long page 의 섹션 헤더
+    '뷰\\s*작성',             // 2026-04-27 — web3/16_59_51 ("리뷰 작성" 의 "리" 깨진 변형)
+    '리뷰\\s*작시',           // 2026-04-27 — web3/16_59_51 ("리뷰 작성" 의 "성" 깨진 변형)
+    '무료\\s*체험',           // 2026-04-27 — web3/16_59_51 (정기구독 카드 sub-badge)
+    '쇼핑학개론',             // 2026-04-27 — mobile/09:46-06 (광고 섹션 제목)
   ].join('|') + ')\\s*>?\\s*$');
 
   const isUiLabelLine = (line: string): boolean => UI_LABEL_REGEX.test(line);
@@ -1099,12 +1131,35 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // UI 통합 라인 — OCR 가 두 UI 링크를 한 줄로 합쳐 뱉는 케이스 (anchored UI_LABEL_REGEX 가 못 잡음).
   // 측정 결과 다수 발견된 패턴: "상세보기 > 판매자정보/문의", "상세보기 > 판매자정보 / 문의",
   //   "는 상세보기 > 판매자정보/문의" (선두 OCR garbage 동반), "장바구니 담기 바로 구매하기" (모바일).
+  //
+  // 2026-04-27 측정 보강:
+  //   `a7 per                 판매자정보/문의 >` 처럼 선두 OCR 가비지 + 단일 UI 토큰만 있는 케이스.
+  //   compound 가 아니라도 라인의 의미 있는 한글 부분이 사실상 UI 토큰뿐인 라인은 컷한다.
+  //   기준: 한글을 모두 모았을 때 "판매자정보문의" / "장바구니담기" / "바로구매하기" 와 정확 일치.
   const isUiCompoundLine = (line: string): boolean => {
     const cleaned = line.replace(/\s/g, "");
-    return /(상세보기|상세\s*보기).*(판매자|문의|배송조회)/.test(cleaned)
+    if (
+      /(상세보기|상세\s*보기).*(판매자|문의|배송조회)/.test(cleaned)
       || /(판매자|문의|배송조회).*(상세보기|상세\s*보기)/.test(cleaned)
       || /(장바구니).*(바로\s*구매)/.test(cleaned)
-      || /(바로\s*구매).*(장바구니)/.test(cleaned);
+      || /(바로\s*구매).*(장바구니)/.test(cleaned)
+    ) return true;
+    // 선두 OCR 가비지 동반 단일 UI 토큰 — 한글만 추출해 정확 매칭.
+    const hangulOnly = (line.match(/[가-힣]/g) ?? []).join("");
+    const UI_HANGUL_ONLY = new Set([
+      "판매자정보문의",
+      "판매자문의",
+      "장바구니담기",
+      "바로구매하기",
+      "상세보기",
+      "배송조회",
+      "한달리뷰쓰기",
+      "한달사용리뷰",
+      "리뷰쓰기",
+      "주문상세보기",
+    ]);
+    if (UI_HANGUL_ONLY.has(hangulOnly)) return true;
+    return false;
   };
 
   // ── itemName leading garbage 제거 (2026-04-27 측정 기반) ────────────────────
@@ -1127,9 +1182,13 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   const stripLeadingGarbage = (name: string): string => {
     if (!name) return name;
     let cleaned = name;
-    // 1단계: 비-한글 선두 가비지 컷 (8자 이내, 본문 한글 ≥ 2 검증)
+    // 1단계: 비-한글 선두 가비지 컷 (12자 이내, 본문 한글 ≥ 2 검증).
+    //   2026-04-27 한도 8 → 12 완화: "LS i015 " (8자) 보더 케이스 + 모바일 썸네일이 더 긴
+    //   라틴/숫자 잔류로 OCR 되는 변형 ("ER Sm 도자A 220UY ...") 까지 흡수. 정상 영문 브랜드
+    //   ("DORIS RT 4007", "AMD 라이젠5 5600") 는 이미 한글이 시작 위치에 없어 첫 한글 거리가
+    //   12자 넘으므로 영향 없음.
     const m = cleaned.match(/[가-힣]/);
-    if (m && m.index !== undefined && m.index > 0 && m.index <= 8) {
+    if (m && m.index !== undefined && m.index > 0 && m.index <= 12) {
       const after = cleaned.slice(m.index).trim();
       const hangulCount = (after.match(/[가-힣]/g) ?? []).length;
       if (hangulCount >= 2) cleaned = after;
@@ -1143,6 +1202,50 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       /^[^가-힣]{0,3}(?:[가-힣]{1,3}\s+)?(?:내일배송|오늘배송|국내배송|이른배송|국배배송|당일출고|국내배송\s*pack|당일배송|새벽배송|30때일배송|때일배송)\s*/u,
       "",
     ).trim();
+    // 3단계 (2026-04-27 측정 기반 추가): 한글 1글자 + 공백 + 본문 패턴.
+    //   네이버 list view 에서 OCR 가 상품 옵션/배지/썸네일 잔류를 1글자 한글 토큰으로
+    //   상품명 앞에 흘리는 케이스가 매우 빈번 (49장 중 14장 관찰):
+    //     "을 띠테르마그네틱 독서대..."  → "띠테르마그네틱 독서대..."
+    //     "개 체크미 다이어트 피팅..."   → "체크미 다이어트 피팅..."
+    //     "에 강블리 블링 휴..."         → "강블리 블링 휴..."
+    //     "를 독거미 Aula 1108..."       → "독거미 Aula 1108..."
+    //     "이 헬스프랜드 슈퍼..."        → "헬스프랜드 슈퍼..."
+    //     "까 비닐봉투 재활용..."        → "비닐봉투 재활용..."
+    //     "는 상세보기..."               → 이미 UI label 컷에서 처리
+    //     "주 1 아유아유 콜링턴..."      → "1 아유아유 콜링턴..." (다음 단계에서 숫자 prefix)
+    //
+    // 안전장치:
+    //   - **공백으로 분리된** 1글자 한글만 (붙어 있으면 합법 단어 일부)
+    //   - 본문 한글 ≥ 4 — 짧은 정상 상품명을 갉아먹지 않음
+    //   - "휴 무형광 롤화장지" 같이 정상 1글자 시작은 GT 에 거의 없으므로 false positive 위험 낮음.
+    //     ("휴 무형광"·"개 별 포장" 처럼 첫 한글이 의미를 갖는 경우는 GT 에 있다면 회귀가 측정으로
+    //     드러나므로 임계 보수적으로 4 한글 유지)
+    cleaned = cleaned
+      .replace(/^[가-힣]\s+(?=[가-힣]{2,})/u, "")
+      .trim();
+    // 4단계 (2026-04-27): trailing UI 잔류 + trailing 라틴/숫자 짧은 토큰 컷.
+    //   사용자 보고 "상세보기 > 판매자정보/문의" 가 itemName 끝에 합쳐진 라인. isUiCompoundLine
+    //   은 라인 전체가 UI 일 때만 컷하고 합성된 라인은 itemName 으로 흘러가서 sim 손실.
+    //   여기서 끝부분에 붙어 있으면 잘라내. 한글 본문은 보존.
+    cleaned = cleaned
+      .replace(/\s*상세\s*보기\s*>?\s*[|\\\/·:_-]?\s*판매자\s*정보\s*\/?\s*문의\s*>?\s*$/u, "")
+      .replace(/\s*상세\s*보기\s*>?\s*$/u, "")
+      .replace(/\s*판매자\s*정보\s*\/?\s*문의\s*>?\s*$/u, "")
+      .trim();
+    // 5단계 (2026-04-27): 끝 trailing 짧은 라틴/숫자/기호 잔류 (3~6자) 정리.
+    //   예: "...스위치 RIG25" 의 "RIG25", "...피팅기 ew" 의 " ew", "...250\\/00 초고…" 의 꼬리
+    //   안전장치:
+    //     - 모델명 (`CRP-HFT0611FR`, `xbox컨트롤러 PC게임패드`) 같이 한글에 인접한 정상 라틴은
+    //       보호하기 위해 **마지막 토큰이 공백으로 분리**되고 길이 ≤ 6 일 때만 컷.
+    //     - 정상 모델명은 보통 한글 단어와 하이픈 / 붙여쓰기 형태라 공백으로 분리된 짧은 라틴
+    //       꼬리는 거의 OCR 잔류로 봄. 그래도 본문 한글 ≥ 4 보호선 유지.
+    const trailing = cleaned.match(/\s+([A-Za-z][A-Za-z0-9]{2,5})\s*$/);
+    if (trailing) {
+      const head = cleaned.slice(0, trailing.index).trim();
+      if ((head.match(/[가-힣]/g) ?? []).length >= 4) {
+        cleaned = head;
+      }
+    }
     // 컷 후 본문이 너무 짧으면 원본 유지
     if ((cleaned.match(/[가-힣]/g) ?? []).length < 2) return name;
     return cleaned;
@@ -1157,17 +1260,42 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     return Number.isFinite(n) && n > 0 ? n : null;
   };
 
-  // 날짜: 풀(YYYY.M.D) 또는 단축(M.D) 형식. 단축은 결제/주문 키워드 동반 시에만.
+  // 날짜: 풀(YYYY.M.D) 또는 단축(M.D) 형식. 단축은 결제/주문 키워드 (또는 그 OCR 변형) 동반 시에만.
   //
-  // 2026-04-27 측정 기반 보강:
-  //   "2025.7.28.11:02주문"     → 풀 날짜 + 시각 + "주문" 이 공백 없이 붙음. SHORT_DATE 도 시각 포함이라 매칭됨.
-  //                                풀 regex 가 먼저 잡혀야 정상 처리.
-  //   "126.15:09 주문"           → "1.26. 15:09 주문" 의 점이 깨져 "126." 으로 변형. 단축 매칭 깨짐.
-  //   "1.20.20:20 결제"          → mobile 압축 형식, 점 사이 공백 없음.
-  // 단축 regex 의 \\s* 를 일관되게 0개 이상 허용해 압축 변형도 흡수.
+  // 2026-04-27 측정 기반 보강 (49장 / 223 카드 / missing_date 74건 분석):
+  //
+  //   네이버 list view 의 가격+날짜는 같은 라인에 합쳐져 출력되며, Tesseract 가 dot/콜론을 거의
+  //   대부분 공백·숫자로 흘려서 raw text 가 다음과 같이 매우 압축된 형태로 도착한다 (실측):
+  //
+  //     `4900원 210 1202긍제`            → 4,900원 · 2.10 12:02 결제
+  //     `13,9008 3 24 1526 글제`         → 13,900원 · 3.24 15:26 결제 (`원→8`)
+  //     `2025 8 10 1011 즐제`            → 2025.8.10 10:11 결제 (full year)
+  //     `38,700원 2025 7.30 16:19 글제`  → 38,700원 · 2025.7.30 16:19 결제
+  //     `47 1129 즐제`                   → 4.7 11:29 결제
+  //     `17.000원 2 6 045 27`            → 17,000원 · 2.6 04:54:27 (키워드 자체가 증발)
+  //     `5,000원 21211527`               → 5,000원 · 2.12 11:52:7 (모두 한 덩어리로 압축)
+  //
+  // 결제·주문 OCR 변형 어휘:
+  //   결제 → 결재 / 즐제 / 글제 / 긍제 / 금지 / 결자
+  //   주문 → 주묘 / 수문 / 우문 / 주둔 / 주몬 / 주의
+  //
+  //   문자 클래스로 흡수: `[결즐글긍금기][제재지자]` / `[주수우][문묘몬둔의]`
+  //   고정 literal 보다 정밀하지만, "지자제" 같은 시사 단어가 가격 라인에 섞일 가능성 거의 0
+  //   이라 false positive 위험은 낮다. 게다가 가격 + 숫자 패턴 컨텍스트 안에서만 매칭한다.
+  //
+  // §5 "OCR 변형 wordlist 하드코딩 금지" 와의 관계: 어휘 자체의 의미 패턴이 아니라 "결제·주문
+  //   2글자 한글 단어의 전형적 OCR 깨짐 변형 집합" 이라 구조적 신호. 새 변형이 자주 보이면
+  //   위 char class 한 곳만 확장하면 된다.
   const today = new Date();
   const inferYear = (m: number): number =>
     m > today.getMonth() + 1 ? today.getFullYear() - 1 : today.getFullYear();
+
+  // 결제·주문 키워드의 OCR 변형까지 흡수하는 anchor.
+  // - 한글 결제: 결자/즐제/글제/긍제/금지/결재/검제/걸제/갈제
+  // - 한글 주문: 주문/주묘/수문/우문/주둔/주몬/주의
+  // 2026-04-27: 첫 글자 클래스에 검/걸/갈 추가 (모바일 OCR 변형 다수 관찰).
+  const PAY_KEYWORD_REGEX = /(?:[결즐글긍금검걸갈][제재지자]|[주수우][문묘몬둔의])/;
+
   const extractDate = (line: string): string | null => {
     if (isAuxLine(line)) return null;
     // 풀 날짜 — YYYY.M.D 형식 (separator 는 점/공백/한글 모두 허용)
@@ -1175,28 +1303,139 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     if (full) {
       return `${full[1]}-${full[2].padStart(2, '0')}-${full[3].padStart(2, '0')}`;
     }
-    // 단축 — `결제` / `주문` 키워드가 같은 라인에 있어야 함 (false positive 방어).
-    // 키워드 앞에 공백 없이 붙는 변형도 허용: "11:02주문" / "20:20결제"
-    if (!/결제|주문/.test(line)) return null;
-    const short = line.match(/(?:^|[^\d])(\d{1,2})\s*\.\s*(\d{1,2})/);
-    if (short) {
-      const mm = Number(short[1]);
-      const dd = Number(short[2]);
-      if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
-        return `${inferYear(mm)}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+    // 압축 풀 날짜 — "2025728", "202521", "2025.73.19:04" 처럼 구분점 일부가 증발한 형태.
+    const packedFull = line.match(/(20\d{2})\s*(1[0-2]|0?[1-9])\s*(3[01]|[12]\d|0?[1-9])(?=[^\d]|$)/);
+    if (packedFull) {
+      return `${packedFull[1]}-${packedFull[2].padStart(2, "0")}-${packedFull[3].padStart(2, "0")}`;
+    }
+
+    const hasPayKeyword = PAY_KEYWORD_REGEX.test(line);
+
+    // 단축 — `결제` / `주문` (또는 OCR 변형) 키워드가 같은 라인에 있어야 함 (false positive 방어).
+    //
+    // 매칭 우선순위 (정확도 ↓ 순):
+    //   1. 점 분리 (M.D) — 명확한 separator
+    //   2. M D HHMM (3토큰 분리) — 시각이 별도 토큰
+    //   3. M+D 압축 + HHMM (2토큰) — `210 1202`, `47 1129`
+    //   4. 완전 압축 (1토큰 6~8자리)
+    //   5. packedShort 단일 토큰 — fallback
+    //
+    // 형태 4·5 (MMDD/HHMM 모호) 보다 형태 2·3 (HHMM 분리) 가 정확하므로 먼저 시도한다.
+    if (hasPayKeyword) {
+      // 1. 점 분리 단축
+      const dotShort = line.match(/(?:^|[^\d])(\d{1,2})\s*\.\s*(\d{1,2})/);
+      if (dotShort) {
+        const mm = Number(dotShort[1]);
+        const dd = Number(dotShort[2]);
+        if (mm >= 1 && mm <= 12 && dd >= 1 && dd <= 31) {
+          return `${inferYear(mm)}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+        }
+      }
+      // 키워드 앞부분 추출
+      const beforeKeyword = line
+        .slice(0, line.search(PAY_KEYWORD_REGEX))
+        .trim();
+      // 2. 분리되어 있음 — `M D HHMM` 3 토큰. HHMM 4자리가 시각 앵커.
+      //    예: `2 14 2242 글제` → 2.14, `47 1129 즐제` 는 토큰 2 개라 여기 미매칭
+      const split = beforeKeyword.match(/(?:^|\s)(\d{1,2})\s+(\d{1,2})\s+(\d{4})\s*$/);
+      if (split) {
+        const month = Number(split[1]);
+        const day = Number(split[2]);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          return `${inferYear(month)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        }
+      }
+      // 3. M+D 가 한 토큰으로 압축 + HHMM — `210 1202` = `2.10 12:02`, `47 1129` = `4.7 11:29`
+      //    HHMM 4자리가 anchor — 그 앞 토큰을 M+D 로 분해.
+      const compactMD = beforeKeyword.match(/(?:^|\s)(\d{2,4})\s+(\d{4})\s*$/);
+      if (compactMD) {
+        const md = compactMD[1];
+        const tries: Array<[number, number]> = [];
+        if (md.length === 2) tries.push([Number(md[0]), Number(md[1])]);
+        else if (md.length === 3) tries.push([Number(md[0]), Number(md.slice(1))]);
+        else if (md.length === 4) {
+          tries.push([Number(md.slice(0, 2)), Number(md.slice(2))]);
+          tries.push([Number(md[0]), Number(md.slice(1, 3))]); // MDDX → M+DD
+        }
+        for (const [m, d] of tries) {
+          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            return `${inferYear(m)}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          }
+        }
+      }
+      // 4. 완전 압축 — `MDHHMM` 6자리 또는 `MDHHMMSS` 7~8자리.
+      //   안전: 가격 라인은 거의 항상 "N원" 또는 "N,NNN원" 으로 시작하므로 그 뒤의 잔여 숫자
+      //   덩어리만 본다. 라인 전체를 anchor 로 보면 가격 자체를 날짜로 오인할 위험이 큼.
+      const packedTrail = beforeKeyword.match(/(\d{6,8})\s*$/);
+      if (packedTrail) {
+        const t = packedTrail[1];
+        // 우선 M(1)D(1)HH(2)MM(2) 6자리 — `211527` = 2.1
+        // 다음 M(1)D(2) 또는 M(2)D(1) 등 가능성 시도
+        const tries: Array<[number, number]> = [];
+        if (t.length === 6) {
+          tries.push([Number(t[0]), Number(t.slice(1, 3))]); // M D HH MM (1+2+...)
+          tries.push([Number(t.slice(0, 2)), Number(t[2])]); // MM D HH MM (2+1+...)
+        } else if (t.length === 7) {
+          tries.push([Number(t[0]), Number(t.slice(1, 3))]); // M DD HH MM SS or so
+          tries.push([Number(t.slice(0, 2)), Number(t[2])]);
+        } else if (t.length === 8) {
+          tries.push([Number(t.slice(0, 2)), Number(t.slice(2, 4))]); // MM DD HH MM
+          tries.push([Number(t[0]), Number(t.slice(1, 3))]);
+        }
+        for (const [m, d] of tries) {
+          if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+            return `${inferYear(m)}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+          }
+        }
+      }
+      // 5. 단일 토큰 fallback — "126.15:09 주문" = 1.26, "728.11:02주문" = 7.28.
+      //    위 패턴들이 모두 실패한 경우만. 4-digit 토큰의 모호성(MMDD vs HHMM)을 피하려고 마지막에 둠.
+      const packedShort = line.match(
+        /(?:^|[^\d])(\d{3,4})[.\s]*(?:\d{1,2}[:.]\d{2})?\s*(?:[결즐글긍금][제재지자]|[주수우][문묘몬둔의])/,
+      );
+      if (packedShort) {
+        const token = packedShort[1];
+        const month = token.length === 3 ? Number(token.slice(0, 1)) : Number(token.slice(0, 2));
+        const day = Number(token.slice(-2));
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          return `${inferYear(month)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        }
+      }
+    }
+
+    // 키워드가 없는 경우 — 메인 라인이 가격으로 시작하고 그 뒤가 분리된 숫자 시퀀스인 패턴만 인정.
+    //   "17.000원 2 6 045 27"  → 2.6 04:54:27 (키워드 누락)
+    //   "23,1008 2 6 0454 27"  → 2.6
+    // 가드:
+    //   - 라인이 "원" 또는 "8" (원의 OCR 변형) 으로 끝나는 가격 토큰을 포함해야 함
+    //   - "원" 다음부터 라인 끝까지가 `\d{1,2} \d{1,2} \d+ \d+` 형식인 경우만 매칭
+    //   - 매칭된 M/D 가 1..12 / 1..31 범위
+    const trailing = line.match(/[\d,]+\s*[원8](?:\s|$)([^가-힣\n]*?)$/);
+    if (trailing) {
+      const tail = trailing[1].trim();
+      // tail 이 분리된 숫자 시퀀스인지 확인 — "2 6 045 27" / "2 6 0454 27" / "2 14 2242 27"
+      const m = tail.match(/^(\d{1,2})\s+(\d{1,2})\s+\d+(?:\s+\d+)*\s*$/);
+      if (m) {
+        const month = Number(m[1]);
+        const day = Number(m[2]);
+        if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+          return `${inferYear(month)}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+        }
       }
     }
     return null;
   };
 
   // 라인 자체가 "거의 날짜 라인"인지 판정 — itemName 후보에서 제외하기 위함.
-  // extractDate 가 null 을 돌려줘도 (regex 가 못 잡아도) "주문" / "결제" 키워드 + 숫자 비율이
-  // 높으면 itemName 으로 가져가지 않는다. 측정 기반으로 추가:
-  //   "2025.7.28.11:02주문" 같은 케이스에서 extractDate 매칭 실패해도 itemName 으로 빨려들면
-  //   가짜 카드를 만든다.
-  //   "1.24. 07:43 수문" — Tesseract 가 "주문" 을 "수문" / "수묘" / "우문" 같은 1글자 변형으로
-  //   읽는 케이스. literal "수문|수묘|우문|주묘" 까지 흡수.
-  const ORDER_OR_PAYMENT_KW = /결제|주문|수문|수묘|우문|주묘/;
+  // extractDate 가 null 을 돌려줘도 (regex 가 못 잡아도) "주문" / "결제" 또는 그 OCR 변형 +
+  // 숫자 비율이 높으면 itemName 으로 가져가지 않는다.
+  //
+  // 변형 어휘 — extractDate 와 동기화:
+  //   결제 → 결자 / 즐제 / 글제 / 긍제 / 금지 / 결재 / 검제 / 걸제 / 갈제
+  //   주문 → 주묘 / 수문 / 우문 / 주둔 / 주몬 / 주의 / 주8 / 주둔
+  // 2026-04-27 추가: 모바일 캡쳐 mobile/09:46-06 에서 "검제", 184545 에서 "즐제"/"금지" 등이
+  // 반복 관찰. 단일 글자 변형은 char class 가 아닌 literal 로 추가해 false positive 방어.
+  const ORDER_OR_PAYMENT_KW = /결제|주문|결재|즐제|글제|긍제|금지|결자|검제|걸제|갈제|수문|수묘|우문|주묘|주둔|주몬|주의/;
   const looksLikeDateLine = (line: string): boolean => {
     if (!ORDER_OR_PAYMENT_KW.test(line)) return false;
     // 라인의 60% 이상이 숫자/구두점/공백이면 날짜 라인으로 간주.
@@ -1218,39 +1457,13 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   const FOLD_CLOSE_CTA = /총\s*(\d+)\s*건\s*주문\s*접기/; // 펼쳐진 fold 묶음 + N
   const FOLD_BARE_CLOSE = /주문\s*접기/; // 단축 변형 방어
 
-  // 접힘 상태 (대표 1개만 보임) — folded=true 로 처리
-  const foldedHint = lines.some((l) => FOLD_OPEN_CTA.test(l) || FOLD_TOTAL_OPEN_CTA.test(l));
-  // 펼쳐진 fold 묶음 (N개 카드 visible, 같은 결제) — expandedFoldGroup=true 로 처리
-  const expandedFoldGroup = lines.some((l) => FOLD_CLOSE_CTA.test(l) || FOLD_BARE_CLOSE.test(l));
-  let itemCountHint: number | undefined;
-  for (const l of lines) {
-    for (const re of [/포함\s*총\s*(\d+)\s*건/, FOLD_TOTAL_OPEN_CTA, FOLD_CLOSE_CTA]) {
-      const m = l.match(re);
-      if (m) {
-        const n = Number(m[1]);
-        if (n > 1) itemCountHint = Math.max(itemCountHint ?? 0, n);
-      }
-    }
-  }
-  let sectionTotal: number | undefined;
-  for (const l of lines) {
-    const m = l.match(/총\s*([\d,]+)\s*원/);
-    if (m) {
-      const n = Number(m[1].replace(/,/g, ''));
-      if (n > 0) sectionTotal = Math.max(sectionTotal ?? 0, n);
-    }
-  }
-  // folded 는 접힘 상태(대표 상품만 보임) 만. itemCountHint 는 양쪽 상태에서 모두 추출되므로
-  // folded 판정에는 사용하지 않음 — 펼쳐진 fold(expandedFoldGroup) 는 별도로 처리.
-  const folded = foldedHint;
-
   // 카드 추출 — status 라인을 anchor 로, 다음 status 까지 또는 LOOKAHEAD 윈도 안에서 name/price/date 1쌍.
-  const LOOKAHEAD = 8;
+  const LOOKAHEAD = 12;
   const results: PurchaseOCRResult[] = [];
   let cursor = -1;
   for (let i = 0; i < lines.length; i++) {
     if (i <= cursor) continue;
-    if (!statusRegex.test(lines[i])) continue;
+    if (!hasStatusKeyword(lines[i])) continue;
 
     const end = Math.min(lines.length, i + 1 + LOOKAHEAD);
     let name: string | null = null;
@@ -1258,7 +1471,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     let date: string | null = null;
     let cardEnd = end;
     for (let j = i + 1; j < end; j++) {
-      if (statusRegex.test(lines[j])) { cardEnd = j; break; }
+      if (hasStatusKeyword(lines[j])) { cardEnd = j; break; }
       if (price === null) {
         const c = extractPrice(lines[j]);
         if (c !== null) price = c;
@@ -1303,6 +1516,43 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       }
     }
 
+    const sectionLines = lines.slice(i, cardEnd);
+    const folded = sectionLines.some((l) => FOLD_OPEN_CTA.test(l) || FOLD_TOTAL_OPEN_CTA.test(l));
+    const expandedFoldGroup = sectionLines.some((l) => FOLD_CLOSE_CTA.test(l) || FOLD_BARE_CLOSE.test(l));
+    let itemCountHint: number | undefined;
+    for (const l of sectionLines) {
+      for (const re of [/포함\s*총\s*(\d+)\s*건/, FOLD_TOTAL_OPEN_CTA, FOLD_CLOSE_CTA]) {
+        const m = l.match(re);
+        if (!m) continue;
+        const n = Number(m[1]);
+        if (n > 1) itemCountHint = Math.max(itemCountHint ?? 0, n);
+      }
+    }
+    let sectionTotal: number | undefined;
+    for (const l of sectionLines) {
+      const m = l.match(/총\s*([\d,]+)\s*원/);
+      if (!m) continue;
+      const n = Number(m[1].replace(/,/g, ""));
+      if (n > 0) sectionTotal = Math.max(sectionTotal ?? 0, n);
+    }
+    const expandedFoldTailCount = (() => {
+      for (const l of sectionLines) {
+        const m = l.match(FOLD_CLOSE_CTA);
+        if (!m) continue;
+        const n = Number(m[1]);
+        if (n > 1) return n;
+      }
+      return undefined;
+    })();
+    const hasShippingOnly =
+      sectionLines.some((l) => /배송조회/.test(l)) &&
+      !sectionLines.some((l) => /장바구니|바로\s*구매|바로구매|한달사용리뷰/.test(l));
+    const addonCandidate = !folded && !date && hasShippingOnly;
+    if (addonCandidate && results.length > 0) {
+      const prevDate = results[results.length - 1]?.date;
+      if (prevDate) date = prevDate;
+    }
+
     results.push({
       mall,
       itemName: name,
@@ -1316,8 +1566,10 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       ...(name !== null && price === null && !folded ? { priceOcrFailed: true } : {}),
       ...(folded ? { folded: true } : {}),
       ...(expandedFoldGroup ? { expandedFoldGroup: true } : {}),
+      ...(expandedFoldTailCount ? { expandedFoldTailCount } : {}),
       ...((folded || expandedFoldGroup) && itemCountHint !== undefined ? { itemCountHint } : {}),
       ...(sectionTotal !== undefined && sectionTotal > 0 ? { sectionTotal } : {}),
+      ...(addonCandidate ? { addonCandidate: true } : {}),
     });
     cursor = cardEnd - 1;
   }
@@ -1333,11 +1585,46 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
       rawText,
       statusText: rawText,
       priceOcrFailed: true,
-      ...(folded ? { folded: true } : {}),
-      ...(expandedFoldGroup ? { expandedFoldGroup: true } : {}),
-      ...((folded || expandedFoldGroup) && itemCountHint !== undefined ? { itemCountHint } : {}),
-      ...(sectionTotal !== undefined && sectionTotal > 0 ? { sectionTotal } : {}),
     }];
+  }
+
+  // ── 동일 결제 묶음 날짜 전파 (2026-04-27 측정 기반 추가) ────────────────
+  //
+  // 네이버 펼쳐진 fold 묶음("총 N건 주문 접기") + 추가상품 묶음은 같은 결제 = 같은 날짜.
+  // 1차 파서가 라인 단위로 카드를 자르면서 일부 카드의 date 만 잡고 일부는 놓치는 케이스가
+  // 흔하다 (예: web2/10.01.50 — 1번 카드만 1.26 잡히고 2번/3번 카드는 missing_date 인데
+  // expandedFoldGroup 으로 묶일 예정). 같은 묶음 내에서 한 카드라도 날짜가 있으면 다른
+  // 카드들에 propagate 한다.
+  //
+  // 정책 §6 "정직성" 위반 우려: fold 메타가 sectionTotal 만 보존하고 가격은 추정 안 함과
+  // 같은 결의 정직성. 다만 **같은 결제** 라는 사실은 expandedFoldGroup/addonCandidate 신호로
+  // 이미 확정이라, 결제 일자 propagate 는 추정이 아니라 동일 사실의 복제. 안전.
+  for (let i = 0; i < results.length; i += 1) {
+    const r = results[i];
+    if (r.date) continue;
+    // 추가상품 candidate — 직전 카드 date 가 있으면 따라가기. (이미 위 루프에서도 처리하지만,
+    // status anchor 시점에 prev date 가 비어 있다가 후속 카드에서 채워지는 경우를 한 번 더 잡음.)
+    if (r.addonCandidate && i > 0) {
+      const prevDate = results[i - 1]?.date;
+      if (prevDate) {
+        results[i] = { ...r, date: prevDate };
+        continue;
+      }
+    }
+    // 펼쳐진 fold 묶음 — 같은 묶음 내 다른 카드의 date 로 채움.
+    if (r.expandedFoldGroup) {
+      // 같은 묶음 멤버 찾기 — 인접 expandedFoldGroup=true 카드들 (앞뒤로 스캔).
+      let groupStart = i;
+      while (groupStart > 0 && results[groupStart - 1].expandedFoldGroup) groupStart -= 1;
+      let groupEnd = i;
+      while (groupEnd + 1 < results.length && results[groupEnd + 1].expandedFoldGroup) groupEnd += 1;
+      for (let k = groupStart; k <= groupEnd; k += 1) {
+        if (results[k].date) {
+          results[i] = { ...r, date: results[k].date };
+          break;
+        }
+      }
+    }
   }
 
   return results;

@@ -222,7 +222,11 @@ export const AccountSection: React.FC = () => {
           <>
             <div>
               <div className="label">비밀번호</div>
-              <div className="sub">마지막 변경: {profile.passwordChangedAt}</div>
+              {/* passwordChangedAt이 비어 있으면(아직 변경 이력 없음) "기록 없음"으로 폴백합니다.
+                  이전에는 "마지막 변경: " 뒤가 빈 채로 콜론만 떠 있어 "데이터 누락처럼 보이는" 결함이 있었어요. */}
+              <div className="sub">
+                마지막 변경: {profile.passwordChangedAt || "기록 없음"}
+              </div>
             </div>
             <Button variant="ghost" size="sm" onClick={startPassword}>
               변경

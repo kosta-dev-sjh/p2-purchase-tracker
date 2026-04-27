@@ -57,13 +57,3 @@ export const buildTransactionSummary = (
   };
 };
 
-/** "2026-04" → "2026-03"처럼 한 달 앞 키를 반환. */
-export const getPrevMonthKey = (monthKey: string): string => {
-  const [yearStr, monthStr] = monthKey.split("-");
-  const year = Number(yearStr);
-  const month = Number(monthStr);
-  if (!year || !month) return monthKey;
-  const prevMonthIdx = month === 1 ? 12 : month - 1;
-  const prevYear = month === 1 ? year - 1 : year;
-  return `${prevYear}-${String(prevMonthIdx).padStart(2, "0")}`;
-};

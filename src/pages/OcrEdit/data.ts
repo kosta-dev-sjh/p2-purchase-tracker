@@ -22,6 +22,8 @@ export interface OcrProduct {
   id: string;
   name: string;
   price: number;
+  /** 주문/결제일. 같은 주문 안의 모든 상품이 공유하며, AI 가 개별 카드에서 회복해 올 수 있습니다. */
+  date?: string;
   /** 상품 수량. 쿠팡처럼 "1개", "2개"가 함께 찍히는 캡쳐를 감안해 기본 1. */
   quantity?: number;
   link?: string;
@@ -111,12 +113,6 @@ export interface OcrImageItem {
   rawText?: string;
   /** 이 캡쳐에서 추출된 주문 목록. 최소 1개 이상. */
   orders: OcrOrder[];
-  /**
-   * 이 이미지가 AI(Gemini Vision) 2차 확인을 거쳤는지. 개발 중 디버그 chip 노출용 플래그.
-   * 실제 값이 바뀐 카드가 없어도 "AI 가 이미지를 봤다" = `true`. 비용·게이트 튜닝 지표로 활용.
-   * 배포 전 DEBUG_OCR_AI 와 함께 제거되는 가지 — UI 에 이 값을 읽는 곳은 debug chip 뿐.
-   */
-  aiInvoked?: boolean;
   /**
    * Tesseract rawText 기반으로 자동 감지된 platform. 사용자가 platform 을 잘못 골랐을 가능성이
    * 있으면 OcrUpload 가 분석 후 confirm 모달을 띄움.

@@ -184,8 +184,8 @@ export const AddImagesModal: React.FC<AddImagesModalProps> = ({
       });
       // 결과는 상위에서 기존 images 뒤에 append 하도록 콜백으로만 돌려줍니다.
       onComplete(processed);
-    } catch (error) {
-      console.error("이미지 추가 분석 실패:", error);
+    } catch {
+      // 사용자에게는 alert로 친화적 메시지만 노출. 콘솔 디버그 로그는 정리했습니다.
       alert("이미지 분석 중 오류가 발생했습니다.");
     } finally {
       setIsAnalyzing(false);

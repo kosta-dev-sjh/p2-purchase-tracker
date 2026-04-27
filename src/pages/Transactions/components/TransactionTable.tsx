@@ -126,14 +126,15 @@ export interface TxRow {
 
 const Table = styled.div`
   display: grid;
-  /* 7번째 컬럼(카테고리 색)은 거래명과 금액 사이에 좁게 끼워 넣어서, 색 박스 + hover 툴팁만 담당합니다. */
-  grid-template-columns: 76px 110px 108px 1fr 52px 140px 96px;
+  /* 카테고리 컬럼은 색상 사각형 + 1순위 라벨을 같이 보여주기 위해 폭을 늘렸습니다.
+     이전 52/44px(색만 표시)보다 넓어져 사용자가 마우스 hover 없이도 카테고리를 인지할 수 있습니다. */
+  grid-template-columns: 76px 110px 108px 1fr 120px 140px 96px;
   font-size: 13px;
-  min-width: 730px;
+  min-width: 800px;
 
   ${media.tablet} {
-    grid-template-columns: 76px 96px 100px 1fr 44px 132px 96px;
-    min-width: 680px;
+    grid-template-columns: 76px 96px 100px 1fr 108px 132px 96px;
+    min-width: 740px;
   }
 `;
 
@@ -411,13 +412,43 @@ const DataCell = styled.div<{
  * 카테고리 색상 셀의 hover 범위. 한 거래가 여러 카테고리에 속할 수 있어
  * 정사각형들을 수평으로 나란히 배치합니다(최대 MAX_CATEGORIES_PER_TX개).
  * 부모 DataCell 폭을 가득 채워 정사각형 묶음이 컬럼 정중앙에 오게 합니다.
+ *
+ * 1순위 카테고리는 정사각형 옆에 짧은 텍스트 라벨도 함께 표시합니다(이전엔 색만 표시되어
+ * 사용자가 어떤 카테고리인지 hover로만 알 수 있었음 → 데스크톱 마우스 사용자 외에는 인지 어려움).
  */
 const CategoryCell = styled.div`
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   width: 100%;
+  min-width: 0;
+`;
+
+/**
+ * 1순위 카테고리 옆에 함께 노출하는 짧은 라벨. 다중 카테고리가 있어도 첫 번째만 표시하고
+ * 나머지는 정사각형으로 처리해 컬럼 폭을 무너뜨리지 않습니다.
+ */
+const PrimaryCategoryLabel = styled.span`
+  color: ${tokens.color.ink2};
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 70px;
+`;
+
+/**
+ * 두 번째 이후 카테고리가 있을 때 "+1" 같은 추가 카운트 표시. 컬럼 폭이 좁기 때문에
+ * 모든 라벨을 같이 적기보다 첫 번째만 라벨로, 나머지는 카운트로 압축합니다.
+ */
+const ExtraBadge = styled.span`
+  color: ${tokens.color.ink4};
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 `;
 
 /**
@@ -648,10 +679,14 @@ export const TransactionTable = memo<Props>(({
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                 </DataCell>
                 <DataCell {...common}>{row.title}</DataCell>
-                <DataCell {...common} style={{ ...common.style, padding: "12px 0" }}>
-                  {/* 색상 정사각형 + hover 툴팁. 거래에 연결된 카테고리만큼 정사각형이 늘어납니다. */}
+                <DataCell {...common} style={{ ...common.style, padding: "12px 8px" }}>
+                  {/*
+                    색상 정사각형 + 1순위 카테고리 라벨 + 추가 카운트.
+                    이전엔 색만 보여서 사용자가 어떤 카테고리인지 마우스 hover로만 확인할 수 있었어요.
+                    이제 1순위는 텍스트로 직접 노출하고, 다중 카테고리는 정사각형(+nN 배지)로 압축합니다.
+                  */}
                   <CategoryCell>
-                    {row.categories.map((cat) => (
+                    {row.categories.slice(0, 1).map((cat) => (
                       <SquareWrap key={cat}>
                         <ColorSquare
                           $color={categoryColorMap[cat]}
@@ -662,6 +697,25 @@ export const TransactionTable = memo<Props>(({
                         </CategoryTooltip>
                       </SquareWrap>
                     ))}
+                    {row.categories.length > 0 && (
+                      <PrimaryCategoryLabel title={getCategoryName(row.categories[0])}>
+                        {getCategoryName(row.categories[0])}
+                      </PrimaryCategoryLabel>
+                    )}
+                    {row.categories.slice(1).map((cat) => (
+                      <SquareWrap key={cat}>
+                        <ColorSquare
+                          $color={categoryColorMap[cat]}
+                          aria-label={getCategoryName(cat)}
+                        />
+                        <CategoryTooltip role="tooltip" $color={categoryColorMap[cat]}>
+                          {getCategoryName(cat)}
+                        </CategoryTooltip>
+                      </SquareWrap>
+                    ))}
+                    {row.categories.length > 2 && (
+                      <ExtraBadge>+{row.categories.length - 2}</ExtraBadge>
+                    )}
                   </CategoryCell>
                 </DataCell>
                 <DataCell {...common} $right>

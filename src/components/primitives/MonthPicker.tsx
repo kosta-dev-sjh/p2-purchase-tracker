@@ -37,6 +37,12 @@ interface MonthPickerProps {
    * 페이지에서 거래 데이터 기반으로 computeMinYear() 결과를 넘기면 더 옛날 데이터까지 자동 확장됩니다.
    */
   minYear?: number;
+  /**
+   * 셀렉터가 허용하는 가장 최신 "YYYY-MM" 키. 미지정 시 오늘 기준 현재 월까지만 허용.
+   * 거래 데이터에 미래 월이 섞여 있는 경우(과거 데이터 정합성) 페이지에서 computeMaxMonthKey() 결과를
+   * 넘겨 사용자가 자기 거래에 접근할 수 없는 "데이터 노출 사각지대"를 막습니다.
+   */
+  maxMonthKey?: string;
 }
 
 const Wrap = styled.div`
@@ -77,8 +83,12 @@ const StepButton = styled.button`
   }
 
   &:disabled {
-    opacity: 0.45;
+    /* 0.45 → 0.3로 더 진하게 흐리게 처리해서 "이 버튼은 안 눌려요"라는 시각 신호를 강하게 합니다.
+       이전에는 흐림이 미세해 사용자가 disabled 상태인지 인지하지 못하고 반복 클릭하는 버그처럼 느꼈어요. */
+    opacity: 0.3;
     cursor: not-allowed;
+    background: ${tokens.color.foot};
+    color: ${tokens.color.ink5};
   }
 `;
 
@@ -244,7 +254,7 @@ function parseKey(key: string): { year: number; month: number } {
 const buildKey = (year: number, month: number) =>
   `${year}-${String(month).padStart(2, "0")}`;
 
-export const MonthPicker = ({ value, onChange, minYear }: MonthPickerProps) => {
+export const MonthPicker = ({ value, onChange, minYear, maxMonthKey }: MonthPickerProps) => {
   // 화면 진입 시점 기준 "오늘". 미래 월 비활성 판정에 쓰입니다.
   // 팝업이 닫힌 채로 며칠 머물러도 다음 렌더링에서 다시 계산되므로 굳이 useState 로 묶지 않습니다.
   const today = new Date();
@@ -256,6 +266,22 @@ export const MonthPicker = ({ value, onChange, minYear }: MonthPickerProps) => {
     () => (typeof minYear === "number" ? minYear : todayYear - 5),
     [minYear, todayYear]
   );
+
+  // maxMonthKey가 주어지면 그쪽이 더 최신일 때 그 월까지 허용. 평소엔 오늘 기준이 상한.
+  const effectiveMax = useMemo(() => {
+    if (!maxMonthKey) {
+      return { year: todayYear, month: todayMonth };
+    }
+    const m = maxMonthKey.match(/^(\d{4})-(\d{1,2})$/);
+    if (!m) return { year: todayYear, month: todayMonth };
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    // 미래 데이터가 있으면 그 월까지 허용. 단 기본 보장(오늘 월)보다 작으면 오늘 월을 채택.
+    if (y * 100 + mo > todayYear * 100 + todayMonth) {
+      return { year: y, month: mo };
+    }
+    return { year: todayYear, month: todayMonth };
+  }, [maxMonthKey, todayYear, todayMonth]);
 
   const { year: selectedYear, month: selectedMonth } = parseKey(value);
 
@@ -289,11 +315,11 @@ export const MonthPicker = ({ value, onChange, minYear }: MonthPickerProps) => {
     };
   }, [open]);
 
-  /** "이 키를 선택할 수 있는가?" — minYear 보다 옛날도, 오늘 이후 미래도 거부. */
+  /** "이 키를 선택할 수 있는가?" — minYear 보다 옛날, effectiveMax 보다 미래는 거부. */
   const isSelectable = (year: number, month: number): boolean => {
     if (year < effectiveMinYear) return false;
-    if (year > todayYear) return false;
-    if (year === todayYear && month > todayMonth) return false;
+    if (year > effectiveMax.year) return false;
+    if (year === effectiveMax.year && month > effectiveMax.month) return false;
     return true;
   };
 
@@ -370,7 +396,7 @@ export const MonthPicker = ({ value, onChange, minYear }: MonthPickerProps) => {
               <StepButton
                 type="button"
                 onClick={() => setViewYear((y) => y + 1)}
-                disabled={viewYear + 1 > todayYear}
+                disabled={viewYear + 1 > effectiveMax.year}
                 aria-label="다음 년도"
               >
                 ›

@@ -166,9 +166,16 @@ users/{uid}/categories/{categoryId}
 | `memo` | string | X | 메모 |
 | `detail.items` | array | X | 상품 목록 |
 | `detail.source` | `"OCR" \| "MANUAL"` | X | 상품 상세 생성 경로 |
+| `detail.cardImport` | map | X | 카드 CSV/XLSX 원본 메타. 할부 승인/청구, 회차, 청구금액 등은 여기서만 관리 |
 | `ocrMeta` | map | X | OCR 엔진/검증/fallback 관련 메타데이터 |
 | `createdAt` | Timestamp | O | 생성 시간 |
 | `updatedAt` | Timestamp | O | 수정 시간 |
+
+정책 메모:
+
+- OCR 단독 저장 거래는 `detail.cardImport`를 추정 생성하지 않는다.
+- `detail.cardImport`는 카드 명세서 import가 원본이며, OCR 상품이 기존 카드 거래에 병합될 때만 그 메타를 간접적으로 공유한다.
+- `billing`(할부 청구건)은 OCR 상품 병합 대상이 아니다.
 
 상품 배열 항목:
 

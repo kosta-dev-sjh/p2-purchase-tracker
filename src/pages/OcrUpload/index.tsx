@@ -183,13 +183,28 @@ export const OcrUploadPage: React.FC = () => {
   });
 
   /**
+   * 이미지 0장 상태에서 "분석 시작하기"를 눌렀을 때 잠깐 노출되는 가이드 메시지.
+   * disabled 버튼이 시각적으로 흐리게 보이긴 해도, 사용자가 클릭했을 때 아무 반응이 없으면
+   * "고장난 건가?"라는 의심을 사기 쉬워서 "이미지를 먼저 올려주세요" 안내를 인라인으로 띄웁니다.
+   */
+  const [emptyHint, setEmptyHint] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!emptyHint) return;
+    const timer = window.setTimeout(() => setEmptyHint(null), 2400);
+    return () => window.clearTimeout(timer);
+  }, [emptyHint]);
+
+  /**
    * "분석 시작하기" 진입점.
    * 분석 자체는 이미지 장수만큼 Tesseract를 돌리는 무거운 작업이라, 실행 전
    * PlatformConfirmModal을 먼저 띄워 사용자에게 태그를 재확인할 기회를 줍니다.
    * 모달에서 "확인하고 분석 시작"을 누르면 handleConfirmAnalyze가 실제 파이프를 돌립니다.
    */
   const handleAnalyze = () => {
-    if (images.length === 0) return;
+    if (images.length === 0) {
+      setEmptyHint("먼저 분석할 이미지를 1장 이상 업로드해 주세요.");
+      return;
+    }
     if (isAnalyzing) return;
     setIsConfirmOpen(true);
   };
@@ -226,16 +241,32 @@ export const OcrUploadPage: React.FC = () => {
       });
 
       // ── Platform mismatch 감지 ─────────────────────────────────────────────
-      // 사용자 선택 platform 과 detectedPlatform 이 다르고 confidence ≥ 0.7 이면 mismatch.
+      // 사용자 선택 platform 과 detectedPlatform 이 다르고 confidence ≥ 0.6 이면 mismatch.
       // OCR 손상이 큰 이미지는 detectedPlatform 이 null 또는 confidence 낮음 → 알람 안 띄움.
+      // 임계값 0.6 (이전 0.7 에서 완화): 짧은 캡쳐도 mismatch 잡히도록.
+      //
+      // DevTools 콘솔에 항상 detection 결과 로그 — 사용자가 "모달이 왜 안 뜨냐" 디버깅 시 즉시
+      // 원인 확인 가능 (platform/detected/confidence 셋이 보이면 코드 흐름은 정상).
+      console.info(
+        "[OCR mismatch-detect]",
+        processedImages.map((img) => ({
+          file: img.fileName,
+          selected: img.platform,
+          detected: img.detectedPlatform ?? "(none)",
+          confidence: Math.round((img.detectionConfidence ?? 0) * 100) / 100,
+        })),
+      );
       const mismatched = processedImages.filter(
         (img) =>
           img.detectedPlatform &&
           img.detectedPlatform !== img.platform &&
-          (img.detectionConfidence ?? 0) >= 0.7,
+          (img.detectionConfidence ?? 0) >= 0.6,
       );
 
       if (mismatched.length > 0) {
+        console.info(
+          `[OCR mismatch-detect] ${mismatched.length}건 mismatch — 모달 띄움`,
+        );
         // 진행 모달 닫고 mismatch 모달로 사용자 선택을 받음. processedImages 는 store 에 아직
         // 안 넣음 — 사용자 결정 후에 반영.
         setIsAnalyzing(false);
@@ -247,8 +278,8 @@ export const OcrUploadPage: React.FC = () => {
         isAppendMode ? [...ocrStore.getImages(), ...processedImages] : processedImages,
       );
       navigate("/ocr-edit");
-    } catch (error) {
-      console.error("OCR 파싱 실패:", error);
+    } catch {
+      // 사용자에게는 alert로 친화적 메시지만 노출. 콘솔 디버그 로그는 정리했습니다.
       alert("이미지 분석 중 오류가 발생했습니다.");
     } finally {
       setIsAnalyzing(false);
@@ -271,7 +302,7 @@ export const OcrUploadPage: React.FC = () => {
       const targetPlatform =
         p.detectedPlatform &&
         p.detectionConfidence !== undefined &&
-        p.detectionConfidence >= 0.7 &&
+        p.detectionConfidence >= 0.6 &&
         p.detectedPlatform !== p.platform
           ? p.detectedPlatform
           : p.platform;
@@ -353,16 +384,38 @@ export const OcrUploadPage: React.FC = () => {
             <Button variant="ghost" size="lg" onClick={() => navigate("/upload")}>
               취소
             </Button>
+            {/*
+              이미지 0장이어도 버튼 자체는 클릭 가능하게 두고 handleAnalyze 안에서 안내 메시지를 띄웁니다.
+              disabled는 분석 중일 때만 적용해, "왜 안 눌리는지 모르겠다"는 사용자 피드백을 명시적 안내로 대체합니다.
+              시각적으로는 emptyHint가 떠있을 때 살짝 흐리게 처리해 disabled 의도도 같이 전달.
+            */}
             <Button
               variant="primary"
               size="lg"
-              disabled={images.length === 0 || isAnalyzing}
+              disabled={isAnalyzing}
               onClick={handleAnalyze}
+              style={images.length === 0 ? { opacity: 0.5 } : undefined}
             >
               {isAnalyzing ? "분석 중..." : "분석 시작하기"}
             </Button>
           </Actions>
         </Footer>
+        {emptyHint && (
+          <div
+            role="status"
+            style={{
+              padding: "10px 12px",
+              border: `1px solid ${tokens.color.warn}`,
+              borderRadius: tokens.radius.control,
+              background: tokens.color.warnBg ?? "#fffbf0",
+              color: tokens.color.warn,
+              fontSize: 12,
+              fontWeight: 600,
+            }}
+          >
+            {emptyHint}
+          </div>
+        )}
       </Wrap>
       <PlatformConfirmModal
         isOpen={isConfirmOpen}
@@ -380,7 +433,7 @@ export const OcrUploadPage: React.FC = () => {
           (img) =>
             img.detectedPlatform &&
             img.detectedPlatform !== img.platform &&
-            (img.detectionConfidence ?? 0) >= 0.7,
+            (img.detectionConfidence ?? 0) >= 0.6,
         );
         return (
           <Modal

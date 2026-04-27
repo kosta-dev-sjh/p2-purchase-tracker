@@ -152,6 +152,7 @@ export function rowsToCsvRows(
   const continuationRow = rows[headerIndex + 1] ?? [];
   const hasContinuation = looksLikeHeaderContinuationRow(continuationRow);
   const headers = baseHeaders.map((header, index) => {
+    if (!hasContinuation) return header;
     const leaf = normalizeHeaderCell(continuationRow[index] ?? "");
     return leaf || header;
   });

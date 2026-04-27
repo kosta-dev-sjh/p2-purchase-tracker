@@ -13,15 +13,17 @@ import {
   CATEGORY_LABELS,
   MAX_CATEGORIES_PER_TX,
   PLATFORM_OPTIONS,
+  sortCategoriesByStandard,
 } from "../../../constants/labels";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { useCategoriesStore } from "../../../stores/categoriesStore";
+import { todayAsDotDate } from "../../../utils/date";
 
 export type CategoryKey = keyof typeof CATEGORY_LABELS;
 
-// 표시 순서의 기준. 스토어에 동일한 id가 있으면 스토어 이름이 우선됩니다.
-const CATEGORY_ORDER: CategoryKey[] = ["living", "fashion", "digital", "food", "etc"];
+// 표시 순서는 constants/labels.STANDARD_CATEGORY_ORDER를 공유해 다른 페이지와 일관됩니다.
+// (이전에는 이 파일 안에만 있어 설정·내역 페이지와 순서가 달라지는 일관성 이슈가 있었어요.)
 
 /**
  * 수동 입력 폼의 메타 필드들. 상위 ManualEntry 페이지가 저장 버튼을 눌렀을 때
@@ -188,17 +190,12 @@ export const MetaFields: React.FC<{
   const isBillingInstallment = value.installmentKind === "installment_billing";
 
   // 카테고리 목록은 스토어 전체 항목을 사용합니다.
-  // 표준 카테고리는 기존 순서(CATEGORY_ORDER)로 먼저 정렬하고, 커스텀 카테고리는 뒤에 이어 붙입니다.
+  // 정렬 정책은 한 곳(constants/labels.sortCategoriesByStandard)에서 결정해 다른 페이지와 일관성을 맞춥니다.
   const storeCategories = useCategoriesStore();
-  const categoryOptions = [
-    ...CATEGORY_ORDER.flatMap((key) => {
-      const entry = storeCategories.find((c) => c.id === key);
-      return entry ? [{ key: entry.id, label: entry.name }] : [];
-    }),
-    ...storeCategories
-      .filter((c) => !CATEGORY_ORDER.includes(c.id as CategoryKey))
-      .map((c) => ({ key: c.id, label: c.name })),
-  ];
+  const categoryOptions = sortCategoriesByStandard(storeCategories).map((c) => ({
+    key: c.id,
+    label: c.name,
+  }));
 
   // 카테고리 상한(MAX_CATEGORIES_PER_TX)에 도달했으면 새로 추가하는 토글은 무시합니다.
   // 이미 체크된 항목을 끄는 동작은 항상 허용되어야 하므로 가드는 "체크 시도"에만 걸립니다.
@@ -262,11 +259,15 @@ export const MetaFields: React.FC<{
         <FormField label="거래일자" required>
           {/* 저장 포맷("YYYY.MM.DD")을 그대로 주고받을 수 있는 커스텀 DatePicker.
               네이티브 <input type="date">는 브라우저마다 팝업 UI가 달라 디자인 통일이 어려워
-              앱 토큰과 같은 결을 쓰는 자체 캘린더로 교체했습니다. */}
+              앱 토큰과 같은 결을 쓰는 자체 캘린더로 교체했습니다.
+              maxDate=오늘로 미래 날짜 선택을 차단합니다. 거래일자는 이미 발생한 결제만 의미가 있고,
+              미래로 입력하면 거래 내역 페이지가 미래 달로 점프해 사용자가 거래를 다시 못 찾는
+              데이터 노출 이슈가 생깁니다. */}
           <DatePicker
             id={`${fieldIdPrefix}-date`}
             value={value.date}
             onChange={(next) => patch({ date: next })}
+            maxDate={todayAsDotDate()}
             aria-label="거래일자"
           />
         </FormField>

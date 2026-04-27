@@ -14,7 +14,7 @@ import type {
 } from "../Transactions/components/TransactionTable";
 import { tokens } from "../../styles/tokens";
 import { PLATFORM_LABELS } from "../../constants/labels";
-import { getPrevMonthKey } from "../Transactions/data";
+import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
 
 export interface HomeMockData {
   kpis: KpiItem[];
@@ -22,6 +22,12 @@ export interface HomeMockData {
   trend: { points: { label: string; value: number }[] };
   recent: RecentItem[];
   insights: InsightItem[];
+  /**
+   * 사용자가 보고 있는 월에 따라 동적으로 바뀌는 라벨. 현재 월이면 "이번 달", 과거/미래 월이면
+   * "YYYY년 M월". 화면 곳곳의 카피("이번 달 …")가 헤더 월에 맞춰 같이 변하도록 빌더에서 한 번 만들어
+   * UI로 전달합니다.
+   */
+  periodLabel: string;
 }
 
 /** "2026.04.19" → "2026-04" */
@@ -239,6 +245,19 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
   const thisMonth = rows.filter((row) => toMonthKey(row.date) === monthKey);
   const prevMonth = rows.filter((row) => toMonthKey(row.date) === getPrevMonthKey(monthKey));
 
+  // 사용자가 보고 있는 월이 "오늘이 속한 월(현재 월)"인지에 따라 라벨이 달라집니다.
+  // 현재 월이면 "이번 달", 과거/미래 월이면 "YYYY년 M월" 식으로 동적으로 바꿔서
+  // 3월을 보면서 "이번 달 지출이 없어요"라는 어색한 문구가 뜨던 일관성 이슈를 해결합니다.
+  const isCurrentMonth = monthKey === getCurrentMonthKey();
+  const monthLabel = (() => {
+    const [yearStr, mStr] = monthKey.split("-");
+    const y = Number(yearStr);
+    const m = Number(mStr);
+    if (!y || !m) return monthKey;
+    return `${y}년 ${m}월`;
+  })();
+  const periodLabel = isCurrentMonth ? "이번 달" : monthLabel;
+
   const totalSpend = sumSpend(thisMonth);
   const prevSpend = sumSpend(prevMonth);
 
@@ -272,7 +291,7 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
       label: "총 지출",
       value: totalSpend,
       primary: true,
-      neuChip: "이번 달",
+      neuChip: periodLabel,
       ...(prevSpend > 0
         ? {
             delta: {
@@ -281,7 +300,7 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
             },
           }
         : {}),
-      sub: purchaseCount === 0 ? "이번 달 지출이 없어요." : `쇼핑 ${purchaseCount}건 기준`,
+      sub: purchaseCount === 0 ? `${periodLabel} 지출이 없어요.` : `쇼핑 ${purchaseCount}건 기준`,
       spark: monthSpark(rows, monthKey),
     },
     {
@@ -296,7 +315,7 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
             },
           }
         : {}),
-      sub: purchaseCount > 0 ? `쇼핑 ${purchaseCount}건 기준` : "이번 달 주문이 없어요.",
+      sub: purchaseCount > 0 ? `쇼핑 ${purchaseCount}건 기준` : `${periodLabel} 주문이 없어요.`,
     },
     {
       key: "income",
@@ -314,7 +333,7 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
       dotColor: tokens.color.neg,
       sub:
         cancelRows.length === 0
-          ? "이번 달 취소 내역 없음"
+          ? `${periodLabel} 취소 내역 없음`
           : cancelRows.length === 1
             ? `취소 1건 · ${cancelRows[0].title}`
             : `취소 ${cancelRows.length}건`,
@@ -355,5 +374,6 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
     trend: { points: buildTrendPoints(rows, monthKey) },
     recent: buildRecent(rows, monthKey),
     insights: buildInsights(rows, monthKey),
+    periodLabel,
   };
 };

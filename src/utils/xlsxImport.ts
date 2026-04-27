@@ -39,7 +39,6 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
   if (workbook.SheetNames.length === 0) return "";
 
   const chunks: string[] = [];
-  const dropped: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     // readXlsxAsRows와 동일한 옵션으로 날짜를 제대로 포맷합니다.
@@ -53,7 +52,7 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
     // 2차원 배열을 CSV 텍스트로 변환 (쉼표 포함 셀은 따옴표로 감싸기)
     const csv = aoa.map((row) => row.map(escapeCSVCell).join(",")).join("\n");
     if (!looksLikeDataSheet(csv)) {
-      dropped.push(sheetName);
+      // 데이터 시트로 판정되지 않은 시트는 AI 전달 대상에서 제외합니다(노이즈 감소).
       continue;
     }
     chunks.push(`--- Sheet: ${sheetName} ---\n${csv}`);
@@ -74,11 +73,6 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
       const csv = aoa.map((row) => row.map(escapeCSVCell).join(",")).join("\n");
       return `--- Sheet: ${name} ---\n${csv}`;
     }).join("\n\n");
-  }
-
-  if (dropped.length > 0) {
-    // 디버깅용 로그: 어떤 시트가 제거되었는지 개발 중에 바로 보이도록.
-    console.log("[xlsxImport] AI 전달에서 제외한 시트:", dropped);
   }
 
   return chunks.join("\n\n");

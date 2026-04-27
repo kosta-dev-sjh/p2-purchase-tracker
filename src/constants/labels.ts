@@ -58,6 +58,43 @@ export const CATEGORY_LABELS = {
 export const DEFAULT_CATEGORY_KEY = "etc" as const;
 
 /**
+ * 표준 카테고리의 표시 순서. 모든 화면(설정·카테고리 목록, 수동입력 칩, 내역 필터)이 이 순서를
+ * 공유해 페이지마다 정렬이 다르던 일관성 이슈(QA #26)를 해소합니다.
+ *
+ * 정책: 일상 빈도가 높은 순으로 living → fashion → digital → food, 마지막에 폴백 etc. 커스텀
+ * 카테고리는 이 표 뒤에 사용자가 추가한 순으로 이어 붙입니다.
+ */
+export const STANDARD_CATEGORY_ORDER = [
+  "living",
+  "fashion",
+  "digital",
+  "food",
+  "etc",
+] as const;
+
+/**
+ * categoryEntries(또는 동등한 {id, name}[])를 STANDARD_CATEGORY_ORDER에 맞춰 안정적으로 정렬합니다.
+ * 표준 키는 위 표 순서로, 그 외(custom_*)는 입력된 순서를 그대로 유지해 사용자 정의 순서가 뒤섞이지 않습니다.
+ */
+export function sortCategoriesByStandard<T extends { id: string }>(items: ReadonlyArray<T>): T[] {
+  const standardIndex = new Map<string, number>(
+    STANDARD_CATEGORY_ORDER.map((key, idx) => [key, idx])
+  );
+  const standard: T[] = [];
+  const custom: T[] = [];
+  for (const item of items) {
+    if (standardIndex.has(item.id)) standard.push(item);
+    else custom.push(item);
+  }
+  standard.sort(
+    (a, b) =>
+      (standardIndex.get(a.id) ?? Number.MAX_SAFE_INTEGER) -
+      (standardIndex.get(b.id) ?? Number.MAX_SAFE_INTEGER)
+  );
+  return [...standard, ...custom];
+}
+
+/**
  * 한 거래(영수증)가 가질 수 있는 카테고리 최대 개수.
  * - 대부분의 거래는 1개로 충분하지만 대형몰(이마트·쿠팡 종합)처럼 2~3개가 자연스러운 케이스가 있어 3으로 열어둡니다.
  * - 4개 이상은 실질적으로 "여러 상품의 묶음 영수증"이라 UI/분석을 위해서는 상품(items) 단위로 쪼개는 편이 맞고,

@@ -145,10 +145,15 @@ const CenterLabel = styled.div`
   }
 `;
 
-export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
-  total,
-  items,
-}) => {
+export const PlatformDonut: React.FC<{
+  total: number;
+  items: DonutItem[];
+  /**
+   * 카드 내 "이번 달 …" 라벨에 들어갈 기간 표시. 현재 월이면 "이번 달", 아니면 "YYYY년 M월".
+   * 미지정 시 과거 호환을 위해 "이번 달"로 폴백합니다.
+   */
+  periodLabel?: string;
+}> = ({ total, items, periodLabel = "이번 달" }) => {
   const [mode, setMode] = useState<Mode>("amount");
 
   const countTotal = useMemo(
@@ -181,7 +186,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
   }, [items, mode, countTotal]);
 
   const centerAmount = mode === "amount" ? formatKRW(total) : `${countTotal}건`;
-  const centerCaption = mode === "amount" ? "이번 달 총소비" : "이번 달 총 주문";
+  const centerCaption = mode === "amount" ? `${periodLabel} 총소비` : `${periodLabel} 총 주문`;
 
   return (
     <Card>
@@ -189,7 +194,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
         <HeaderRow>
           <div>
             <CardTitle>플랫폼별 소비 비중</CardTitle>
-            <CardSub>이번 달 기준</CardSub>
+            <CardSub>{periodLabel} 기준</CardSub>
           </div>
           <SegmentedControl<Mode>
             value={mode}
@@ -253,7 +258,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
         </Body>
       </CardBd>
       <CardFoot>
-        <span>이번 달 총 {countTotal}건</span>
+        <span>{periodLabel} 총 {countTotal}건</span>
         <span className="tnum" style={{ fontWeight: 600, color: tokens.color.ink2 }}>
           {items.length}개 플랫폼
         </span>

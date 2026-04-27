@@ -16,6 +16,7 @@ import { RecentTransactions } from "./components/RecentTransactions";
 import { InsightCards } from "./components/InsightCards";
 import { buildHomeData } from "./data";
 import {
+  computeMaxMonthKey,
   computeMinYear,
   getCurrentMonthKey,
   getMonthOption,
@@ -90,6 +91,11 @@ export const HomePage: React.FC = () => {
     () => computeMinYear(rows.map((row) => row.date)),
     [rows]
   );
+  // 미래 거래(과거 데이터 정합 케이스)가 있으면 그 월까지 노출. 새 거래는 거래일자 maxDate로 차단됩니다.
+  const pickerMaxMonth = useMemo(
+    () => computeMaxMonthKey(rows.map((row) => row.date)),
+    [rows]
+  );
 
   const { getInsight, setInsight } = useAiInsightsStore();
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -146,8 +152,15 @@ export const HomePage: React.FC = () => {
       title="최신 소비 요약"
       headerRight={
         <HeaderRight>
-          <MonthPicker value={month} onChange={setMonth} minYear={pickerMinYear} />
-          <DateStamp>{monthOption.stamp}</DateStamp>
+          <MonthPicker
+            value={month}
+            onChange={setMonth}
+            minYear={pickerMinYear}
+            maxMonthKey={pickerMaxMonth}
+          />
+          {/* "오늘:" 라벨을 명시해 헤더 월(선택한 달)과 우상단 stamp(오늘 날짜)의 의미가 헷갈리지 않게 합니다.
+              이전에는 "2026.04.27"만 적혀 있어 사용자가 헤더의 "2026년 3월"과 무엇이 다른지 한눈에 못 알아챘어요. */}
+          <DateStamp>오늘: {monthOption.stamp}</DateStamp>
         </HeaderRight>
       }
     >
@@ -158,7 +171,11 @@ export const HomePage: React.FC = () => {
           <KpiStrip kpis={data.kpis} />
         </div>
         <Row2>
-          <PlatformDonut total={data.platformDonut.total} items={data.platformDonut.items} />
+          <PlatformDonut
+            total={data.platformDonut.total}
+            items={data.platformDonut.items}
+            periodLabel={data.periodLabel}
+          />
           <TrendChart points={data.trend.points} />
         </Row2>
         <RecentTransactions items={data.recent} />

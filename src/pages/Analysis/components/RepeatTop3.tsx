@@ -89,6 +89,18 @@ const Amount = styled.span`
   font-variant-numeric: tabular-nums;
 `;
 
+/**
+ * 같은 상품을 여러 번 사지 않은 달에는 카드 본문이 빈 박스가 됩니다. 빈 박스 대신
+ * "반복 구매 흐름이 아직 없어요" 라는 안내를 띄워 카드의 의미를 분명하게 합니다.
+ */
+const EmptyState = styled.div`
+  padding: 28px 12px;
+  text-align: center;
+  color: ${tokens.color.ink4};
+  font-size: 12.5px;
+  line-height: 1.55;
+`;
+
 export const RepeatTop3: React.FC<{ items: RepeatItem[] }> = ({ items }) => (
   <Card>
     <CardHd>
@@ -96,26 +108,34 @@ export const RepeatTop3: React.FC<{ items: RepeatItem[] }> = ({ items }) => (
       <Chip $tone="info">이번 달 3회 이상 구매</Chip>
     </CardHd>
     <CardBd>
-      <List>
-        {items.map((item) => {
-          const style = RANK_STYLE[item.rank];
-          return (
-            <Row key={item.rank}>
-              <Rank $bg={style.bg} $fg={style.fg}>
-                {item.rank}
-              </Rank>
-              <div>
-                <Title>{item.title}</Title>
-                <Meta>
-                  {item.platform} · {item.category}
-                </Meta>
-              </div>
-              <Count>{item.count}회</Count>
-              <Amount>{formatKRW(item.amount)}</Amount>
-            </Row>
-          );
-        })}
-      </List>
+      {items.length === 0 ? (
+        <EmptyState>
+          이번 달 반복 구매 흐름이 아직 없어요.
+          <br />
+          같은 상품을 여러 번 사면 여기에 표시돼요.
+        </EmptyState>
+      ) : (
+        <List>
+          {items.map((item) => {
+            const style = RANK_STYLE[item.rank];
+            return (
+              <Row key={item.rank}>
+                <Rank $bg={style.bg} $fg={style.fg}>
+                  {item.rank}
+                </Rank>
+                <div>
+                  <Title>{item.title}</Title>
+                  <Meta>
+                    {item.platform} · {item.category}
+                  </Meta>
+                </div>
+                <Count>{item.count}회</Count>
+                <Amount>{formatKRW(item.amount)}</Amount>
+              </Row>
+            );
+          })}
+        </List>
+      )}
     </CardBd>
   </Card>
 );

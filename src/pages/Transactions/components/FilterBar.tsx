@@ -4,7 +4,11 @@
  */
 import { memo, useRef, useState } from "react";
 import styled, { css } from "styled-components";
-import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
+import {
+  PLATFORM_LABELS,
+  STATUS_LABELS,
+  sortCategoriesByStandard,
+} from "../../../constants/labels";
 import { SegmentedControl } from "../../../components/primitives/SegmentedControl";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
@@ -340,7 +344,9 @@ export const FilterBar = memo(({
   onStatusChange,
   onInstallmentChange,
 }: FilterBarProps) => {
-  const storeCategories = useCategoriesStore();
+  // store 순서를 그대로 쓰면 페이지마다 카테고리 순서가 달라 일관성이 깨집니다.
+  // 정책 sortCategoriesByStandard로 통일해 설정/수동입력/내역 필터 모두 같은 순서를 보여줍니다.
+  const storeCategories = sortCategoriesByStandard(useCategoriesStore());
   // 모바일 아이콘 바 상태. 검색/필터 패널은 서로 독립적으로 열고 닫힐 수 있습니다.
   // 검색어가 이미 들어가 있는 상태로 페이지에 다시 들어오면 검색 패널을 자동으로 펼쳐 두어,
   // 사용자가 "왜 필터링이 되어 있지?" 하고 당황하지 않게 합니다.

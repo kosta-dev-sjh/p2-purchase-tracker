@@ -98,6 +98,7 @@ function countMatches(s: string, re: RegExp): number {
 export function classifyOcrCardQuality(card: {
   name: string | null | undefined;
   price: number;
+  date?: string;
   quantity?: number;
   statusTag?: "purchase" | "sub" | "cancel" | "refund";
   /** Tesseract 가 가격을 아예 못 읽었을 때 true. price===0 이어도 AI 자동 호출 대상이 됨. */
@@ -113,6 +114,7 @@ export function classifyOcrCardQuality(card: {
   const hangulRatio =
     nonSpaceLen > 0 ? hangulCount / nonSpaceLen : 0;
   const price = card.price ?? 0;
+  const hasDate = !!(card.date ?? "").trim();
   const isCancelLike =
     card.statusTag === "cancel" || card.statusTag === "refund";
 
@@ -131,6 +133,12 @@ export function classifyOcrCardQuality(card: {
   //   가능성이 높으므로 안전하게 AI 대상으로 올립니다.
   if ((card.quantity ?? 1) >= 10) {
     badReasons.push(`비정상 수량 (qty=${card.quantity})`);
+  }
+
+  // B0b (2026-04-27). 지출 추적에서 날짜는 금액만큼 핵심 필드입니다. 현재 파이프라인은 AI 가
+  // 날짜를 회복할 수 있으므로, 이름/가격이 있는데 날짜가 비면 자동 보정 대상으로 올립니다.
+  if (!hasDate && nameLen > 0 && (price > 0 || card.priceOcrFailed)) {
+    badReasons.push("주문/결제 날짜 누락");
   }
 
   // B1. 이름이 비었거나 한글 3 글자 미만 → 사람이 이해 못 함.
@@ -399,6 +407,13 @@ export function classifyOcrCardQuality(card: {
     badReasons.push("연속 slash 파편");
   }
 
+  // B3x (2026-04-27). 선두 조사/단일 음절 찌꺼기 + 공백 + 본문.
+  //   예: "개 체크미...", "을 띠테르..." 처럼 상품명 앞에 한 글자 토막이 남아있는 케이스.
+  //   정상 상품명에서 선두가 조사 1글자로 시작하는 경우는 매우 드물어 AI 승격 신호로 사용.
+  if (/^(?:개|을|를|의|이|가)\s+[가-힣]/.test(name) && nameLen >= 12) {
+    badReasons.push("선두 조사 1글자 파편");
+  }
+
   // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.
   //   `박스 심플`, `이는` 같은 정상 한국 상품명의 내부 공백까지 OCR 분리로 오인해, 샘플 23장 중
   //   52% 가 AI 트리거로 올라가면서 "1차 필터" 의 비용 절약 목적이 희석됐습니다.
@@ -447,6 +462,7 @@ export function classifyOcrCardQuality(card: {
 export function pickBadProducts<T extends {
   name: string | null | undefined;
   price: number;
+  date?: string;
   quantity?: number;
   priceOcrFailed?: boolean;
   aiApplied?: boolean;
@@ -485,6 +501,7 @@ export function summarizeOrderQuality(order: OcrOrder) {
     classifyOcrCardQuality({
       name: p.name,
       price: p.price,
+      date: p.date,
       quantity: p.quantity,
       statusTag: order.statusTag,
     }),
@@ -511,6 +528,7 @@ export function summarizeImageQuality(image: OcrImageItem) {
     classifyOcrCardQuality({
       name: product.name,
       price: product.price,
+      date: product.date,
       quantity: product.quantity,
       statusTag: order.statusTag,
     }),

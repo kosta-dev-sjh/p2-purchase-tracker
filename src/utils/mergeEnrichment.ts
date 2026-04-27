@@ -19,7 +19,7 @@ import type {
 import type { ItemDiffEntry } from "./duplicateCheck";
 
 /** 충돌·보강 대상이 되는 필드 키. products는 별도 흐름으로 처리해서 제외. */
-export type EnrichableField = "platform" | "memo" | "categories";
+type EnrichableField = "platform" | "memo" | "categories";
 
 /** 기존 거래에 옮겨 심을 수 있는 "자동 보강" 항목. */
 export interface AutoFill {
@@ -32,8 +32,8 @@ export interface AutoFill {
   patch: Partial<TxRow>;
 }
 
-/** 사용자 개입이 필요한 충돌 항목. */
-export interface ConflictItem {
+/** 사용자 개입이 필요한 충돌 항목 (현재는 EnrichmentPlan 내부 참조용). */
+interface ConflictItem {
   field: EnrichableField;
   existingDisplay: string;
   incomingDisplay: string;
@@ -188,8 +188,3 @@ export function combinePatches(patches: Array<Partial<TxRow>>): Partial<TxRow> {
   return patches.reduce((acc, patch) => ({ ...acc, ...patch }), {} as Partial<TxRow>);
 }
 
-export const ENRICHABLE_FIELD_LABEL: Record<EnrichableField, string> = {
-  platform: "플랫폼",
-  memo: "메모",
-  categories: "카테고리",
-};

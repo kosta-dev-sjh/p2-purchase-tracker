@@ -17,7 +17,7 @@ import type {
 } from "../Transactions/components/TransactionTable";
 import { tokens } from "../../styles/tokens";
 import { PLATFORM_LABELS, CATEGORY_LABELS } from "../../constants/labels";
-import { getPrevMonthKey } from "../Transactions/data";
+import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
 
 export interface AnalysisMockData {
   summary: string;
@@ -370,11 +370,16 @@ function buildSummary(
   thisMonth: TxRow[],
   prevMonth: TxRow[],
   category: CategoryBarItem[],
-  platform: { items: PlatformBarItem[]; totalSpend: number }
+  platform: { items: PlatformBarItem[]; totalSpend: number },
+  /**
+   * 본문 카피에 들어갈 기간 라벨. 사용자가 보는 월이 현재 월이면 "이번 달", 과거 월이면 "YYYY년 M월".
+   * 헤더 알림은 이 값으로 깔끔하게 통일해서 "이번 달 요약 / 2026년 3월 요약" 두 케이스 모두 자연스럽게 합니다.
+   */
+  periodLabel: string,
 ): string {
   const totalSpend = sumSpend(thisMonth);
   if (totalSpend === 0) {
-    return "이번 달은 아직 집계할 지출이 없어요. 거래를 입력하면 요약이 채워져요.";
+    return `${periodLabel}은 아직 집계할 지출이 없어요. 거래를 입력하면 요약이 채워져요.`;
   }
   const prevSpend = sumSpend(prevMonth);
   const deltaText =
@@ -382,7 +387,7 @@ function buildSummary(
       ? `지난달 대비 **지출은 ${totalSpend >= prevSpend ? "+" : "−"}${Math.abs(
           Math.round(((totalSpend - prevSpend) / prevSpend) * 1000) / 10,
         ).toFixed(1)}%** ${totalSpend >= prevSpend ? "증가" : "감소"}했어요.`
-      : "이번 달이 첫 집계라 비교 기준은 아직 없어요.";
+      : `${periodLabel}이 첫 집계라 비교 기준은 아직 없어요.`;
   const topCategory = category[0];
   const topPlatform = [...platform.items].sort((a, b) => b.value - a.value)[0];
   const parts: string[] = [];
@@ -393,7 +398,7 @@ function buildSummary(
     parts.push(`**${topPlatform.label}** 비중이 가장 높아요`);
   }
   const composition = parts.length > 0 ? `${parts.join(", ")}. ` : "";
-  return `이번 달은 ${composition}${deltaText}`;
+  return `${periodLabel}은 ${composition}${deltaText}`;
 }
 
 export const buildAnalysisData = (
@@ -410,6 +415,18 @@ export const buildAnalysisData = (
   const thisMonth = rows.filter((row) => toMonthKey(row.date) === monthKey);
   const prevMonth = rows.filter((row) => toMonthKey(row.date) === getPrevMonthKey(monthKey));
 
+  // 페이지 카피의 일관성을 위해 한 곳에서 라벨을 결정합니다. 현재 월이면 "이번 달", 과거/미래 월이면
+  // "YYYY년 M월". buildSummary에 그대로 흘려보내 본문 안내문도 따라 바뀌게 합니다.
+  const isCurrentMonth = monthKey === getCurrentMonthKey();
+  const periodLabel = (() => {
+    if (isCurrentMonth) return "이번 달";
+    const [yearStr, mStr] = monthKey.split("-");
+    const y = Number(yearStr);
+    const m = Number(mStr);
+    if (!y || !m) return monthKey;
+    return `${y}년 ${m}월`;
+  })();
+
   const platform = buildPlatform(thisMonth);
   const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap);
   const repeat = buildRepeat(thisMonth, categoryNameMap);
@@ -417,7 +434,7 @@ export const buildAnalysisData = (
   const trend = buildTrend(rows, monthKey);
   const weekly = buildWeekly(thisMonth);
   const kpis = buildKpis(thisMonth, prevMonth);
-  const summary = buildSummary(thisMonth, prevMonth, category, platform);
+  const summary = buildSummary(thisMonth, prevMonth, category, platform, periodLabel);
 
   return {
     summary,
