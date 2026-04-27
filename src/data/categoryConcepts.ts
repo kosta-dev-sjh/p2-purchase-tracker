@@ -67,6 +67,15 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /더벤티|the ?venti/i,
       /카페베네/i,
       /커피/i, // 넓은 백업 — "동네커피" 류 포착
+      // 베이커리/디저트는 카페와 한 바구니로 묶는 게 가계부 UX 표준(뱅크샐러드 "카페/간식").
+      // 동네 빵집 가맹점명에 "베이커리"·"빵"·"제과"가 흔히 들어와서 long-tail 회수율을 올림.
+      /베이커리|bakery/i,
+      /빵집|제과점|제과|뚜레쥬르|tous ?les ?jours|파리바게트|paris ?baguette/i,
+      /도넛|donut|크리스피크림|krispy/i,
+      /마카롱|macaron/i,
+      /빙수|설빙/i,
+      /아이스크림|ice ?cream|배스킨라빈스|baskin/i,
+      /디저트|dessert/i,
     ],
     fallbackStandard: "food",
   },
@@ -74,7 +83,10 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
     id: "delivery",
     aliases: ["배달", "딜리버리", "delivery"],
     patterns: [
+      // "배달의민족" 결제는 카드 명세서에서 운영사 법인명인 "우아한형제들"로 찍히는 경우가 압도적으로 많아
+      // 브랜드명만 잡으면 거의 못 잡는다. 두 표기 모두 공식 패턴으로 끌어올림.
       /배달의민족|배민/i,
+      /우아한\s*형제들|woowa(?:hanbros|brothers)?/i,
       /요기요|yogiyo/i,
       /쿠팡이츠|coupang ?eats/i,
       /땡겨요/i,
@@ -92,6 +104,7 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /세븐일레븐|7[- ]?eleven|7-?11/i,
       /이마트24|emart24/i,
       /미니스톱|ministop/i,
+      /편의점/i, // "OO편의점" 동네 점포 일반 백업
     ],
     fallbackStandard: "food",
   },
@@ -106,6 +119,10 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /트레이더스|traders/i,
       /하나로마트/i,
       /노브랜드|no ?brand/i,
+      // 다이소는 분류상 "생활용품 마트"에 가까워 mart concept으로 흡수.
+      // 슈퍼마켓 일반 단어도 동네 장보기를 잡기 위해 함께 추가.
+      /다이소|daiso/i,
+      /슈퍼마켓|super ?market/i,
     ],
     fallbackStandard: "living",
   },
@@ -132,6 +149,33 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /김밥/i,
       /분식/i,
       /식당/i,
+      // ── 일반 명사 매칭 레이어 ──────────────────────────────────────────
+      // 가맹점 고유명("싸움의고수" 같은 동네 가게)은 일일이 못 잡지만,
+      // 메뉴군 단어가 상호에 거의 항상 들어가는 한국 식음업 특성을 활용해
+      // 키워드 한 줄로 long-tail을 광범위하게 회수한다.
+      // 너무 일반적인 단어("집/방/마을/동")는 오탐 폭이 너무 커 의도적으로 제외.
+      /치킨|chicken/i, // 치킨집 long-tail (싸움의고수, 처갓집 등 포함)
+      /피자|pizza/i,
+      /버거|burger/i,
+      /삼겹살|돼지갈비|소갈비|등심|안창살|차돌박이/i,
+      /국밥|해장국|순댓?국|곰탕|설렁탕|육개장/i,
+      /떡볶이|떡볶기/i,
+      /돈까스|돈가스|katsu|카츠/i,
+      /라멘|라면|우동|소바/i,
+      /짜장|짬뽕|중국집|중화요리/i,
+      /파스타|pasta|이탈리안|italian/i,
+      /횟집|회집|sushi(?!-?roll)/i,
+      /족발|보쌈/i,
+      /곱창|막창|대창/i,
+      /찜닭|찜갈비|닭갈비/i,
+      /샤브샤브|훠궈|hot ?pot/i,
+      /샐러드|salad/i, // 샐러바웃 등 회수
+      /브런치|brunch/i,
+      /비스트로|bistro|다이닝|dining/i,
+      /주점|호프|선술집|이자카야|izakaya|pub|\bbar\b(?!ber)/i,
+      /한식|중식|일식|양식|뷔페|buffet/i,
+      /토스트|toast|샌드위치|sandwich/i,
+      /포케|poke|타코|taco|쌀국수|pho/i,
     ],
     fallbackStandard: "food",
   },
@@ -183,23 +227,33 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /chatgpt|openai/i,
       /claude\.ai|anthropic/i,
       /gemini ?(advanced|premium)/i,
+      /cursor\.(?:com|sh)|cursor ?ai/i,
+      /perplexity/i,
+      /github(?: ?copilot)?|gh ?copilot/i,
       /notion|노션/i,
       /figma|피그마/i,
+      /linear\.app|linear/i, // 가맹점명에 단독 "linear"가 잘 안 오므로 도메인 우선
       /밀리의서재|밀리 ?서재/i,
       /리디|ridi/i,
       /쿠팡\s*플레이|coupang ?play/i,
       /네이버\s*플러스|naver ?plus/i,
       /쿠팡\s*와우/i,
+      /배민\s*클럽|배달의민족\s*클럽/i,
     ],
     fallbackStandard: "etc",
   },
   {
     id: "telecom",
-    aliases: ["통신", "통신비", "telecom", "mobile"],
+    aliases: ["통신", "통신비", "telecom", "mobile", "인터넷"],
     patterns: [
       /\bSKT\b|에스케이텔레콤|sk ?telecom/i,
+      // 인터넷·IPTV 회선은 모회선과 별도 청구되어 "SK브로드밴드/KT 인터넷/엘지유플러스" 같은 표기로 들어옴.
+      // 모바일과 같이 통신비로 묶는 게 가계부 UX 표준이라 telecom 한 바구니에 둠.
+      /SK ?브로드밴드|에스케이\s*브로드밴드|skb(?:roadband)?/i,
       /\bKT\b(?!X)/i,
+      /KT ?인터넷|KT ?olleh|olleh ?tv/i,
       /LG ?U\+?|유플러스|lg ?uplus/i,
+      /엘지\s*유플러스|엘지\s*유플\+?/i,
       /알뜰폰|mvno/i,
       /통신요금|통신료/i,
     ],
@@ -289,8 +343,19 @@ export const CATEGORY_CONCEPTS: CategoryConcept[] = [
       /네이처리퍼블릭|nature ?republic/i,
       /에뛰드|etude/i,
       /시코르|chicor/i,
-      /미용실|헤어샵|hair ?shop/i,
-      /네일샵|nail ?shop/i,
+      // 헤어/뷰티 살롱은 별도 concept으로 떼지 않고 beauty에 합류 — 가계부 표준 분류와 일치.
+      // 일반 명사 회수율을 위해 헤어/바버/살롱/두피/네일/속눈썹까지 보강.
+      // 한국 미용실 브랜드는 거의 "OO헤어"(준오헤어/이가자헤어/박승철헤어) 형태라 "헤어" 단독 키워드도 포함.
+      // 헤어드라이어/헤어밴드 같은 잡음은 mart·beauty 화장품 패턴이 먼저 매칭되어 큰 영향 없고,
+      // 어차피 beauty concept 안에 머무는 잡음이라 다른 카테고리로 새지도 않음.
+      /미용실|헤어 ?샵|헤어 ?샾|헤어 ?살롱|헤어|hair ?(?:shop|salon)/i,
+      /바버 ?샵|barber ?shop|barbershop/i,
+      // \b는 한글 경계에서 동작하지 않으므로 한글 키워드는 그냥 부분 매칭으로 둔다.
+      // 영문 salon만 단어 경계 적용 (\b)으로 "salonpas" 같은 노이즈 회피.
+      /살롱|\bsalon\b/i,
+      /네일 ?샵|nail ?shop|네일아트/i,
+      /속눈썹|아이래쉬|eyelash/i,
+      /두피 ?케어|왁싱|waxing/i,
     ],
     fallbackStandard: "etc",
   },
