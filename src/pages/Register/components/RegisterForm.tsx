@@ -88,8 +88,8 @@ export const RegisterForm: React.FC = () => {
           setAgreeError(true);
           return;
         }
-        if (!name.trim()) {
-          setError("이름을 입력해 주세요.");
+        if (name.trim().length < 2) {
+          setError("이름은 2자 이상 입력해 주세요.");
           return;
         }
         if (!email.trim()) {
@@ -100,11 +100,11 @@ export const RegisterForm: React.FC = () => {
           setError("비밀번호를 입력해 주세요.");
           return;
         }
-        if (password.length < 8) {
-          setError("비밀번호는 8자 이상이어야 해요.");
+        if (password.trim().length < 8) {
+          setError("비밀번호는 공백 제외 8자 이상이어야 해요.");
           return;
         }
-        if (!/\d/.test(password)) {
+        if (!/\d/.test(password.trim())) {
           setError("비밀번호에 숫자를 포함해 주세요.");
           return;
         }
