@@ -8,7 +8,7 @@
  *       바로 TxRow.date에 넣어도 됩니다.
  * 위치: src\components\primitives\DatePicker.tsx
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import styled from "styled-components";
 import { tokens } from "../../styles/tokens";
 import {
@@ -110,11 +110,12 @@ const Trigger = styled.button<{ $open: boolean; $empty: boolean; $size: "sm" | "
 /**
  * 팝오버 패널. 트리거 바로 아래에 4px 간격으로 띄워 띄어보이지 않게 합니다.
  * 카드와 같은 shadow/radius를 써 '설정 · 카테고리 모달' 등 다른 플로팅 UI와 결을 맞춥니다.
+ * $alignRight: 뷰포트 오른쪽 경계를 벗어날 때 자동으로 right: 0 로 전환합니다.
  */
-const Popover = styled.div`
+const Popover = styled.div<{ $alignRight: boolean }>`
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  ${({ $alignRight }) => ($alignRight ? "right: 0;" : "left: 0;")}
   z-index: 20;
   width: 264px;
   padding: 12px;
@@ -342,7 +343,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const maxIso = maxDate && isValidDotDate(maxDate) ? toIsoDate(maxDate) : undefined;
   const minIso = minDate && isValidDotDate(minDate) ? toIsoDate(minDate) : undefined;
   const [open, setOpen] = useState(false);
+  const [alignRight, setAlignRight] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
 
   // 외부에서 들어온 저장 포맷(YYYY.MM.DD)을 내부에서는 ISO로 다뤄 Date 연산을 편하게 합니다.
   const selectedIso = isValidDotDate(value) ? toIsoDate(value) : "";
@@ -368,6 +371,14 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     }
     setOpen(true);
   };
+
+  // 팝오버가 열릴 때 뷰포트 우측 경계를 벗어나는지 확인해 alignRight를 결정합니다.
+  // useLayoutEffect를 써서 DOM이 그려진 직후, 사용자에게 보이기 전에 위치를 보정합니다.
+  useLayoutEffect(() => {
+    if (!open || !popoverRef.current) return;
+    const rect = popoverRef.current.getBoundingClientRect();
+    setAlignRight(rect.right > window.innerWidth);
+  }, [open]);
 
   // 팝오버가 열린 동안 바깥을 클릭하거나 Esc를 누르면 자연스럽게 닫히도록 전역 리스너 연결.
   useEffect(() => {
@@ -485,7 +496,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         </svg>
       </Trigger>
       {open && (
-        <Popover role="dialog" aria-label="달력">
+        <Popover ref={popoverRef} $alignRight={alignRight} role="dialog" aria-label="달력">
           <PopoverHeader>
             <MonthLabel>
               {view.year}년 {view.month + 1}월
