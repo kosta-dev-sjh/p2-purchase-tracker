@@ -184,8 +184,8 @@ export const RegisterForm: React.FC = () => {
           }}
         />
         <span>
-          <Link to="/register">이용약관</Link>과{" "}
-          <Link to="/register">개인정보 처리방침</Link>에 동의합니다. (필수)
+          <Link to="/terms">이용약관</Link>과{" "}
+          <Link to="/privacy">개인정보 처리방침</Link>에 동의합니다. (필수)
         </span>
       </Agree>
       {agreeError && (

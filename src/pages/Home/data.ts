@@ -16,6 +16,14 @@ import { tokens } from "../../styles/tokens";
 import { PLATFORM_LABELS } from "../../constants/labels";
 import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
 import { objectParticle } from "../../utils/koreanParticle";
+import {
+  countInstallmentApprovalEstimates,
+  effectiveMonthlyAmount,
+  findApprovalsCoveredByBilling,
+  sumActualMonthlyExpense,
+  sumInstallmentEstimateAmount,
+} from "../../utils/expenseAccounting";
+import { formatKRW } from "../../utils/format";
 
 export interface HomeMockData {
   kpis: KpiItem[];
@@ -55,11 +63,14 @@ function shiftMonthKey(monthKey: string, delta: number): string {
   return `${y}-${String(m).padStart(2, "0")}`;
 }
 
-function sumSpend(rows: TxRow[]): number {
-  return rows
-    .filter((row) => row.type === "expense" && row.status !== "cancel")
-    .reduce((sum, row) => sum + Math.abs(row.amount), 0);
-}
+/**
+ * 월별 실제 지출 합계. 할부 승인 거래는 분할 추정(amount ÷ installmentMonths)으로
+ * 그 달의 분할분만 합산. 자세한 정책은 src/utils/expenseAccounting.ts 참고.
+ *
+ * (Phase 1 변경: 이전엔 `Math.abs(row.amount)` 그대로 더해 60만원 할부가 통째로 KPI 에
+ * 들어가 부풀려졌습니다. 단일 진실원으로 통일.)
+ */
+const sumSpend = sumActualMonthlyExpense;
 
 function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count: number }> {
   // "unspecified"도 하나의 버킷으로 유지합니다. 수동 입력에서 플랫폼을 고르지 않은 거래를
@@ -69,9 +80,14 @@ function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count
     naver: { value: 0, count: 0 },
     unspecified: { value: 0, count: 0 },
   };
+  // 페어 매칭된 approval 은 합산에서 빼야 KPI 총 지출과 합이 일치.
+  const skip = findApprovalsCoveredByBilling(rows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
-    seed[row.platform].value += Math.abs(row.amount);
+    if (skip.has(row.id)) continue;
+    // 도넛/플랫폼 막대도 KPI 총 지출과 합이 일치하도록 effectiveMonthlyAmount 를 통과.
+    // 할부 승인은 분할분만 그 달 플랫폼 비중에 기여합니다.
+    seed[row.platform].value += effectiveMonthlyAmount(row);
     seed[row.platform].count += 1;
   }
   return seed;
@@ -89,10 +105,13 @@ function monthSpark(rows: TxRow[], monthKey: string): number[] {
       row.status !== "cancel"
   );
   if (thisMonth.length === 0) return [0, 0, 0, 0, 0, 0];
+  const skip = findApprovalsCoveredByBilling(thisMonth);
   const byDay = new Map<number, number>();
   for (const row of thisMonth) {
+    if (skip.has(row.id)) continue;
     const day = parseDay(row.date);
-    byDay.set(day, (byDay.get(day) ?? 0) + Math.abs(row.amount));
+    // 스파크라인 누적도 KPI 총 지출과 같은 정의로 묶어, 마지막 누적값이 KPI 총 지출과 일치하게 합니다.
+    byDay.set(day, (byDay.get(day) ?? 0) + effectiveMonthlyAmount(row));
   }
   const sortedDays = Array.from(byDay.keys()).sort((a, b) => a - b);
   const cumulative: number[] = [];
@@ -286,12 +305,22 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
   const totalSpend = sumSpend(thisMonth);
   const prevSpend = sumSpend(prevMonth);
 
+  // 할부 승인 분할 추정으로 합산된 분 — KPI 보조 라인에 "할부 분할 추정 ₩X 포함" 으로 안내합니다.
+  // 사용자가 "왜 60만원 결제가 KPI 에 10만원밖에 안 잡히지?" 라고 헷갈리지 않도록 명시합니다.
+  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth);
+  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth);
+
+  // approval+billing 페어 dedup — 같은 결제가 두 행으로 들어와도 "쇼핑 N건" 카운트는 1건.
+  const thisMonthSkip = findApprovalsCoveredByBilling(thisMonth);
+  const prevMonthSkip = findApprovalsCoveredByBilling(prevMonth);
   const purchaseCount = thisMonth.filter(
-    (row) => row.type === "expense" && row.status !== "cancel"
+    (row) =>
+      row.type === "expense" && row.status !== "cancel" && !thisMonthSkip.has(row.id),
   ).length;
   const avgOrder = purchaseCount > 0 ? Math.round(totalSpend / purchaseCount) : 0;
   const prevPurchaseCount = prevMonth.filter(
-    (row) => row.type === "expense" && row.status !== "cancel"
+    (row) =>
+      row.type === "expense" && row.status !== "cancel" && !prevMonthSkip.has(row.id),
   ).length;
   const prevAvg = prevPurchaseCount > 0 ? Math.round(prevSpend / prevPurchaseCount) : 0;
 
@@ -325,7 +354,12 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
             },
           }
         : {}),
-      sub: purchaseCount === 0 ? `${periodLabel} 지출이 없어요.` : `쇼핑 ${purchaseCount}건 기준`,
+      sub:
+        purchaseCount === 0
+          ? `${periodLabel} 지출이 없어요.`
+          : installmentEstimateCount > 0
+            ? `쇼핑 ${purchaseCount}건 · 할부 ${installmentEstimateCount}건 분할 추정 ${formatKRW(installmentEstimateAmount)} 포함`
+            : `쇼핑 ${purchaseCount}건 기준`,
       spark: monthSpark(rows, monthKey),
     },
     {

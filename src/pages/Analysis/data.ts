@@ -21,6 +21,14 @@ import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
 import { detectConcept } from "../../data/categoryConcepts";
 import { normalizeMerchantKey } from "../../utils/categoryInference";
 import { subjectParticle } from "../../utils/koreanParticle";
+import {
+  countInstallmentApprovalEstimates,
+  effectiveMonthlyAmount,
+  findApprovalsCoveredByBilling,
+  sumActualMonthlyExpense,
+  sumInstallmentEstimateAmount,
+} from "../../utils/expenseAccounting";
+import { formatKRW } from "../../utils/format";
 
 export interface AnalysisMockData {
   summary: string;
@@ -63,14 +71,19 @@ function shiftMonthKey(monthKey: string, delta: number): string {
   return `${y}-${String(m).padStart(2, "0")}`;
 }
 
-function sumSpend(rows: TxRow[]): number {
-  return rows
-    .filter((row) => row.type === "expense" && row.status !== "cancel")
-    .reduce((sum, row) => sum + Math.abs(row.amount), 0);
-}
+/**
+ * 월별 실제 지출 합계. 할부 승인 거래는 분할 추정으로 그 달 분할분만 합산합니다.
+ * 단일 진실원: src/utils/expenseAccounting.ts
+ */
+const sumSpend = sumActualMonthlyExpense;
 
 function countPurchase(rows: TxRow[]): number {
-  return rows.filter((row) => row.type === "expense" && row.status !== "cancel").length;
+  // 같은 결제의 approval+billing 페어는 KPI 와 같은 dedup 정책으로 1건으로 셉니다.
+  const skip = findApprovalsCoveredByBilling(rows);
+  return rows.filter(
+    (row) =>
+      row.type === "expense" && row.status !== "cancel" && !skip.has(row.id),
+  ).length;
 }
 
 /**
@@ -103,9 +116,13 @@ function buildPlatform(rows: TxRow[]): {
     // 실제 데이터가 없으면 차트에 등장하지 않습니다.
     unspecified: { value: 0, count: 0 },
   };
+  // 같은 결제의 approval+billing 페어는 KPI 합산에서 dedup 되므로 플랫폼 막대도 동일 처리.
+  const skip = findApprovalsCoveredByBilling(rows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
-    totals[row.platform].value += Math.abs(row.amount);
+    if (skip.has(row.id)) continue;
+    // 플랫폼 막대도 KPI 총 지출과 합이 맞아야 하므로 effectiveMonthlyAmount 통과.
+    totals[row.platform].value += effectiveMonthlyAmount(row);
     totals[row.platform].count += 1;
   }
   const totalSpend = Object.values(totals).reduce((sum, entry) => sum + entry.value, 0);
@@ -155,11 +172,15 @@ function buildCategory(
   const resolvedColors: Record<string, string> = colorMap ?? DEFAULT_COLORS;
   // 카테고리별 합계를 동적으로 누적. 커스텀 카테고리도 처음 등장 시 0으로 초기화됩니다.
   const totals: Record<string, number> = {};
+  const skip = findApprovalsCoveredByBilling(rows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
+    if (skip.has(row.id)) continue;
     // 다중 카테고리 거래는 "중복 카운트" 정책: 카테고리 N개에 속하면 N개 모두에 전액을 더합니다.
+    // 합산 단위는 KPI 총 지출과 동일한 effectiveMonthlyAmount(할부 승인은 분할분).
+    const monthlyContribution = effectiveMonthlyAmount(row);
     for (const cat of row.categories) {
-      totals[cat] = (totals[cat] ?? 0) + Math.abs(row.amount);
+      totals[cat] = (totals[cat] ?? 0) + monthlyContribution;
     }
   }
   const total = Object.values(totals).reduce((sum, value) => sum + value, 0);
@@ -325,9 +346,12 @@ function weekdayIndex(dateStr: string): number {
 
 function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string; subtitle: string } {
   const buckets = [0, 0, 0, 0, 0, 0, 0];
+  const skip = findApprovalsCoveredByBilling(rows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
-    buckets[weekdayIndex(row.date)] += Math.abs(row.amount);
+    if (skip.has(row.id)) continue;
+    // 요일 패턴도 KPI 총 지출과 합이 일치하도록 effectiveMonthlyAmount 통과.
+    buckets[weekdayIndex(row.date)] += effectiveMonthlyAmount(row);
   }
   const total = buckets.reduce((sum, v) => sum + v, 0);
   const DAY_LABELS = ["월", "화", "수", "목", "금", "토", "일"];
@@ -388,6 +412,9 @@ function buildKpis(
     return `${sign}${Math.abs(rounded).toFixed(1)}%`;
   };
 
+  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth);
+  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth);
+
   return [
     {
       key: "spend",
@@ -395,6 +422,11 @@ function buildKpis(
       value: totalSpend,
       ...(prevSpend > 0
         ? { delta: { tone: spendPct >= 0 ? "up" : "down", text: fmtPct(spendPct) } }
+        : {}),
+      ...(installmentEstimateCount > 0
+        ? {
+            sub: `할부 ${installmentEstimateCount}건 분할 추정 ${formatKRW(installmentEstimateAmount)} 포함`,
+          }
         : {}),
     },
     {

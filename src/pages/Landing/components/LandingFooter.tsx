@@ -3,6 +3,7 @@
  * 위치: src\pages\Landing\components\LandingFooter.tsx
  */
 import styled from "styled-components";
+import { Link } from "react-router-dom";
 import { tokens } from "../../../styles/tokens";
 
 const Wrap = styled.footer`
@@ -45,6 +46,23 @@ const Brand = styled.span`
   font-weight: 700;
 `;
 
+const LinkRow = styled.div`
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+`;
+
+const FooterLink = styled(Link)`
+  color: ${tokens.color.ink3};
+  font-weight: 600;
+  text-decoration: none;
+
+  &:hover {
+    color: ${tokens.color.accentHover};
+    text-decoration: underline;
+  }
+`;
+
 export const LandingFooter = () => (
   <Wrap>
     <Inner>
@@ -56,7 +74,11 @@ export const LandingFooter = () => (
          */}
         <Brand>SpendTrack</Brand> · 거래 입력부터 분석까지 한 자리에
       </span>
-      <span>© {new Date().getFullYear()} SpendTrack. All rights reserved.</span>
+      <LinkRow>
+        <FooterLink to="/terms">이용약관</FooterLink>
+        <FooterLink to="/privacy">개인정보 처리방침</FooterLink>
+        <span>© {new Date().getFullYear()} SpendTrack. All rights reserved.</span>
+      </LinkRow>
     </Inner>
   </Wrap>
 );

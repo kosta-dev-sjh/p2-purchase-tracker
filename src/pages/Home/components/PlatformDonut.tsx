@@ -4,7 +4,7 @@
  */
 import React, { useMemo, useState } from "react";
 import styled from "styled-components";
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from "recharts";
+import { Cell, Pie, PieChart, ResponsiveContainer } from "recharts";
 import {
   Card,
   CardBd,
@@ -130,6 +130,11 @@ const CenterLabel = styled.div`
   place-items: center;
   text-align: center;
   pointer-events: none;
+  /*
+   * hover/터치로 가운데 라벨 내용이 바뀔 때 시각적 점프가 일어나지 않게
+   * 부드럽게 전환합니다. 모바일에서 슬라이스 탭이 클릭처럼 느껴지도록.
+   */
+  transition: color ${tokens.motion.fast} ease;
 
   .amount {
     color: ${tokens.color.ink1};
@@ -143,6 +148,25 @@ const CenterLabel = styled.div`
     color: ${tokens.color.ink4};
     font-size: ${tokens.type.caption.size};
   }
+
+  .caption .swatch {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+
+  .caption .label {
+    font-weight: 600;
+    color: ${tokens.color.ink2};
+  }
+
+  .caption .sep {
+    margin: 0 6px;
+    color: ${tokens.color.ink5 ?? tokens.color.ink4};
+  }
 `;
 
 export const PlatformDonut: React.FC<{
@@ -155,6 +179,13 @@ export const PlatformDonut: React.FC<{
   periodLabel?: string;
 }> = ({ total, items, periodLabel = "이번 달" }) => {
   const [mode, setMode] = useState<Mode>("amount");
+  /*
+   * hover/터치된 슬라이스 인덱스. 기본 floating Tooltip은 도넛 가운데
+   * 텍스트(₩총액 / 이번 달 총소비)와 겹쳐 가독성이 떨어졌습니다.
+   * 떠다니는 툴팁을 제거하고, 활성 슬라이스 정보를 그대로 가운데
+   * 라벨에 노출하면 데스크톱 hover와 모바일 탭 모두 동일하게 동작합니다.
+   */
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const countTotal = useMemo(
     () => items.reduce((acc, item) => acc + item.count, 0),
@@ -187,6 +218,13 @@ export const PlatformDonut: React.FC<{
 
   const centerAmount = mode === "amount" ? formatKRW(total) : `${countTotal}건`;
   const centerCaption = mode === "amount" ? `${periodLabel} 총소비` : `${periodLabel} 총 주문`;
+
+  // mode 토글 시 chartItems 가 새 배열이 되어 activeIndex 가 가리키던 카드가
+  // 사라질 수 있으므로, 범위를 벗어나면 안전하게 무시합니다.
+  const activeItem =
+    activeIndex !== null && activeIndex >= 0 && activeIndex < chartItems.length
+      ? chartItems[activeIndex]
+      : null;
 
   return (
     <Card>
@@ -228,30 +266,51 @@ export const PlatformDonut: React.FC<{
                   stroke="none"
                   isAnimationActive
                   animationDuration={400}
+                  /*
+                   * 모바일 환경에서도 동일하게 동작하도록 Pie 의 mouse 이벤트만으로
+                   * 활성 슬라이스를 추적합니다. recharts 는 터치 이벤트를 mouse 이벤트로
+                   * 합성해 발화하므로 별도 onTouch 핸들러가 없어도 탭 시 동일하게 작동합니다.
+                   */
+                  onMouseEnter={(_, index) => setActiveIndex(index)}
+                  onMouseLeave={() => setActiveIndex(null)}
                 >
-                  {chartItems.map((item) => (
-                    <Cell key={item.label} fill={item.color} />
-                  ))}
+                  {chartItems.map((item, index) => {
+                    const dimmed = activeIndex !== null && activeIndex !== index;
+                    return (
+                      <Cell
+                        key={item.label}
+                        fill={item.color}
+                        // 활성 슬라이스를 강조하기 위해 비활성 슬라이스만 살짝 흐리게.
+                        // opacity 만 건드려 색상 토큰은 그대로 유지합니다.
+                        fillOpacity={dimmed ? 0.45 : 1}
+                        style={{ transition: `fill-opacity ${tokens.motion.fast} ease` }}
+                      />
+                    );
+                  })}
                 </Pie>
-                <Tooltip
-                  formatter={(value) => [
-                    mode === "amount"
-                      ? formatKRW(Number(value ?? 0))
-                      : `${Number(value ?? 0)}건`,
-                    mode === "amount" ? "금액" : "건수",
-                  ]}
-                  contentStyle={{
-                    borderRadius: 12,
-                    border: `1px solid ${tokens.color.line}`,
-                    boxShadow: tokens.shadow.card,
-                  }}
-                />
               </PieChart>
             </ResponsiveContainer>
             <CenterLabel>
               <div>
-                <div className="amount">{centerAmount}</div>
-                <div className="caption">{centerCaption}</div>
+                {activeItem ? (
+                  <>
+                    <div className="amount">{activeItem.secondaryText}</div>
+                    <div className="caption">
+                      <span
+                        className="swatch"
+                        style={{ background: activeItem.color }}
+                      />
+                      <span className="label">{activeItem.label}</span>
+                      <span className="sep">·</span>
+                      <span>{activeItem.primaryText}</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="amount">{centerAmount}</div>
+                    <div className="caption">{centerCaption}</div>
+                  </>
+                )}
               </div>
             </CenterLabel>
           </DonutWrap>
