@@ -16,6 +16,7 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "./firebase";
 import { authStore } from "../stores/authStore";
+import { normalizeAuthError } from "./authError";
 import { categoriesStore, DEFAULT_CATEGORIES } from "../stores/categoriesStore";
 import { profileStore, DEFAULT_PROFILE } from "../stores/profileStore";
 import { transactionsStore } from "../stores/transactionsStore";
@@ -157,29 +158,42 @@ export function startFirebaseSync(): void {
     stopCategories = null;
     stopTransactions = null;
 
-    if (!user) {
+    try {
+      if (!user) {
+        authStore.setUnauthenticated();
+        authStore.clearError();
+        resetLocalState();
+        return;
+      }
+
+      authStore.setAuthenticated(user);
+      await ensureBootstrap(user);
+      const restoreResult = await restorePendingDeletionIfNeeded();
+      if (restoreResult.status === "purged") {
+        await signOut(auth);
+        return;
+      }
+
+      stopProfile = subscribeUserProfile(user.uid, (partial) => {
+        profileStore.hydrate({ ...DEFAULT_PROFILE, ...partial });
+      });
+      stopCategories = subscribeCategories(user.uid, (items) => {
+        categoriesStore.hydrate(items.length > 0 ? items : [...DEFAULT_CATEGORIES]);
+      });
+      stopTransactions = subscribeTransactions(user.uid, (rows) => {
+        transactionsStore.hydrate(rows);
+      });
+    } catch (error) {
+      const normalized = normalizeAuthError(error, "auth-session");
+      authStore.setError(normalized.message);
       authStore.setUnauthenticated();
       resetLocalState();
-      return;
+      try {
+        await signOut(auth);
+      } catch {
+        // 이미 세션이 정리된 경우는 무시합니다.
+      }
     }
-
-    authStore.setAuthenticated(user);
-    await ensureBootstrap(user);
-    const restoreResult = await restorePendingDeletionIfNeeded();
-    if (restoreResult.status === "purged") {
-      await signOut(auth);
-      return;
-    }
-
-    stopProfile = subscribeUserProfile(user.uid, (partial) => {
-      profileStore.hydrate({ ...DEFAULT_PROFILE, ...partial });
-    });
-    stopCategories = subscribeCategories(user.uid, (items) => {
-      categoriesStore.hydrate(items.length > 0 ? items : [...DEFAULT_CATEGORIES]);
-    });
-    stopTransactions = subscribeTransactions(user.uid, (rows) => {
-      transactionsStore.hydrate(rows);
-    });
   });
 }
 

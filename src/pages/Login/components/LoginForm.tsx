@@ -9,33 +9,31 @@ import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
 import { TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
+import { authStore, useAuthSession } from "../../../stores/authStore";
+import { normalizeAuthError } from "../../../lib/authError";
 import { signIn, signInWithGoogle } from "../../../lib/firebaseSync";
 
-// Google 로그인 에러 코드 → 한국어 친화 메시지 매핑.
-// 이 분리가 없으면 raw 'Firebase: Error (auth/...)' 영문 디버그 문자열이 사용자에게 그대로
-// 노출됩니다. popup-closed-by-user / cancelled-popup-request 두 코드는 호출자가 별도 처리
-// (=조용히 무시) 하므로 여기 매핑에서 빠져 있어도 default 폴백으로 떨어지지 않습니다.
-function mapGoogleAuthErrorCode(code: string): string {
-  switch (code) {
-    case "auth/popup-blocked":
-      return "브라우저가 팝업을 차단했어요. 팝업 허용 후 다시 시도해 주세요.";
-    case "auth/account-exists-with-different-credential":
-      return "이미 다른 방식으로 가입된 이메일이에요. 기존 로그인 방법으로 시도해 주세요.";
-    case "auth/credential-already-in-use":
-      return "이 Google 계정은 다른 사용자에게 이미 연결되어 있어요.";
-    case "auth/network-request-failed":
-      return "네트워크 연결을 확인해 주세요.";
-    case "auth/too-many-requests":
-      return "너무 많은 요청이 들어와 잠시 후 다시 시도해 주세요.";
-    case "auth/user-disabled":
-      return "이 계정은 사용이 중지되었어요.";
-    case "auth/unauthorized-domain":
-      return "현재 도메인에서 Google 로그인이 허용되어 있지 않아요. 관리자에게 문의해 주세요.";
-    case "auth/web-storage-unsupported":
-      return "브라우저 저장소가 비활성화돼 있어요. 시크릿 모드/추적 방지 설정을 확인해 주세요.";
-    default:
-      return "Google 로그인에 실패했어요. 잠시 후 다시 시도해 주세요.";
+interface LoginFieldErrors {
+  email?: string;
+  password?: string;
+  form?: string;
+}
+
+function validateLoginFields(email: string, password: string): LoginFieldErrors {
+  const errors: LoginFieldErrors = {};
+  const trimmedEmail = email.trim();
+
+  if (!trimmedEmail) {
+    errors.email = "이메일을 입력해 주세요.";
+  } else if (!/.+@.+\..+/.test(trimmedEmail)) {
+    errors.email = "이메일 형식이 맞지 않습니다.";
   }
+
+  if (!password) {
+    errors.password = "비밀번호를 입력해 주세요.";
+  }
+
+  return errors;
 }
 
 const Row = styled.div`
@@ -101,84 +99,77 @@ const GoogleMark = () => (
 
 export const LoginForm: React.FC = () => {
   const navigate = useNavigate();
+  const { error: sessionError } = useAuthSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
 
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
-        setError(null);
-        // 클라이언트 측 1차 검증 — 빈 폼/이메일 형식 오류는 서버까지 가지 않고 즉시 친화적 메시지로
-        // 안내합니다. 이걸 안 하면 Firebase가 "Firebase: Error (auth/invalid-email)." 같은
-        // 영문 raw 메시지를 던져 사용자가 이해 못하고, 백엔드 스택까지 노출돼 보안적으로도 좋지 않아요.
+        authStore.clearError();
+        const nextErrors = validateLoginFields(email, password);
+        if (Object.keys(nextErrors).length > 0) {
+          setErrors(nextErrors);
+          return;
+        }
+
         const trimmedEmail = email.trim();
-        if (!trimmedEmail || !password) {
-          setError("이메일과 비밀번호를 모두 입력해 주세요.");
-          return;
-        }
-        if (!/.+@.+\..+/.test(trimmedEmail)) {
-          setError("올바른 이메일 형식을 입력해 주세요.");
-          return;
-        }
+        setErrors({});
         setSubmitting(true);
         try {
           await signIn(trimmedEmail, password);
           navigate("/");
         } catch (err) {
-          const code = (err as { code?: string }).code ?? "";
-          // Firebase 에러 코드를 한국어 친화 메시지로 매핑합니다. 매핑되지 않은 코드는 일반화된
-          // 폴백으로 떨어뜨려 raw 'Firebase: Error (...)' 문자열이 그대로 노출되지 않게 합니다.
-          let message: string;
-          switch (code) {
-            case "auth/invalid-credential":
-            case "auth/user-not-found":
-            case "auth/wrong-password":
-              message = "이메일이나 비밀번호가 일치하지 않습니다.";
-              break;
-            case "auth/invalid-email":
-              message = "올바른 이메일 형식을 입력해 주세요.";
-              break;
-            case "auth/missing-password":
-              message = "비밀번호를 입력해 주세요.";
-              break;
-            case "auth/too-many-requests":
-              message = "너무 많은 요청이 들어와 잠시 후 다시 시도해 주세요.";
-              break;
-            case "auth/network-request-failed":
-              message = "네트워크 연결을 확인해 주세요.";
-              break;
-            case "auth/user-disabled":
-              message = "이 계정은 사용이 중지되었어요.";
-              break;
-            default:
-              message = "로그인에 실패했어요. 잠시 후 다시 시도해 주세요.";
+          const normalized = normalizeAuthError(err, "password-login");
+          if (
+            normalized.code === "auth/invalid-credential" ||
+            normalized.code === "auth/user-not-found" ||
+            normalized.code === "auth/wrong-password"
+          ) {
+            setErrors({ password: normalized.message });
+          } else if (
+            normalized.code === "auth/invalid-email" ||
+            normalized.code === "auth/missing-email"
+          ) {
+            setErrors({ email: normalized.message });
+          } else if (normalized.code === "auth/missing-password") {
+            setErrors({ password: normalized.message });
+          } else {
+            setErrors({ form: normalized.message });
           }
-          setError(message);
         } finally {
           setSubmitting(false);
         }
       }}
     >
       <div style={{ display: "grid", gap: 14 }}>
-        <FormField label="이메일">
+        <FormField label="이메일" errorText={errors.email}>
           <TextInput
             type="email"
             placeholder="you@example.com"
             autoComplete="email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              authStore.clearError();
+              setErrors((current) => ({ ...current, email: undefined, form: undefined }));
+              setEmail(event.target.value);
+            }}
           />
         </FormField>
-        <FormField label="비밀번호">
+        <FormField label="비밀번호" errorText={errors.password}>
           <PasswordInput
             type="password"
             placeholder="••••••••"
             autoComplete="current-password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              authStore.clearError();
+              setErrors((current) => ({ ...current, password: undefined, form: undefined }));
+              setPassword(event.target.value);
+            }}
           />
         </FormField>
       </div>
@@ -188,9 +179,9 @@ export const LoginForm: React.FC = () => {
         </Remember>
         <ForgotLink to="/forgot-password">비밀번호를 잊으셨나요?</ForgotLink>
       </Row>
-      {error && (
+      {(errors.form || sessionError) && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
-          {error}
+          {errors.form ?? sessionError}
         </div>
       )}
       <Button variant="primary" size="lg" block type="submit" disabled={submitting}>
@@ -205,21 +196,16 @@ export const LoginForm: React.FC = () => {
         icon={<GoogleMark />}
         disabled={submitting}
         onClick={async () => {
-          setError(null);
+          setErrors({});
+          authStore.clearError();
           setSubmitting(true);
           try {
             await signInWithGoogle();
             navigate("/");
           } catch (err) {
-            const code = (err as { code?: string }).code ?? "";
-            // 사용자가 직접 팝업을 닫거나(=취소 의도), 버튼을 두 번 눌러서 이전 팝업 요청이
-            // 캔슬된 경우는 "에러"가 아니라 정상적인 취소이므로 메시지를 띄우지 않고 조용히
-            // 폼 상태만 원복합니다. 이 분기를 빼두면 raw 'Firebase: Error (auth/popup-closed-by-user).'
-            // 가 그대로 사용자에게 노출돼요.
-            if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
-              return;
-            }
-            setError(mapGoogleAuthErrorCode(code));
+            const normalized = normalizeAuthError(err, "google-login");
+            if (normalized.silent) return;
+            setErrors({ form: normalized.message });
           } finally {
             setSubmitting(false);
           }
