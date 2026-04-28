@@ -456,7 +456,11 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
               <div className="mark">S</div>
               <div>
                 <div className="name">Spend Track</div>
-                <div className="sub">모바일 빠른 이동</div>
+                {/*
+                 * "모바일" 이라는 단어는 실 디바이스 의미로 오해되기 쉬워, 단순히 폭이 좁을 때
+                 * (데스크톱에서 창만 줄였을 때 포함) 뜨는 텍스트는 "빠른 이동" 으로 통일합니다.
+                 */}
+                <div className="sub">빠른 이동</div>
               </div>
             </MobileBrand>
             <MobileMeta>

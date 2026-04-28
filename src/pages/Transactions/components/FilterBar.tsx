@@ -379,8 +379,12 @@ export const FilterBar = memo(({
     <Wrap>
       <DesktopBar>
         <Search>
+          {/* DevTools Issues: 'form field needs id or name' 회피용 name 속성.
+              Desktop/Mobile 두 곳에 동일 폼이라 -desktop / -mobile suffix 로 구분합니다. */}
           <input
             className="input"
+            name="tx-search-desktop"
+            aria-label="거래 검색"
             placeholder="주문명·상품명 검색"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
@@ -400,6 +404,8 @@ export const FilterBar = memo(({
         </Search>
         <SegmentedControl value={typeFilter} options={TYPE_OPTIONS} onChange={onTypeChange} />
         <Select
+          name="tx-platform-desktop"
+          aria-label="플랫폼 필터"
           value={platform}
           onChange={(event) => onPlatformChange(event.target.value as "all" | TxPlatform)}
         >
@@ -410,6 +416,8 @@ export const FilterBar = memo(({
           <option value="unspecified">{PLATFORM_LABELS.unspecified}</option>
         </Select>
         <Select
+          name="tx-category-desktop"
+          aria-label="카테고리 필터"
           value={category}
           onChange={(event) => onCategoryChange(event.target.value)}
         >
@@ -419,6 +427,8 @@ export const FilterBar = memo(({
           ))}
         </Select>
         <Select
+          name="tx-status-desktop"
+          aria-label="상태 필터"
           value={statusFilter}
           onChange={(event) => onStatusChange(event.target.value as StatusFilter)}
         >
@@ -431,6 +441,8 @@ export const FilterBar = memo(({
           <option value="etc">{STATUS_LABELS.etc}</option>
         </Select>
         <Select
+          name="tx-installment-desktop"
+          aria-label="결제방식 필터"
           value={installmentFilter}
           onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
         >
@@ -498,6 +510,8 @@ export const FilterBar = memo(({
               <input
                 ref={mobileSearchInputRef}
                 className="input"
+                name="tx-search-mobile"
+                aria-label="거래 검색"
                 placeholder="주문명·상품명 검색"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
@@ -524,6 +538,8 @@ export const FilterBar = memo(({
             <SegmentedControl value={typeFilter} options={TYPE_OPTIONS} onChange={onTypeChange} />
             <FilterGroupLabel>플랫폼</FilterGroupLabel>
             <Select
+              name="tx-platform-mobile"
+              aria-label="플랫폼 필터"
               value={platform}
               onChange={(event) => onPlatformChange(event.target.value as "all" | TxPlatform)}
             >
@@ -534,6 +550,8 @@ export const FilterBar = memo(({
             </Select>
             <FilterGroupLabel>카테고리</FilterGroupLabel>
             <Select
+              name="tx-category-mobile"
+              aria-label="카테고리 필터"
               value={category}
               onChange={(event) => onCategoryChange(event.target.value)}
             >
@@ -544,6 +562,8 @@ export const FilterBar = memo(({
             </Select>
             <FilterGroupLabel>상태</FilterGroupLabel>
             <Select
+              name="tx-status-mobile"
+              aria-label="상태 필터"
               value={statusFilter}
               onChange={(event) => onStatusChange(event.target.value as StatusFilter)}
             >
@@ -556,6 +576,8 @@ export const FilterBar = memo(({
             </Select>
             <FilterGroupLabel>결제방식</FilterGroupLabel>
             <Select
+              name="tx-installment-mobile"
+              aria-label="결제방식 필터"
               value={installmentFilter}
               onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
             >
