@@ -1,0 +1,187 @@
+/**
+ * 역할: 특정 페이지 안에서만 사용하는 화면 전용 UI 블록입니다.
+ * 위치: src\pages\Analysis\components\WeeklyPattern.tsx
+ */
+import React from "react";
+import styled from "styled-components";
+import {
+  Bar,
+  BarChart,
+  Cell,
+  LabelList,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+} from "recharts";
+import {
+  Card,
+  CardBd,
+  CardHd,
+  CardSub,
+  CardTitle,
+} from "../../../components/primitives/Card";
+import { tokens } from "../../../styles/tokens";
+
+export interface WeeklyDay {
+  /** 한 글자 요일 레이블. 월/화/수/목/금/토/일 순으로 전달됩니다. */
+  day: string;
+  /** 해당 요일의 총 지출. 0이면 빈 막대로 표시됩니다. */
+  amount: number;
+  /** true면 강조색으로 막대를 칠합니다. 주말·피크데이 하이라이트에 사용. */
+  emphasize?: boolean;
+}
+
+interface WeeklyPatternProps {
+  days: WeeklyDay[];
+  /**
+   * 하단 설명 영역. 문자열 안에서 `**강조**`는 ink1/볼드로 표시됩니다.
+   * 예: "금·토·일에 전체의 **58%**가 집중돼요."
+   */
+  note?: string;
+  /**
+   * 카드 헤더 아래 보조 라벨. weekendShare(주말 비중) 에 따라 정반대 메시지가
+   * 노출돼야 하므로 호출부(Analysis/data.ts)에서 동적으로 산출해 내려줍니다.
+   * 미지정 시 중립 라벨로 폴백해, 빈 데이터·과거 호출부에서 회귀가 발생하지 않게 합니다.
+   */
+  subtitle?: string;
+}
+
+/*
+ * 차트 높이(2026-04-28 사용자 피드백): 양옆 카드(반복구매 TOP5 / 정기결제) 와 시각 높이가
+ * 맞아야 카드 위·아래 공백이 사라집니다. 이전 180px 는 카드 안에서 차트가 작아 위·아래로
+ * 큰 빈 공간이 보였어요. 240px 로 늘려 막대 자체가 카드 본문을 채우도록 합니다.
+ *
+ * note(하단 한 줄 설명) 와 합쳐 카드 전체 높이가 양옆과 비슷하게 맞아 떨어지는 값.
+ */
+const ChartWrap = styled.div`
+  height: 240px;
+  /* recharts LabelList가 잘리지 않게 살짝 여유. */
+  margin: -4px -8px 0;
+`;
+
+const Note = styled.p`
+  margin: 10px 0 0;
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.55;
+
+  b {
+    color: ${tokens.color.ink1};
+    font-weight: 600;
+  }
+`;
+
+/** `**...**` 구간만 `<b>`로 감싸는 가벼운 파서. */
+function renderNote(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/g).map((part, index) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return <b key={index}>{part.slice(2, -2)}</b>;
+    }
+    return <React.Fragment key={index}>{part}</React.Fragment>;
+  });
+}
+
+type TickProps = {
+  x?: number;
+  y?: number;
+  payload?: { value: string; index: number };
+};
+
+/**
+ * 주말(`emphasize: true`) 요일은 ink2/볼드로, 평일은 ink4/기본 가중치로 출력합니다.
+ * 별도 컴포넌트로 분리해 렌더 중 새 컴포넌트를 생성하지 않도록 고정합니다.
+ */
+const WeeklyTick: React.FC<TickProps & { days?: WeeklyDay[] }> = ({
+  x = 0,
+  y = 0,
+  payload,
+  days = [],
+}) => {
+  const index = payload?.index ?? 0;
+  const emphasize = Boolean(days[index]?.emphasize);
+  return (
+    <text
+      x={x}
+      y={y + 12}
+      textAnchor="middle"
+      fontSize={11}
+      fontWeight={emphasize ? 600 : 500}
+      fill={emphasize ? tokens.color.ink2 : tokens.color.ink4}
+    >
+      {payload?.value}
+    </text>
+  );
+};
+
+export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note, subtitle }) => {
+  return (
+    <Card>
+      <CardHd>
+        <div>
+          <CardTitle>요일별 지출 패턴</CardTitle>
+          {/* 호출부에서 weekendShare 기반 부제를 내려주지 않으면 중립 폴백 라벨로 떨어집니다.
+              과거에는 "주말에 집중되는 경향" 이 하드코딩 되어 있어 본문(note) 이 "평일 쪽 지출이 더 많아요"
+              로 나올 때 헤더와 본문이 정반대 메시지를 전달하던 회귀가 있었습니다. */}
+          <CardSub>{subtitle ?? "이번 달 요일별 분포"}</CardSub>
+        </div>
+      </CardHd>
+      <CardBd>
+        <ChartWrap>
+          {/* initialDimension 으로 첫 동기 렌더 -1 워닝 차단. ChartWrap height 240 과 동일. */}
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+            minHeight={240}
+            minWidth={1}
+            initialDimension={{ width: 1, height: 240 }}
+          >
+            <BarChart
+              data={days}
+              margin={{ top: 16, right: 8, left: 8, bottom: 0 }}
+              barCategoryGap="28%"
+            >
+              <XAxis
+                dataKey="day"
+                tickLine={false}
+                axisLine={false}
+                interval={0}
+                tick={<WeeklyTick days={days} />}
+              />
+              {/* 라벨(k)이 막대 상단 밖으로 삐져나와도 잘리지 않게 도메인을 넉넉히 잡습니다. */}
+              <YAxis hide domain={[0, (dataMax: number) => dataMax * 1.15]} />
+              <Bar
+                dataKey="amount"
+                radius={[4, 4, 0, 0]}
+                /* 진입 시 월~일 순으로 위에서 아래로 차오르며 리듬 있게 등장합니다. */
+                isAnimationActive
+                animationDuration={700}
+                animationEasing="ease-out"
+                maxBarSize={28}
+              >
+                <LabelList
+                  dataKey="amount"
+                  position="top"
+                  /* recharts의 LabelFormatter 시그니처는 ReactText라 Number로 캐스팅해 사용합니다. */
+                  formatter={(value) => {
+                    const num = Number(value ?? 0);
+                    return num > 0 ? `${Math.round(num / 1000)}k` : "";
+                  }}
+                  fill={tokens.color.ink4}
+                  fontSize={10}
+                  fontWeight={500}
+                />
+                {days.map((d) => (
+                  <Cell
+                    key={d.day}
+                    fill={d.emphasize ? tokens.color.accent : tokens.color.accentBorder}
+                  />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartWrap>
+        {note && <Note>{renderNote(note)}</Note>}
+      </CardBd>
+    </Card>
+  );
+};

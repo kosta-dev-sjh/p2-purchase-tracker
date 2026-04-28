@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SpendTrack Firestore Schema Visualizer</title>
+    <style>
+      :root {
+        --bg: #f4efe7;
+        --panel: rgba(255, 252, 247, 0.88);
+        --panel-strong: #fffdf8;
+        --line: rgba(61, 50, 39, 0.14);
+        --text: #2f241b;
+        --muted: #7b6957;
+        --accent: #1f7a6a;
+        --accent-soft: rgba(31, 122, 106, 0.12);
+        --accent-2: #c86b43;
+        --shadow: 0 20px 60px rgba(70, 50, 30, 0.08);
+        --radius: 22px;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Pretendard", "SUIT", "Noto Sans KR", sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at top left, rgba(200, 107, 67, 0.14), transparent 28%),
+          radial-gradient(circle at top right, rgba(31, 122, 106, 0.14), transparent 26%),
+          linear-gradient(180deg, #fbf7f0 0%, var(--bg) 100%);
+      }
+
+      .wrap {
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 40px 24px 72px;
+      }
+
+      .hero {
+        display: grid;
+        grid-template-columns: 1.25fr 0.9fr;
+        gap: 24px;
+        margin-bottom: 24px;
+      }
+
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(14px);
+      }
+
+      .hero-main {
+        padding: 30px;
+      }
+
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: var(--accent-soft);
+        color: var(--accent);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      h1 {
+        margin: 18px 0 12px;
+        font-size: clamp(30px, 4vw, 52px);
+        line-height: 1.03;
+        letter-spacing: -0.04em;
+      }
+
+      .lede {
+        margin: 0;
+        color: var(--muted);
+        font-size: 16px;
+        line-height: 1.7;
+      }
+
+      .hero-side {
+        padding: 24px;
+        display: grid;
+        gap: 14px;
+      }
+
+      .stat {
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 28px;
+        letter-spacing: -0.03em;
+      }
+
+      .stat span {
+        display: block;
+        margin-top: 6px;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+
+      .section {
+        margin-top: 26px;
+      }
+
+      .section h2 {
+        margin: 0 0 14px;
+        font-size: 24px;
+        letter-spacing: -0.03em;
+      }
+
+      .diagram {
+        padding: 28px;
+      }
+
+      .flow {
+        display: grid;
+        grid-template-columns: 1.1fr 40px 1fr 40px 1fr;
+        align-items: stretch;
+        gap: 0;
+      }
+
+      .node {
+        position: relative;
+        padding: 22px;
+        border-radius: 24px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .node h3 {
+        margin: 0 0 10px;
+        font-size: 18px;
+        letter-spacing: -0.02em;
+      }
+
+      .node code {
+        display: inline-block;
+        margin-bottom: 10px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        background: rgba(47, 36, 27, 0.06);
+        font-size: 12px;
+      }
+
+      .node ul {
+        margin: 10px 0 0;
+        padding-left: 18px;
+        color: var(--muted);
+        line-height: 1.7;
+        font-size: 14px;
+      }
+
+      .arrow {
+        display: grid;
+        place-items: center;
+        color: var(--accent-2);
+        font-size: 30px;
+        font-weight: 700;
+      }
+
+      .grid-2 {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 20px;
+      }
+
+      .card {
+        padding: 24px;
+      }
+
+      .card h3 {
+        margin: 0 0 14px;
+        font-size: 19px;
+        letter-spacing: -0.02em;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 14px;
+      }
+
+      th,
+      td {
+        padding: 11px 10px;
+        border-top: 1px solid var(--line);
+        vertical-align: top;
+        text-align: left;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 14px;
+      }
+
+      .chip {
+        padding: 8px 12px;
+        border-radius: 999px;
+        background: rgba(47, 36, 27, 0.06);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 600;
+      }
+
+      .codebox {
+        margin-top: 12px;
+        padding: 18px;
+        border-radius: 18px;
+        background: #201a16;
+        color: #f9f1e5;
+        overflow: auto;
+        font-size: 13px;
+        line-height: 1.6;
+      }
+
+      .steps {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 14px;
+      }
+
+      .step {
+        padding: 18px;
+        border-radius: 18px;
+        background: var(--panel-strong);
+        border: 1px solid var(--line);
+      }
+
+      .step .num {
+        display: inline-grid;
+        place-items: center;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        background: var(--accent);
+        color: white;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .step h4 {
+        margin: 12px 0 8px;
+        font-size: 16px;
+      }
+
+      .step p {
+        margin: 0;
+        color: var(--muted);
+        line-height: 1.6;
+        font-size: 14px;
+      }
+
+      @media (max-width: 980px) {
+        .hero,
+        .grid-2,
+        .steps {
+          grid-template-columns: 1fr;
+        }
+
+        .flow {
+          grid-template-columns: 1fr;
+          gap: 12px;
+        }
+
+        .arrow {
+          transform: rotate(90deg);
+          height: 20px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <section class="hero">
+        <div class="panel hero-main">
+          <div class="eyebrow">SpendTrack • Firestore Model</div>
+          <h1>지금 코드 기준으로 바로 구현 가능한 Firestore 구조</h1>
+          <p class="lede">
+            현재 앱은 사실상 <strong>프로필</strong>, <strong>거래</strong>, <strong>카테고리</strong>
+            3개 엔티티로 움직입니다. 그래서 1차 연동도 그 3축에 맞춰 최소 구조로 설계하는 편이 가장 안전합니다.
+            인증은 Firebase Auth, 데이터는 Firestore, 아바타 이미지는 Storage로 분리하는 구성이 현재 코드와 가장 잘 맞습니다.
+          </p>
+        </div>
+        <div class="panel hero-side">
+          <div class="stat">
+            <strong>3</strong>
+            <span>1차 구현 핵심 컬렉션: `users`, `transactions`, `categories`</span>
+          </div>
+          <div class="stat">
+            <strong>4</strong>
+            <span>즉시 필요한 거래 액션: 추가, 수정, 삭제, OCR 병합</span>
+          </div>
+          <div class="stat">
+            <strong>2</strong>
+            <span>권장 복합 인덱스: 월별 조회, OCR 매칭 후보 조회</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section panel diagram">
+        <h2>Collection Flow</h2>
+        <div class="flow">
+          <div class="node">
+            <code>users/{uid}</code>
+            <h3>User Profile</h3>
+            <ul>
+              <li>displayName, nickname, email</li>
+              <li>avatarUrl, onboardingSeen</li>
+              <li>createdAt, updatedAt</li>
+            </ul>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node">
+            <code>users/{uid}/transactions/{txId}</code>
+            <h3>Transactions</h3>
+            <ul>
+              <li>월별 조회, 검색, 수정, 삭제</li>
+              <li>CSV 벌크 추가</li>
+              <li>OCR 결과 병합</li>
+            </ul>
+          </div>
+          <div class="arrow">→</div>
+          <div class="node">
+            <code>users/{uid}/categories/{categoryId}</code>
+            <h3>Categories</h3>
+            <ul>
+              <li>표준 5종 seed</li>
+              <li>색상/이름 수정</li>
+              <li>사용자 정의 카테고리 추가</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <section class="section grid-2">
+        <div class="panel card">
+          <h3>User Document</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Type</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>displayName</td>
+                <td>string</td>
+                <td>현재 `profile.name` 대응</td>
+              </tr>
+              <tr>
+                <td>nickname</td>
+                <td>string</td>
+                <td>Settings 및 헤더 표시용</td>
+              </tr>
+              <tr>
+                <td>email</td>
+                <td>string</td>
+                <td>Auth 값 캐시</td>
+              </tr>
+              <tr>
+                <td>avatarUrl</td>
+                <td>string | null</td>
+                <td>Storage URL 권장</td>
+              </tr>
+              <tr>
+                <td>passwordChangedAt</td>
+                <td>string</td>
+                <td>표시용 필드만 유지</td>
+              </tr>
+              <tr>
+                <td>onboardingSeen</td>
+                <td>boolean</td>
+                <td>localStorage 플래그 대체 가능</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="chips">
+            <span class="chip">비밀번호 저장 금지</span>
+            <span class="chip">Auth와 1:1 대응</span>
+            <span class="chip">AppShell / Settings 공용</span>
+          </div>
+        </div>
+
+        <div class="panel card">
+          <h3>Category Document</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Field</th>
+                <th>Type</th>
+                <th>Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>name</td>
+                <td>string</td>
+                <td>화면 라벨</td>
+              </tr>
+              <tr>
+                <td>color</td>
+                <td>string</td>
+                <td>hex color</td>
+              </tr>
+              <tr>
+                <td>isStandard</td>
+                <td>boolean</td>
+                <td>표준 카테고리 여부</td>
+              </tr>
+              <tr>
+                <td>isLocked</td>
+                <td>boolean</td>
+                <td>`etc` 보호용</td>
+              </tr>
+              <tr>
+                <td>sortOrder</td>
+                <td>number</td>
+                <td>표시 순서</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="chips">
+            <span class="chip">표준 ID: living/fashion/digital/food/etc</span>
+            <span class="chip">초기 seed 필요</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="section panel card">
+        <h3>Transaction Document</h3>
+        <table>
+          <thead>
+            <tr>
+              <th>Field</th>
+              <th>Type</th>
+              <th>Why it exists</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>type</td>
+              <td>"expense" | "income"</td>
+              <td>현재 UI 핵심 구분</td>
+            </tr>
+            <tr>
+              <td>dateText</td>
+              <td>string</td>
+              <td>기존 화면과 포맷 호환</td>
+            </tr>
+            <tr>
+              <td>dateTs</td>
+              <td>Timestamp</td>
+              <td>정렬 및 범위 조회</td>
+            </tr>
+            <tr>
+              <td>monthKey</td>
+              <td>string</td>
+              <td>월 단위 목록 조회</td>
+            </tr>
+            <tr>
+              <td>platform</td>
+              <td>enum</td>
+              <td>OCR 매칭, 필터링</td>
+            </tr>
+            <tr>
+              <td>categories</td>
+              <td>string[]</td>
+              <td>현재 다중 카테고리 구조 유지</td>
+            </tr>
+            <tr>
+              <td>title</td>
+              <td>string</td>
+              <td>표와 검색의 기본 키</td>
+            </tr>
+            <tr>
+              <td>amount</td>
+              <td>number</td>
+              <td>지출 음수, 수입 양수 규칙 유지</td>
+            </tr>
+            <tr>
+              <td>absAmount</td>
+              <td>number</td>
+              <td>OCR 매칭 후보 조회용</td>
+            </tr>
+            <tr>
+              <td>status</td>
+              <td>enum</td>
+              <td>purchase/cancel/refund/sub/etc</td>
+            </tr>
+            <tr>
+              <td>detail.items</td>
+              <td>array</td>
+              <td>상품 목록 저장</td>
+            </tr>
+            <tr>
+              <td>detail.source</td>
+              <td>"OCR" | "MANUAL"</td>
+              <td>상품 생성 출처</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="codebox"><pre>{
+  "type": "expense",
+  "dateText": "2026.04.14",
+  "dateTs": "Timestamp(...)",
+  "monthKey": "2026-04",
+  "platform": "coupang",
+  "categories": ["fashion"],
+  "title": "나이키 에어포스 외 1건",
+  "amount": -258000,
+  "absAmount": 258000,
+  "status": "purchase",
+  "source": "ocr",
+  "detail": {
+    "source": "OCR",
+    "items": [
+      { "name": "나이키 에어포스 1 로우", "price": 129000 },
+      { "name": "나이키 에어포스 1 로우 화이트", "price": 129000 }
+    ]
+  }
+}</pre></div>
+      </section>
+
+      <section class="section grid-2">
+        <div class="panel card">
+          <h3>Required Queries</h3>
+          <table>
+            <thead>
+              <tr>
+                <th>Use Case</th>
+                <th>Query Shape</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>월별 거래 목록</td>
+                <td>`where(monthKey == x) + orderBy(dateTs desc)`</td>
+              </tr>
+              <tr>
+                <td>OCR 매칭 후보</td>
+                <td>`where(monthKey == x, platform == x, absAmount == x)`</td>
+              </tr>
+              <tr>
+                <td>카테고리 목록</td>
+                <td>`users/{uid}/categories` 전체 조회</td>
+              </tr>
+            </tbody>
+          </table>
+          <div class="chips">
+            <span class="chip">monthKey + dateTs 인덱스</span>
+            <span class="chip">monthKey + platform + absAmount 인덱스</span>
+          </div>
+        </div>
+
+        <div class="panel card">
+          <h3>Security Rule Principle</h3>
+          <div class="codebox"><pre>match /users/{userId} {
+  allow read, write: if request.auth != null
+                     && request.auth.uid == userId;
+
+  match /transactions/{transactionId} {
+    allow read, write: if request.auth != null
+                       && request.auth.uid == userId;
+  }
+
+  match /categories/{categoryId} {
+    allow read, write: if request.auth != null
+                       && request.auth.uid == userId;
+  }
+}</pre></div>
+        </div>
+      </section>
+
+      <section class="section panel card">
+        <h3>Recommended Team Split</h3>
+        <div class="steps">
+          <div class="step">
+            <div class="num">1</div>
+            <h4>Auth Bootstrap</h4>
+            <p>회원가입 시 `users/{uid}`와 표준 카테고리 5종을 자동 생성합니다.</p>
+          </div>
+          <div class="step">
+            <div class="num">2</div>
+            <h4>Transactions CRUD</h4>
+            <p>Manual Entry, Transactions, CSV Upload가 Firestore 기반으로 동작하도록 저장소를 교체합니다.</p>
+          </div>
+          <div class="step">
+            <div class="num">3</div>
+            <h4>Profile + Categories</h4>
+            <p>Settings의 프로필과 카테고리 수정 흐름을 Firestore로 옮깁니다.</p>
+          </div>
+          <div class="step">
+            <div class="num">4</div>
+            <h4>OCR Attach Flow</h4>
+            <p>OCR 저장, 기존 거래 매칭, `detail.items` 병합 업데이트를 마무리합니다.</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  </body>
+</html>

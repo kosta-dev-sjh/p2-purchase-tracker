@@ -1,0 +1,476 @@
+/**
+ * 역할: 모든 화면(홈/거래내역/분석)이 공유하는 "월 선택" pill.
+ *
+ *       기존에는 MONTH_OPTIONS (목업 4개월) 으로부터 native <select> 를 그렸지만,
+ *       (1) 옵션이 1~4월에 고정돼 있던 문제, (2) 년도가 바뀌면 사용자가 직접
+ *       "특정 시작년도부터 현재 월까지 자유롭게 고를" 수 있어야 한다는 요구 때문에
+ *       팝업을 직접 그리는 형태로 바꿨습니다.
+ *
+ *       바깥 트리거(◄ pill ►) 의 외관·치수·tokens 는 기존과 동일하게 유지합니다.
+ *       달라진 것은 가운데 pill 을 누르면 떠오르는 팝업뿐이며,
+ *       팝업은 다음과 같이 동작합니다.
+ *         - 상단 년도 네비게이터(◄ YYYY ►) — minYear/maxYear 경계에서 비활성
+ *         - 하단 12개 월 그리드(4 cols × 3 rows) — 미래 월/한도 밖 월은 비활성
+ *         - 월 칸을 클릭 → onChange 호출 + 팝업 닫힘
+ *         - ESC, 바깥 클릭 → 닫힘
+ *
+ *       시간 경계 정책은 옵션이 아니라 "미래 월은 표시하지 않음" 으로 고정합니다.
+ *       (가계부/카드사 UX 관행 — 아직 일어나지 않은 달을 고를 이유가 없음.)
+ *
+ * 위치: src\components\primitives\MonthPicker.tsx
+ */
+import { useEffect, useMemo, useRef, useState } from "react";
+import styled from "styled-components";
+import { tokens } from "../../styles/tokens";
+import {
+  getMonthOption,
+  getNextMonthKey,
+  getPrevMonthKey,
+} from "../../constants/months";
+import { media } from "../../tokens/breakpoints";
+
+interface MonthPickerProps {
+  value: string;
+  onChange: (value: string) => void;
+  /**
+   * 셀렉터에 노출할 가장 오래된 년도. 미지정 시 현재년도 − 5 까지 자동 노출.
+   * 페이지에서 거래 데이터 기반으로 computeMinYear() 결과를 넘기면 더 옛날 데이터까지 자동 확장됩니다.
+   */
+  minYear?: number;
+  /**
+   * 셀렉터가 허용하는 가장 최신 "YYYY-MM" 키. 미지정 시 오늘 기준 현재 월까지만 허용.
+   * 거래 데이터에 미래 월이 섞여 있는 경우(과거 데이터 정합성) 페이지에서 computeMaxMonthKey() 결과를
+   * 넘겨 사용자가 자기 거래에 접근할 수 없는 "데이터 노출 사각지대"를 막습니다.
+   */
+  maxMonthKey?: string;
+  /**
+   * 거래가 1건 이상 존재하는 "YYYY-MM" 키 목록.
+   * 팝업 안에서 해당 월을 눈에 띄는 색/점으로 표시해 사용자가 기록이 있는 달을 빠르게 찾게 합니다.
+   */
+  markedMonthKeys?: readonly string[];
+}
+
+const Wrap = styled.div`
+  display: inline-flex;
+  align-items: center;
+  gap: ${tokens.space[2]};
+  position: relative;
+
+  ${media.mobile} {
+    width: 100%;
+  }
+`;
+
+const StepButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.panel};
+  color: ${tokens.color.ink2};
+  cursor: pointer;
+  font-size: 16px;
+  transition:
+    border-color ${tokens.motion.fast} ease,
+    background ${tokens.motion.fast} ease,
+    box-shadow ${tokens.motion.fast} ease;
+
+  &:hover:not(:disabled) {
+    border-color: ${tokens.color.accentBorder};
+    background: ${tokens.color.foot};
+  }
+
+  &:focus-visible {
+    box-shadow: ${tokens.shadow.focus};
+  }
+
+  &:disabled {
+    /* 0.45 → 0.3로 더 진하게 흐리게 처리해서 "이 버튼은 안 눌려요"라는 시각 신호를 강하게 합니다.
+       이전에는 흐림이 미세해 사용자가 disabled 상태인지 인지하지 못하고 반복 클릭하는 버그처럼 느꼈어요. */
+    opacity: 0.3;
+    cursor: not-allowed;
+    background: ${tokens.color.foot};
+    color: ${tokens.color.ink5};
+  }
+`;
+
+/**
+ * 트리거 pill — native <select> 를 직접 흉내내는 button 입니다.
+ * dot, padding, 폭, 폰트 모두 기존 <Select> 토큰과 동일하게 유지해
+ * 외관 회귀가 없도록 했습니다.
+ */
+const TriggerWrap = styled.div`
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+
+  ${media.mobile} {
+    flex: 1;
+    min-width: 0;
+  }
+`;
+
+const TriggerDot = styled.span`
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  transform: translateY(-50%);
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: ${tokens.color.accent};
+  pointer-events: none;
+`;
+
+const TriggerButton = styled.button<{ $open: boolean }>`
+  height: 32px;
+  min-width: 132px;
+  padding: 0 32px 0 26px;
+  border: 1px solid ${({ $open }) => ($open ? tokens.color.accent : tokens.color.line)};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.panel};
+  color: ${tokens.color.ink2};
+  font-family: inherit;
+  font-size: ${tokens.type.bodySm.size};
+  font-weight: 500;
+  text-align: left;
+  outline: none;
+  cursor: pointer;
+  box-shadow: ${({ $open }) => ($open ? tokens.shadow.focus : "none")};
+
+  &:focus-visible {
+    border-color: ${tokens.color.accent};
+    box-shadow: ${tokens.shadow.focus};
+  }
+
+  ${media.mobile} {
+    width: 100%;
+    min-width: 0;
+  }
+`;
+
+/**
+ * 트리거 오른쪽 끝의 ▾ 아이콘. native <select> 가 그려주던 화살표 자리를
+ * 시각적으로 대체합니다. 팝업 열림 상태에선 살짝 회전.
+ */
+const TriggerCaret = styled.span<{ $open: boolean }>`
+  position: absolute;
+  top: 50%;
+  right: 12px;
+  transform: translateY(-50%) ${({ $open }) => ($open ? "rotate(180deg)" : "rotate(0deg)")};
+  pointer-events: none;
+  font-size: 10px;
+  color: ${tokens.color.ink3};
+  transition: transform ${tokens.motion.fast} ease;
+`;
+
+/* --- 팝업 --- */
+
+const Popover = styled.div`
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 40;
+  min-width: 248px;
+  padding: ${tokens.space[3]};
+  background: ${tokens.color.panel};
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.card};
+  box-shadow: ${tokens.shadow.modal};
+
+  /* 모바일에서는 상위 컨테이너 폭을 가득 채우도록. */
+  ${media.mobile} {
+    left: 0;
+    right: 0;
+    min-width: 0;
+  }
+`;
+
+const YearRow = styled.div`
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: ${tokens.space[2]};
+  margin-bottom: ${tokens.space[3]};
+`;
+
+const YearLabel = styled.div`
+  font-size: ${tokens.type.cardTitle.size};
+  font-weight: ${tokens.type.cardTitle.weight};
+  color: ${tokens.color.ink1};
+  letter-spacing: ${tokens.type.cardTitle.tracking};
+`;
+
+const MonthGrid = styled.div`
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: ${tokens.space[2]};
+`;
+
+/**
+ * 달 셀의 시각 상태는 세 가지가 동시에 다뤄집니다.
+ * - selected: 현재 사용자가 보고 있는 달 (인디고 accent 톤)
+ * - marked: 거래 데이터가 1건 이상 있는 달 (앰버 톤 — selected 와 충돌하지 않게 따뜻한 색)
+ * - 기본: 기록 없는 달 (라인 + 패널)
+ *
+ * selected 가 marked 보다 우선합니다(선택된 달이 데이터를 가진 경우, 인디고로만 보여줘
+ * 사용자에게 "이게 지금 보는 달" 이라는 정보가 더 강조되도록).
+ */
+const MonthCell = styled.button<{ $selected: boolean; $marked: boolean }>`
+  position: relative;
+  height: 36px;
+  border-radius: ${tokens.radius.control};
+  border: 1px solid
+    ${({ $selected, $marked }) =>
+      $selected
+        ? tokens.color.accent
+        : $marked
+          ? tokens.color.markerBorder
+          : tokens.color.line};
+  background: ${({ $selected, $marked }) =>
+    $selected
+      ? tokens.color.accentSubtle
+      : $marked
+        ? tokens.color.markerBg
+        : tokens.color.panel};
+  color: ${({ $selected, $marked }) =>
+    $selected
+      ? tokens.color.accent
+      : $marked
+        ? tokens.color.markerFg
+        : tokens.color.ink2};
+  font-family: inherit;
+  font-size: ${tokens.type.bodySm.size};
+  font-weight: ${({ $selected, $marked }) => ($selected || $marked ? 700 : 500)};
+  cursor: pointer;
+  transition:
+    border-color ${tokens.motion.fast} ease,
+    background ${tokens.motion.fast} ease;
+
+  &:hover:not(:disabled) {
+    border-color: ${tokens.color.accentBorder};
+    background: ${tokens.color.foot};
+  }
+
+  &:focus-visible {
+    box-shadow: ${tokens.shadow.focus};
+    outline: none;
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    background: ${tokens.color.panel};
+  }
+`;
+
+/* --- 컴포넌트 --- */
+
+/** "YYYY-MM" 키 → {year, month} 숫자 쌍. 실패 시 오늘 기준값으로 폴백. */
+function parseKey(key: string): { year: number; month: number } {
+  const m = key.match(/^(\d{4})-(\d{1,2})$/);
+  if (!m) {
+    const now = new Date();
+    return { year: now.getFullYear(), month: now.getMonth() + 1 };
+  }
+  return { year: Number(m[1]), month: Number(m[2]) };
+}
+
+const buildKey = (year: number, month: number) =>
+  `${year}-${String(month).padStart(2, "0")}`;
+
+export const MonthPicker = ({
+  value,
+  onChange,
+  minYear,
+  maxMonthKey,
+  markedMonthKeys = [],
+}: MonthPickerProps) => {
+  // 화면 진입 시점 기준 "오늘". 미래 월 비활성 판정에 쓰입니다.
+  // 팝업이 닫힌 채로 며칠 머물러도 다음 렌더링에서 다시 계산되므로 굳이 useState 로 묶지 않습니다.
+  const today = new Date();
+  const todayYear = today.getFullYear();
+  const todayMonth = today.getMonth() + 1; // 1-based
+
+  // minYear 미지정 시 현재년도 − 5 보장.
+  const effectiveMinYear = useMemo(
+    () => (typeof minYear === "number" ? minYear : todayYear - 5),
+    [minYear, todayYear]
+  );
+
+  // maxMonthKey가 주어지면 그쪽이 더 최신일 때 그 월까지 허용. 평소엔 오늘 기준이 상한.
+  const effectiveMax = useMemo(() => {
+    if (!maxMonthKey) {
+      return { year: todayYear, month: todayMonth };
+    }
+    const m = maxMonthKey.match(/^(\d{4})-(\d{1,2})$/);
+    if (!m) return { year: todayYear, month: todayMonth };
+    const y = Number(m[1]);
+    const mo = Number(m[2]);
+    // 미래 데이터가 있으면 그 월까지 허용. 단 기본 보장(오늘 월)보다 작으면 오늘 월을 채택.
+    if (y * 100 + mo > todayYear * 100 + todayMonth) {
+      return { year: y, month: mo };
+    }
+    return { year: todayYear, month: todayMonth };
+  }, [maxMonthKey, todayYear, todayMonth]);
+
+  const { year: selectedYear, month: selectedMonth } = parseKey(value);
+  const markedMonthSet = useMemo(() => new Set(markedMonthKeys), [markedMonthKeys]);
+
+  // 팝업이 보여주는 년도. 디폴트는 현재 선택된 값의 년도.
+  const [open, setOpen] = useState(false);
+  const [viewYear, setViewYear] = useState<number>(selectedYear);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // 외부에서 value 가 바뀌어 다른 년도로 점프했다면 viewYear 도 따라가게 동기화.
+  useEffect(() => {
+    setViewYear(selectedYear);
+  }, [selectedYear]);
+
+  // 팝업 바깥 클릭 / ESC 로 닫기.
+  useEffect(() => {
+    if (!open) return;
+    const handlePointer = (event: MouseEvent) => {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    };
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointer);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("mousedown", handlePointer);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [open]);
+
+  /** "이 키를 선택할 수 있는가?" — minYear 보다 옛날, effectiveMax 보다 미래는 거부. */
+  const isSelectable = (year: number, month: number): boolean => {
+    if (year < effectiveMinYear) return false;
+    if (year > effectiveMax.year) return false;
+    if (year === effectiveMax.year && month > effectiveMax.month) return false;
+    return true;
+  };
+
+  /** 트리거의 ◄ 버튼 — "한 달 전". */
+  const goPrev = () => {
+    const prev = getPrevMonthKey(value);
+    const { year, month } = parseKey(prev);
+    if (!isSelectable(year, month)) return;
+    onChange(prev);
+  };
+
+  /** 트리거의 ► 버튼 — "한 달 뒤". */
+  const goNext = () => {
+    const next = getNextMonthKey(value);
+    const { year, month } = parseKey(next);
+    if (!isSelectable(year, month)) return;
+    onChange(next);
+  };
+
+  const isAtMin = !isSelectable(
+    parseKey(getPrevMonthKey(value)).year,
+    parseKey(getPrevMonthKey(value)).month
+  );
+  const isAtMax = !isSelectable(
+    parseKey(getNextMonthKey(value)).year,
+    parseKey(getNextMonthKey(value)).month
+  );
+
+  const selectMonth = (month: number) => {
+    const key = buildKey(viewYear, month);
+    onChange(key);
+    setOpen(false);
+  };
+
+  const triggerLabel = getMonthOption(value).label;
+
+  return (
+    <Wrap ref={wrapRef}>
+      <StepButton
+        type="button"
+        onClick={goPrev}
+        disabled={isAtMin}
+        aria-label="이전 달"
+      >
+        ‹
+      </StepButton>
+      <TriggerWrap>
+        <TriggerDot aria-hidden />
+        <TriggerButton
+          type="button"
+          $open={open}
+          onClick={() => setOpen((v) => !v)}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label="월 선택"
+        >
+          {triggerLabel}
+        </TriggerButton>
+        <TriggerCaret aria-hidden $open={open}>
+          ▾
+        </TriggerCaret>
+        {open && (
+          <Popover role="dialog" aria-label="년/월 선택">
+            <YearRow>
+              <StepButton
+                type="button"
+                onClick={() => setViewYear((y) => y - 1)}
+                disabled={viewYear - 1 < effectiveMinYear}
+                aria-label="이전 년도"
+              >
+                ‹
+              </StepButton>
+              <YearLabel>{viewYear}년</YearLabel>
+              <StepButton
+                type="button"
+                onClick={() => setViewYear((y) => y + 1)}
+                disabled={viewYear + 1 > effectiveMax.year}
+                aria-label="다음 년도"
+              >
+                ›
+              </StepButton>
+            </YearRow>
+            <MonthGrid>
+              {Array.from({ length: 12 }, (_, idx) => {
+                const month = idx + 1;
+                const monthKey = buildKey(viewYear, month);
+                const enabled = isSelectable(viewYear, month);
+                const selected = viewYear === selectedYear && month === selectedMonth;
+                const marked = markedMonthSet.has(monthKey);
+                return (
+                  <MonthCell
+                    key={month}
+                    type="button"
+                    $selected={selected}
+                    $marked={marked}
+                    disabled={!enabled}
+                    onClick={() => selectMonth(month)}
+                    aria-label={`${viewYear}년 ${month}월`}
+                    aria-pressed={selected}
+                  >
+                    {month}월
+                  </MonthCell>
+                );
+              })}
+            </MonthGrid>
+          </Popover>
+        )}
+      </TriggerWrap>
+      <StepButton
+        type="button"
+        onClick={goNext}
+        disabled={isAtMax}
+        aria-label="다음 달"
+      >
+        ›
+      </StepButton>
+    </Wrap>
+  );
+};
