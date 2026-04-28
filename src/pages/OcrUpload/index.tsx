@@ -147,27 +147,12 @@ export const OcrUploadPage: React.FC = () => {
     // 그 외 (text/pdf/svg 등) 는 OCR 단계에서 의미 없거나 위험할 수 있어 입력 시점에 차단.
     // 사이즈 상한은 메모리·Firestore 비용 보호 + DoS 방지(거대한 파일을 여러 장 올리는 패턴).
     const accepted: File[] = [];
-    let rejectedMime = 0;
-    let rejectedSize = 0;
     for (const file of files.slice(0, remainingSlots)) {
       const mimeOk = (ALLOWED_IMAGE_MIME_TYPES as readonly string[]).includes(file.type);
       const sizeOk = file.size > 0 && file.size <= MAX_IMAGE_BYTES;
-      if (!mimeOk) {
-        rejectedMime += 1;
-        continue;
-      }
-      if (!sizeOk) {
-        rejectedSize += 1;
-        continue;
-      }
+      if (!mimeOk) continue;
+      if (!sizeOk) continue;
       accepted.push(file);
-    }
-    if (rejectedMime > 0 || rejectedSize > 0) {
-      // 정확한 toast 시스템이 없는 단계라 console + 추후 SaveResultModal 류 안내로 묶기 좋게
-      // console.warn 으로 남깁니다(사용자에 즉시 보이지 않더라도 개발 단계에서 확인 가능).
-      console.warn(
-        `[OcrUpload] 파일 일부 거절: MIME ${rejectedMime}건, 사이즈 초과(${MAX_IMAGE_BYTES / (1024 * 1024)}MB) ${rejectedSize}건`,
-      );
     }
     const filesToAdd = accepted;
 
@@ -272,18 +257,6 @@ export const OcrUploadPage: React.FC = () => {
       // 사용자 선택 platform 과 detectedPlatform 이 다르고 confidence ≥ 0.6 이면 mismatch.
       // OCR 손상이 큰 이미지는 detectedPlatform 이 null 또는 confidence 낮음 → 알람 안 띄움.
       // 임계값 0.6 (이전 0.7 에서 완화): 짧은 캡쳐도 mismatch 잡히도록.
-      //
-      // DevTools 콘솔에 항상 detection 결과 로그 — 사용자가 "모달이 왜 안 뜨냐" 디버깅 시 즉시
-      // 원인 확인 가능 (platform/detected/confidence 셋이 보이면 코드 흐름은 정상).
-      console.info(
-        "[OCR mismatch-detect]",
-        processedImages.map((img) => ({
-          file: img.fileName,
-          selected: img.platform,
-          detected: img.detectedPlatform ?? "(none)",
-          confidence: Math.round((img.detectionConfidence ?? 0) * 100) / 100,
-        })),
-      );
       const mismatched = processedImages.filter(
         (img) =>
           img.detectedPlatform &&
@@ -292,9 +265,6 @@ export const OcrUploadPage: React.FC = () => {
       );
 
       if (mismatched.length > 0) {
-        console.info(
-          `[OCR mismatch-detect] ${mismatched.length}건 mismatch — 모달 띄움`,
-        );
         // 진행 모달 닫고 mismatch 모달로 사용자 선택을 받음. processedImages 는 store 에 아직
         // 안 넣음 — 사용자 결정 후에 반영.
         setIsAnalyzing(false);
@@ -307,7 +277,7 @@ export const OcrUploadPage: React.FC = () => {
       );
       navigate("/ocr-edit");
     } catch {
-      // 사용자에게는 alert로 친화적 메시지만 노출. 콘솔 디버그 로그는 정리했습니다.
+      // 사용자에게는 alert로 친화적 메시지만 노출.
       alert("이미지 분석 중 오류가 발생했습니다.");
     } finally {
       setIsAnalyzing(false);

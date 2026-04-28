@@ -188,6 +188,10 @@ export async function signIn(email: string, password: string): Promise<void> {
 }
 
 export async function signInWithGoogle(): Promise<void> {
+  // popup 방식 사용. signInWithRedirect 는 시장 표준이지만 localhost 개발 환경처럼
+  // authDomain 과 origin 이 다른 환경에선 third-party storage 격리 때문에 redirect
+  // 결과가 픽업 안 되는 케이스가 있어, 안정성을 위해 popup 으로 유지합니다.
+  // (참고: COOP 콘솔 경고는 Firebase JS SDK known issue #8061 — 동작에 영향 없음)
   const provider = new GoogleAuthProvider();
   await signInWithPopup(auth, provider);
 }

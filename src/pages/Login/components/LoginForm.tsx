@@ -11,6 +11,33 @@ import { TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
 import { signIn, signInWithGoogle } from "../../../lib/firebaseSync";
 
+// Google 로그인 에러 코드 → 한국어 친화 메시지 매핑.
+// 이 분리가 없으면 raw 'Firebase: Error (auth/...)' 영문 디버그 문자열이 사용자에게 그대로
+// 노출됩니다. popup-closed-by-user / cancelled-popup-request 두 코드는 호출자가 별도 처리
+// (=조용히 무시) 하므로 여기 매핑에서 빠져 있어도 default 폴백으로 떨어지지 않습니다.
+function mapGoogleAuthErrorCode(code: string): string {
+  switch (code) {
+    case "auth/popup-blocked":
+      return "브라우저가 팝업을 차단했어요. 팝업 허용 후 다시 시도해 주세요.";
+    case "auth/account-exists-with-different-credential":
+      return "이미 다른 방식으로 가입된 이메일이에요. 기존 로그인 방법으로 시도해 주세요.";
+    case "auth/credential-already-in-use":
+      return "이 Google 계정은 다른 사용자에게 이미 연결되어 있어요.";
+    case "auth/network-request-failed":
+      return "네트워크 연결을 확인해 주세요.";
+    case "auth/too-many-requests":
+      return "너무 많은 요청이 들어와 잠시 후 다시 시도해 주세요.";
+    case "auth/user-disabled":
+      return "이 계정은 사용이 중지되었어요.";
+    case "auth/unauthorized-domain":
+      return "현재 도메인에서 Google 로그인이 허용되어 있지 않아요. 관리자에게 문의해 주세요.";
+    case "auth/web-storage-unsupported":
+      return "브라우저 저장소가 비활성화돼 있어요. 시크릿 모드/추적 방지 설정을 확인해 주세요.";
+    default:
+      return "Google 로그인에 실패했어요. 잠시 후 다시 시도해 주세요.";
+  }
+}
+
 const Row = styled.div`
   display: flex;
   align-items: center;
@@ -184,8 +211,15 @@ export const LoginForm: React.FC = () => {
             await signInWithGoogle();
             navigate("/");
           } catch (err) {
-            const message = err instanceof Error ? err.message : "Google 로그인에 실패했어요.";
-            setError(message);
+            const code = (err as { code?: string }).code ?? "";
+            // 사용자가 직접 팝업을 닫거나(=취소 의도), 버튼을 두 번 눌러서 이전 팝업 요청이
+            // 캔슬된 경우는 "에러"가 아니라 정상적인 취소이므로 메시지를 띄우지 않고 조용히
+            // 폼 상태만 원복합니다. 이 분기를 빼두면 raw 'Firebase: Error (auth/popup-closed-by-user).'
+            // 가 그대로 사용자에게 노출돼요.
+            if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
+              return;
+            }
+            setError(mapGoogleAuthErrorCode(code));
           } finally {
             setSubmitting(false);
           }

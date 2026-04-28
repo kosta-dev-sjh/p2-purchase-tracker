@@ -238,6 +238,19 @@ export const SubscriptionsPage: React.FC = () => {
     () => deltaInfo(current.total, previous.total),
     [current.total, previous.total],
   );
+  // 활성 항목 카드의 보조 라벨도 합계 카드와 같은 "전월 대비 …" 톤으로 통일.
+  // 이전에는 'sub 태그' 같은 내부 구현 용어가 노출돼 사용자에게 혼란을 줬습니다.
+  const itemDelta = useMemo(() => {
+    const diff = itemCount - previous.items.length;
+    if (diff === 0) {
+      return { label: "전월과 동일", modifier: "flat" as const };
+    }
+    const sign = diff > 0 ? "+" : "−";
+    return {
+      label: `전월 대비 ${sign}${Math.abs(diff)}건`,
+      modifier: diff > 0 ? ("up" as const) : ("down" as const),
+    };
+  }, [itemCount, previous.items.length]);
 
   return (
     <AppShell
@@ -265,7 +278,9 @@ export const SubscriptionsPage: React.FC = () => {
         <KpiCard>
           <div className="label">활성 항목</div>
           <div className="value">{itemCount}건</div>
-          <div className="delta delta--flat">자동 감지 + 'sub' 태그</div>
+          <div className={`delta delta--${itemDelta.modifier}`}>
+            {itemDelta.label}
+          </div>
         </KpiCard>
         <KpiCard>
           <div className="label">평균 항목당</div>

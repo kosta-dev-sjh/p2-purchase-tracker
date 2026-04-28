@@ -70,12 +70,19 @@ const Row = styled.li`
     border-top: 1px solid ${tokens.color.line2};
   }
 
-  &:hover {
+  &:hover,
+  &:focus-visible {
     background: ${tokens.color.tint};
     border-top-color: transparent;
+    outline: none;
   }
 
-  &:hover + & {
+  &:focus-visible {
+    box-shadow: ${tokens.shadow.focus};
+  }
+
+  &:hover + &,
+  &:focus-visible + & {
     border-top-color: transparent;
   }
 
@@ -180,7 +187,28 @@ export const RecentTransactions: React.FC<{ items: RecentItem[] }> = ({ items })
         ) : (
           <List>
             {items.map((item) => (
-              <Row key={item.id}>
+              /**
+               * 행 클릭 시 거래내역 페이지로 이동하면서 location.state.scrollToTransactionId
+               * 로 대상 거래 id 를 함께 넘깁니다. Transactions 페이지가 이 값을 받아 월
+               * 동기화·필터 리셋·자동 선택·부드러운 스크롤·하이라이트 펄스를 처리합니다.
+               * 키보드/스크린리더 사용자도 같은 동선을 잡도록 button role + Enter/Space
+               * 핸들러를 함께 둡니다.
+               */
+              <Row
+                key={item.id}
+                role="button"
+                tabIndex={0}
+                onClick={() =>
+                  navigate("/transactions", { state: { scrollToTransactionId: item.id } })
+                }
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    navigate("/transactions", { state: { scrollToTransactionId: item.id } });
+                  }
+                }}
+                aria-label={`${item.title} 거래 상세로 이동`}
+              >
                 <Avatar>{item.initial}</Avatar>
                 <TitleBlock>
                   <Title>{item.title}</Title>

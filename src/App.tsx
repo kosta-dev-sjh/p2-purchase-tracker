@@ -7,6 +7,7 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 // ProductTour는 Routes와 형제로 라우터 안쪽에 마운트되어야
 // useNavigate/useLocation 훅이 동작하고, 라우트 전환 중에도 상태가 유지됩니다.
 import { ProductTour } from "./components/onboarding/ProductTour";
+import { LandingPage } from "./pages/Landing";
 import { LoginPage } from "./pages/Login";
 import { RegisterPage } from "./pages/Register";
 import { ForgotPasswordPage } from "./pages/ForgotPassword";
@@ -42,6 +43,24 @@ const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
   return <>{children}</>;
 };
 
+/**
+ * 루트("/") 진입 분기:
+ *  - 로그인 상태 → 기존 HomePage(대시보드)로 그대로 보냄.
+ *  - 비로그인 상태 → 랜딩 페이지를 첫 인상으로 노출.
+ *  - loading → 깜빡임을 막기 위해 공통 LoadingScreen 사용.
+ *
+ * 이전에는 "/" 가 ProtectedRoute 로 감싸져 비로그인 시 즉시 /login 으로 튕겼지만,
+ * 이제 첫 화면이 "이 앱이 뭐 하는 곳" 인지 보여주는 랜딩이 되도록 분기합니다.
+ * 로그인/회원가입 같은 PublicOnly 라우트는 변경 없이 유지되고, ProtectedRoute 도
+ * 그대로라 깊은 링크(/transactions 등) 의 보호 흐름은 깨지지 않습니다.
+ */
+const RootRoute: React.FC = () => {
+  const { status } = useAuthSession();
+  if (status === "loading") return <LoadingScreen />;
+  if (status === "authenticated") return <HomePage />;
+  return <LandingPage />;
+};
+
 function App() {
   return (
     <BrowserRouter>
@@ -51,7 +70,7 @@ function App() {
         <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
         <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
         <Route path="/forgot-password" element={<PublicOnlyRoute><ForgotPasswordPage /></PublicOnlyRoute>} />
-        <Route path="/" element={<ProtectedRoute><HomePage /></ProtectedRoute>} />
+        <Route path="/" element={<RootRoute />} />
         <Route path="/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
         <Route path="/ocr-upload" element={<ProtectedRoute><OcrUploadPage /></ProtectedRoute>} />
         <Route path="/manual-entry" element={<ProtectedRoute><ManualEntryPage /></ProtectedRoute>} />

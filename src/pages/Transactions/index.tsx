@@ -272,6 +272,13 @@ export const TransactionsPage: React.FC = () => {
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * 홈 "최근 거래" 등 다른 화면에서 특정 거래로 진입했을 때 그 행을 부드럽게 스크롤하고
+   * 잠깐 강조하기 위한 상태. highlightId 는 강조 대상 행의 id, pulseToken 은 같은 id 가
+   * 연달아 들어와도 펄스를 다시 트리거하기 위한 단조 증가 카운터.
+   */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [pulseToken, setPulseToken] = useState(0);
 
   const resetVisibleCount = useCallback(() => {
     setVisibleCount(INITIAL_VISIBLE);
@@ -427,6 +434,67 @@ export const TransactionsPage: React.FC = () => {
   }, []);
 
   /**
+   * 홈 "최근 거래"·소비분석 등에서 location.state.scrollToTransactionId 로 진입한 경우의 처리.
+   * 편집 모달은 띄우지 않고, 대상 거래가 표에 보이도록 다음을 강제합니다:
+   *   1) 검색·유형·플랫폼·카테고리·상태·할부 필터 모두 초기화 (필터로 가려져 있으면 안 보이니까)
+   *   2) 거래 일자에 맞춰 month 동기화 + visibleCount 리셋
+   *   3) selectedId = 대상 id (오른쪽 상세 패널 열기, 모바일은 아코디언 열기)
+   *   4) highlightId / pulseToken 갱신 → TransactionTable 이 ref 로 scrollIntoView + 펄스
+   * 처리 후 navigate replace 로 state 를 비워 새로고침·뒤로가기 시 다시 트리거되지 않게 합니다.
+   */
+  useEffect(() => {
+    const state = location.state as { scrollToTransactionId?: string } | null;
+    const targetId = state?.scrollToTransactionId;
+    if (!targetId) return;
+    const target = allRows.find((row) => row.id === targetId);
+    if (!target) {
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+
+    setSearch("");
+    setTypeFilter("all");
+    setPlatform("all");
+    setCategory("all");
+    setStatusFilter("all");
+    setInstallmentFilter("all");
+
+    const key = toMonthKey(target.date);
+    if (key) {
+      setMonth(key);
+    }
+    setVisibleCount(INITIAL_VISIBLE);
+    setSelectedId(targetId);
+    setHighlightId(targetId);
+    setPulseToken((current) => current + 1);
+
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, allRows, navigate]);
+
+  /**
+   * 강조 대상 행이 visibleCount 밖에 있으면 충분히 보이도록 자동 확장.
+   * filteredRows 가 필터/월 변경 후 갱신되면 한 번만 점프합니다.
+   */
+  useEffect(() => {
+    if (!highlightId) return;
+    const idx = filteredRows.findIndex((row) => row.id === highlightId);
+    if (idx === -1) return;
+    if (idx >= visibleCount) {
+      setVisibleCount(Math.min(filteredRows.length, idx + 5));
+    }
+  }, [highlightId, filteredRows, visibleCount]);
+
+  /**
+   * 펄스 애니메이션 길이(약 1.6s)와 동일한 시간 뒤에 highlightId 를 비웁니다.
+   * 강조 효과는 일회성이라 selectedId(상세 선택) 와 분리해 운영합니다.
+   */
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = window.setTimeout(() => setHighlightId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [highlightId, pulseToken]);
+
+  /**
    * 수동 입력 페이지에서 "이 거래 수정하기"로 넘어올 때 location.state.editTransactionId 에
    * 대상 거래 id 가 담겨 옵니다. 이 경우 해당 거래를 스토어에서 찾아 편집 모달을 자동으로 엽니다.
    * 한 번 처리한 뒤에는 state 를 비워 같은 거래를 다시 새로 고침·뒤로가기 해도 모달이 불쑥
@@ -551,6 +619,8 @@ export const TransactionsPage: React.FC = () => {
               sortOrder={sortOrder}
               onToggleSort={handleToggleSort}
               renderMobileDetail={renderMobileDetail}
+              highlightId={highlightId}
+              pulseToken={pulseToken}
             />
           </Left>
           <PanelSlot>

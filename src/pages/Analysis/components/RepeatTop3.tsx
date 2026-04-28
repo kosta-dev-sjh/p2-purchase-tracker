@@ -40,10 +40,29 @@ const Row = styled.li`
   grid-template-columns: 22px 1fr auto auto;
   gap: 12px;
   align-items: center;
-  padding: 12px 0;
+  padding: 12px;
+  margin: 0 -12px;
+  border-radius: ${tokens.radius.control};
+  transition: background ${tokens.motion.fast} ease;
 
   & + & {
     border-top: 1px solid ${tokens.color.line2};
+  }
+
+  /*
+   * 사용자 요청: 마우스 올렸을 때 눈이 재밌도록 색이 바뀌는 효과.
+   * 표시 전용 카드라 클릭 동작은 없으므로 cursor 는 default 그대로 두고
+   * 거래내역 테이블/홈 최근거래와 동일한 tint 톤으로 통일감을 유지합니다.
+   * hover 상태에서는 위/아래 행 사이 경계선이 hover 박스를 가로지르지 않도록
+   * border-top 색을 투명으로 떨어뜨려 한 덩어리로 떠오르는 느낌을 줍니다.
+   */
+  &:hover {
+    background: ${tokens.color.tint};
+    border-top-color: transparent;
+  }
+
+  &:hover + & {
+    border-top-color: transparent;
   }
 `;
 

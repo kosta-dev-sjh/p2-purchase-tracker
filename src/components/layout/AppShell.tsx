@@ -219,11 +219,6 @@ const MobileBrand = styled.div`
     font-weight: 700;
     letter-spacing: -0.01em;
   }
-
-  .sub {
-    color: ${tokens.color.ink4};
-    font-size: 11px;
-  }
 `;
 
 const MobileMeta = styled.div`
@@ -261,16 +256,40 @@ const MobileLogout = styled.button`
 `;
 
 /*
- * 5개 메뉴 칩이 들어가는 모바일 상단 레일.
- * - 360px 뷰포트에서도 5개가 전부 잘리지 않고 한 줄에 들어가도록 gap/padding/min-width 를
+ * 모바일 칩 영역 = (스크롤되는 4개 primary rail) + (스크롤되지 않는 더보기 chip).
+ *
+ * 더보기 드롭다운(MoreSheet)은 absolute 로 칩 아래에 펼쳐지는데, 이전 구조에서는
+ * MoreSheetWrap 이 `overflow-x: auto` 인 MobileNavRail 안에 들어가 있어
+ * BFC 가 형성되며 absolute 자식이 rail 의 bottom 경계에서 잘려 보이지 않는 문제가 있었습니다
+ * (CSS 사양상 overflow-x:auto 는 overflow-y 도 visible 이외의 값으로 강제됨).
+ *
+ * 그래서 rail 과 더보기 wrap 을 같은 flex 부모(MobileNavRow)의 형제로 분리해,
+ * 드롭다운이 overflow 컨테이너 바깥에서 렌더되도록 했습니다.
+ */
+const MobileNavRow = styled.div`
+  display: none;
+
+  ${media.mobile} {
+    display: flex;
+    gap: 4px;
+    align-items: stretch;
+  }
+`;
+
+/*
+ * primary 4개 칩만 들어가는 가로 스크롤 가능한 레일.
+ * - 360px 뷰포트에서도 4개가 잘리지 않고 한 줄에 들어가도록 gap/padding/min-width 를
  *   계산해 두었습니다. 만약 유저 환경 폰트가 커져 overflow가 나면 가로 스크롤로 흘려
  *   스와이프로 나머지 칩에 접근할 수 있게 해 두고, 스크롤바는 `.hide-scrollbar`로 숨깁니다.
+ * - flex: 4 1 0 으로 더보기 chip 과 4:1 비율을 잡아, 기존 5칩 균등 분할 시각을 유지합니다.
  */
 const MobileNavRail = styled.div`
   display: none;
 
   ${media.mobile} {
     display: flex;
+    flex: 4 1 0;
+    min-width: 0;
     gap: 4px;
     overflow-x: auto;
     padding: 0;
@@ -282,13 +301,17 @@ const MobileNavRail = styled.div`
  * "더보기" 칩이 펼치는 드롭다운 시트. 모바일에서만 노출되고, 칩 바로 아래에
  * absolute 로 떠서 외부 클릭 / ESC / 항목 선택 시 닫힙니다.
  *
- * 시트 위치는 MobileNavRail 의 우측에 정렬해, 더보기 칩 바로 밑에서 펴지는 것처럼
- * 보이게 했습니다(우측 정렬은 그 칩이 항상 마지막 칩이라는 전제에 기반).
+ * MoreSheetWrap 자체가 `position: relative` 의 기준점이므로,
+ * 반드시 overflow 컨테이너(MobileNavRail) **밖** 에 있어야 드롭다운이 잘리지 않습니다.
  */
 const MoreSheetWrap = styled.div`
-  position: relative;
-  flex: 1 1 0;
-  display: flex;
+  display: none;
+
+  ${media.mobile} {
+    display: flex;
+    flex: 1 1 0;
+    position: relative;
+  }
 `;
 
 const MoreSheet = styled.div`
@@ -453,15 +476,12 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
         <MobileNav>
           <MobileNavHead>
             <MobileBrand>
+              {/*
+               * 바로 아래에 칩 네비게이션이 펼쳐지므로 별도 서브 카피("빠른 이동" 등)는
+               * 정보를 더해 주지 않아 제거했습니다. 브랜드명만 노출.
+               */}
               <div className="mark">S</div>
-              <div>
-                <div className="name">Spend Track</div>
-                {/*
-                 * "모바일" 이라는 단어는 실 디바이스 의미로 오해되기 쉬워, 단순히 폭이 좁을 때
-                 * (데스크톱에서 창만 줄였을 때 포함) 뜨는 텍스트는 "빠른 이동" 으로 통일합니다.
-                 */}
-                <div className="sub">빠른 이동</div>
-              </div>
+              <div className="name">Spend Track</div>
             </MobileBrand>
             <MobileMeta>
               <MobileAvatar $bg={profile.avatarDataUrl ? `url(${profile.avatarDataUrl})` : undefined}>
@@ -472,17 +492,24 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
               </MobileLogout>
             </MobileMeta>
           </MobileNavHead>
-          <MobileNavRail className="hide-scrollbar">
-            {MOBILE_PRIMARY_NAV_ITEMS.map((item) => (
-              <MobileNavItem
-                key={item.key}
-                $active={activeNav === item.key}
-                onClick={() => navigate(item.path)}
-              >
-                <NavIcon name={item.key} />
-                {item.shortLabel}
-              </MobileNavItem>
-            ))}
+          {/*
+           * Rail 과 더보기 wrap 을 형제로 둠으로써, 더보기 드롭다운이 rail 의 overflow:auto
+           * 에 의해 잘리지 않도록 합니다. (이전 구조에서 발생하던 "더보기 클릭해도 메뉴가
+           * 안 보이는" 회귀의 원인이 바로 이 BFC 클리핑이었습니다.)
+           */}
+          <MobileNavRow>
+            <MobileNavRail className="hide-scrollbar">
+              {MOBILE_PRIMARY_NAV_ITEMS.map((item) => (
+                <MobileNavItem
+                  key={item.key}
+                  $active={activeNav === item.key}
+                  onClick={() => navigate(item.path)}
+                >
+                  <NavIcon name={item.key} />
+                  {item.shortLabel}
+                </MobileNavItem>
+              ))}
+            </MobileNavRail>
             {/*
              * "더보기" 토글. 칩 자체가 아래로 시트를 펼치는 형태라 별도의 wrapper(MoreSheetWrap)
              * 가 필요합니다 — flex 칸 1개분의 폭을 차지하면서 absolute 시트의 기준점이 됨.
@@ -517,7 +544,7 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
                 </MoreSheet>
               )}
             </MoreSheetWrap>
-          </MobileNavRail>
+          </MobileNavRow>
         </MobileNav>
         <Content>
           {/* 모든 화면이 같은 헤더 패턴을 공유하도록 셸에서 먼저 감쌉니다. */}

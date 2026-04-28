@@ -205,7 +205,7 @@ const MobileDetailSlot = styled.div`
   }
 `;
 
-const MobileRow = styled.button<{ $active?: boolean }>`
+const MobileRow = styled.button<{ $active?: boolean; $highlight?: boolean }>`
   display: grid;
   gap: 10px;
   width: 100%;
@@ -224,6 +224,18 @@ const MobileRow = styled.button<{ $active?: boolean }>`
   &:active {
     transform: scale(0.996);
   }
+
+  /* 외부 진입에서 강조해야 할 때만 잠깐 펄스. PC 표와 동일한 키프레임을 재사용. */
+  ${({ $highlight }) =>
+    $highlight &&
+    css`
+      animation: ${highlightPulse} 1.6s ease-out;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
+      }
+    `}
 `;
 
 const MobileTop = styled.div`
@@ -355,12 +367,26 @@ const rowEnter = keyframes`
   }
 `;
 
+/**
+ * 홈 "최근 거래"에서 특정 거래로 진입했을 때 그 행에만 잠깐 두를 펄스 링.
+ * box-shadow inset 으로 그리기 때문에 $active 때의 background(accentSubtle) 이나
+ * $hovered 때의 background(foot) 위에 겹쳐도 어긋나지 않습니다.
+ */
+const highlightPulse = keyframes`
+  0% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
+  20% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
+  80% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
+  100% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
+`;
+
 const DataCell = styled.div<{
   $right?: boolean;
   $active?: boolean;
   $hovered?: boolean;
   /** 행의 인덱스. undefined이거나 BATCH_SIZE 이상이면 애니메이션을 적용하지 않습니다. */
   $enterIndex?: number;
+  /** 외부 진입(홈 최근거래 클릭 등)으로 잠시 강조해야 할 때 true. */
+  $highlight?: boolean;
 }>`
   display: flex;
   align-items: center;
@@ -384,7 +410,8 @@ const DataCell = styled.div<{
           `
         : ""}
   /* $enterIndex가 들어온 행(첫 배치)만 지연 시간을 누적해 순차 등장하게 합니다. */
-  ${({ $enterIndex }) =>
+  ${({ $enterIndex, $highlight }) =>
+    !$highlight &&
     typeof $enterIndex === "number" &&
     $enterIndex >= 0 &&
     css`
@@ -393,6 +420,22 @@ const DataCell = styled.div<{
 
       @media (prefers-reduced-motion: reduce) {
         animation: none;
+      }
+    `}
+
+  /*
+   * 강조(highlight) 가 켜진 동안만 펄스. enter 애니메이션과 같은 animation 슬롯을 쓰므로
+   * 위 enter 규칙에서 $highlight 일 때는 enter 를 비활성화해 충돌을 피했습니다.
+   * 1.6s 펄스 후에는 부모(TransactionsPage) 가 highlightId 를 비워 자연스럽게 멈춥니다.
+   */
+  ${({ $highlight }) =>
+    $highlight &&
+    css`
+      animation: ${highlightPulse} 1.6s ease-out;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
       }
     `}
 `;
@@ -526,6 +569,16 @@ interface Props {
    * 모바일 아코디언 경로에서만 주입되며, 사용자가 같은 행을 다시 탭하면 onSelect("") 로 닫힙니다.
    */
   renderMobileDetail?: (row: TxRow) => React.ReactNode;
+  /**
+   * 외부 진입(홈 최근거래 클릭 등)으로 잠깐 강조할 행 id. 이 값이 들어오면
+   * 해당 행을 부드럽게 화면 중앙으로 스크롤하고 펄스 링을 한 번 그립니다.
+   */
+  highlightId?: string | null;
+  /**
+   * 같은 highlightId 가 연달아 들어와도 펄스를 다시 트리거하기 위한 카운터.
+   * 부모가 갱신할 때마다 useEffect 가 다시 실행되어 scrollIntoView 가 발동합니다.
+   */
+  pulseToken?: number;
 }
 
 export const TransactionTable = memo<Props>(({
@@ -537,8 +590,35 @@ export const TransactionTable = memo<Props>(({
   sortOrder,
   onToggleSort,
   renderMobileDetail,
+  highlightId,
+  pulseToken,
 }) => {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  /**
+   * 강조 진입 시 scrollIntoView 대상 노드를 찾기 위한 행별 ref 맵.
+   * PC 표(TableScroll 안의 DataCell)와 모바일 카드(MobileRow) 는 둘 다 항상 마운트되고
+   * media query 로 한쪽만 보이게 하기 때문에, 같은 키 공간을 공유하면 안 됩니다.
+   * 두 맵을 따로 두고 스크롤 시 "현재 보이는 쪽" 의 노드를 우선 사용합니다(offsetParent 로 판단).
+   */
+  const desktopRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const mobileRowRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  useEffect(() => {
+    if (!highlightId) return;
+    // 표가 visibleCount 변경에 따라 막 늘어난 경우를 대비해 다음 페인트 후 스크롤.
+    const raf = requestAnimationFrame(() => {
+      const desktopEl = desktopRowRefs.current.get(highlightId);
+      const mobileEl = mobileRowRefs.current.get(highlightId);
+      // offsetParent === null 이면 display:none 또는 그런 조상 안에 있어 화면에 안 보입니다.
+      const visible = (el?: HTMLElement | null): el is HTMLElement => !!el && el.offsetParent !== null;
+      const target = visible(desktopEl) ? desktopEl : visible(mobileEl) ? mobileEl : (desktopEl ?? mobileEl);
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [highlightId, pulseToken]);
+
   const [hoveredId, setHoveredId] = useState<string>("");
   // 카테고리 색상과 이름은 설정 화면에서 변경할 수 있으므로, 스토어를 구독해 즉시 반영합니다.
   const categoryColorMap = useCategoryColorMap();
@@ -615,6 +695,7 @@ export const TransactionTable = memo<Props>(({
           {rows.map((row, rowIndex) => {
             const active = row.id === selectedId;
             const hovered = row.id === hoveredId && !active;
+            const isHighlighted = !!highlightId && row.id === highlightId;
             const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
             const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
             /**
@@ -627,16 +708,23 @@ export const TransactionTable = memo<Props>(({
               $active: active,
               $hovered: hovered,
               $enterIndex: enterIndex,
+              $highlight: isHighlighted,
               onClick: () => onSelect(row.id),
               onMouseEnter: () => setHoveredId(row.id),
               onMouseLeave: () =>
                 setHoveredId((current) => (current === row.id ? "" : current)),
               style: { cursor: "pointer" },
             };
+            // 첫 셀에만 ref 를 달아 scrollIntoView 의 타겟으로 사용합니다.
+            // 같은 grid row 의 다른 셀들은 자동으로 함께 화면에 들어옵니다.
+            const setRowRef = (el: HTMLDivElement | null) => {
+              if (el) desktopRowRefs.current.set(row.id, el);
+              else desktopRowRefs.current.delete(row.id);
+            };
 
             return (
               <React.Fragment key={row.id}>
-                <DataCell {...common}>
+                <DataCell ref={setRowRef} {...common}>
                   <Tag kind={row.type === "expense" ? "expense" : "income"}>
                     {TYPE_LABELS[row.type]}
                   </Tag>
@@ -690,13 +778,20 @@ export const TransactionTable = memo<Props>(({
       <MobileList>
         {rows.map((row) => {
           const isActive = row.id === selectedId;
+          const isHighlighted = !!highlightId && row.id === highlightId;
           const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
           const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
+          const setMobileRowRef = (el: HTMLButtonElement | null) => {
+            if (el) mobileRowRefs.current.set(row.id, el);
+            else mobileRowRefs.current.delete(row.id);
+          };
           return (
             <MobileGroup key={row.id} $active={isActive}>
               <MobileRow
+                ref={setMobileRowRef}
                 type="button"
                 $active={isActive}
+                $highlight={isHighlighted}
                 aria-expanded={isActive}
                 aria-controls={`mobile-detail-${row.id}`}
                 // 같은 행을 다시 탭하면 닫히는 "토글" 동작. 사용자가 한 행에 대한

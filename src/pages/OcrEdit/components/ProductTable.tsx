@@ -125,9 +125,9 @@ const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
  * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
  */
 /**
- * 2026-04-25 UX 재정리: 카드별 "AI 보정됨" 배지는 제거. 사용자에겐 결과 품질만 관심이고,
- * 개발자 디버깅은 EditForm ImageSummary 의 단일 "🛠 DEBUG: AI 인식됨" chip 하나로 충분.
- * 여기 ProductTable row 에는 **기능 경고** 성격의 BadHint 와 ZeroPriceHint 만 유지합니다.
+ * 2026-04-25 UX 재정리: 카드별 "AI 보정됨" 배지는 제거. 사용자에겐 결과 품질만 관심이라
+ * AI 흔적은 시각적으로 노출하지 않습니다. 여기 ProductTable row 에는 **기능 경고** 성격의
+ * BadHint 와 ZeroPriceHint 만 유지합니다.
  */
 const BadHint = styled.span`
   display: inline-flex;
@@ -368,8 +368,8 @@ export const ProductTable: React.FC<{
           priceOcrFailed: row.priceOcrFailed,
           aiApplied: row.aiApplied,
         });
-        // bad hint 는 사용자 확인용으로 계속 노출. AI 보정 흔적 배지는 여기선 보여주지 않고
-        // EditForm 단의 단일 debug chip 에서만 집계해서 표시합니다(2026-04-25 UX 정리).
+        // bad hint 는 사용자 확인용으로 계속 노출. AI 보정 흔적 배지는 여기선 보여주지
+        // 않습니다(2026-04-25 UX 정리).
         const showBadHint = !row.aiApplied && quality.tier === "bad";
         return (
         <Row key={row.id}>

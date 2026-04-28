@@ -164,8 +164,7 @@ const Notice = styled.div`
  * 2차 정확도 단계에서 3~5초 간격으로 회전하며 보여줄 메시지 5종.
  *
  * UX 원칙: 사용자·개발자 모두에게 "분석 중" 정도만 보여 주면 충분합니다. 로딩 모달에서 AI 가
- * 따로 도는지 여부는 이 자리에 드러내지 않고, 편집 화면의 DEBUG chip 에서만 표시합니다
- * (ocrAiDebug.ts 참고).
+ * 따로 도는지 여부는 이 자리에 드러내지 않습니다.
  */
 const PROGRESS_MESSAGES = [
   "✨ 이미지를 자세히 다시 살펴보고 있어요...",
@@ -188,8 +187,7 @@ interface AnalysisProgressModalProps {
  */
 function humanizeStatus(status: string): string {
   const normalized = status.toLowerCase();
-  // 로딩 모달은 AI 언급 없음 — "이미지 분석 중" 맥락에서 사용자·개발자 모두 자연스럽게 흘려보내고,
-  // AI 관여 여부는 결과 화면의 DEBUG chip 에서 확인합니다.
+  // 로딩 모달은 AI 언급 없음 — "이미지 분석 중" 맥락에서 사용자에게 자연스럽게 흘려보냅니다.
   if (normalized.includes("ai-fallback")) return "2차 확인 중";
   if (normalized.includes("recognizing")) return "글자 인식 중";
   if (normalized.includes("initializing")) return "엔진 준비 중";
