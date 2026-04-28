@@ -8,7 +8,8 @@
  *       바로 TxRow.date에 넣어도 됩니다.
  * 위치: src\components\primitives\DatePicker.tsx
  */
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import styled from "styled-components";
 import { tokens } from "../../styles/tokens";
 import {
@@ -108,14 +109,16 @@ const Trigger = styled.button<{ $open: boolean; $empty: boolean; $size: "sm" | "
 `;
 
 /**
- * 팝오버 패널. 트리거 바로 아래에 4px 간격으로 띄워 띄어보이지 않게 합니다.
- * 카드와 같은 shadow/radius를 써 '설정 · 카테고리 모달' 등 다른 플로팅 UI와 결을 맞춥니다.
+ * 팝오버 패널. position: fixed 로 모달의 overflow 클리핑에서 탈출합니다.
+ * top/left/right는 트리거 버튼의 getBoundingClientRect()를 기준으로 계산합니다.
+ * z-index는 모달(1001)보다 높게 설정해 모달 위에 올라오게 합니다.
  */
-const Popover = styled.div`
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  z-index: 20;
+const Popover = styled.div<{ $top: number; $left?: number; $right?: number }>`
+  position: fixed;
+  top: ${({ $top }) => $top}px;
+  ${({ $left, $right }) =>
+    $right !== undefined ? `right: ${$right}px;` : `left: ${$left ?? 0}px;`}
+  z-index: 1100;
   width: 264px;
   padding: 12px;
   border: 1px solid ${tokens.color.line};
@@ -342,7 +345,14 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const maxIso = maxDate && isValidDotDate(maxDate) ? toIsoDate(maxDate) : undefined;
   const minIso = minDate && isValidDotDate(minDate) ? toIsoDate(minDate) : undefined;
   const [open, setOpen] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{
+    top: number;
+    left?: number;
+    right?: number;
+  }>({ top: 0, left: 0 });
   const rootRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
 
   // 외부에서 들어온 저장 포맷(YYYY.MM.DD)을 내부에서는 ISO로 다뤄 Date 연산을 편하게 합니다.
   const selectedIso = isValidDotDate(value) ? toIsoDate(value) : "";
@@ -369,14 +379,28 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     setOpen(true);
   };
 
+  // 팝오버가 열릴 때 트리거 버튼의 뷰포트 좌표를 기준으로 fixed 위치를 계산합니다.
+  // 오른쪽 공간이 부족하면 트리거 우측 끝에 맞춰 왼쪽으로 펼칩니다.
+  useLayoutEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const POPOVER_WIDTH = 264;
+    const top = rect.bottom + 4;
+    if (rect.left + POPOVER_WIDTH > window.innerWidth) {
+      setPopoverPos({ top, right: window.innerWidth - rect.right });
+    } else {
+      setPopoverPos({ top, left: rect.left });
+    }
+  }, [open]);
+
   // 팝오버가 열린 동안 바깥을 클릭하거나 Esc를 누르면 자연스럽게 닫히도록 전역 리스너 연결.
   useEffect(() => {
     if (!open) return;
     const handleClick = (event: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -455,6 +479,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   return (
     <Root ref={rootRef}>
       <Trigger
+        ref={triggerRef}
         id={id}
         type="button"
         $open={open}
@@ -484,8 +509,15 @@ export const DatePicker: React.FC<DatePickerProps> = ({
           <path d="M10.5 2v3" />
         </svg>
       </Trigger>
-      {open && (
-        <Popover role="dialog" aria-label="달력">
+      {open && createPortal(
+        <Popover
+          ref={popoverRef}
+          $top={popoverPos.top}
+          $left={popoverPos.left}
+          $right={popoverPos.right}
+          role="dialog"
+          aria-label="달력"
+        >
           <PopoverHeader>
             <MonthLabel>
               {view.year}년 {view.month + 1}월
@@ -548,7 +580,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               오늘
             </FooterButton>
           </Footer>
-        </Popover>
+        </Popover>,
+        document.body
       )}
     </Root>
   );
