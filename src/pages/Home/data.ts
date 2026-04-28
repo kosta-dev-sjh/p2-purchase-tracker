@@ -72,7 +72,10 @@ function shiftMonthKey(monthKey: string, delta: number): string {
  */
 const sumSpend = sumActualMonthlyExpense;
 
-function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count: number }> {
+function sumByPlatform(
+  rows: TxRow[],
+  allRows: TxRow[],
+): Record<TxPlatform, { value: number; count: number }> {
   // "unspecified"도 하나의 버킷으로 유지합니다. 수동 입력에서 플랫폼을 고르지 않은 거래를
   // 어딘가에 담아야 합계/퍼센트가 일관되게 계산돼서, 도넛이나 랭크 카드에 "미지정"으로 등장할 수 있게 합니다.
   const seed: Record<TxPlatform, { value: number; count: number }> = {
@@ -81,12 +84,11 @@ function sumByPlatform(rows: TxRow[]): Record<TxPlatform, { value: number; count
     unspecified: { value: 0, count: 0 },
   };
   // 페어 매칭된 approval 은 합산에서 빼야 KPI 총 지출과 합이 일치.
-  const skip = findApprovalsCoveredByBilling(rows);
+  // allRows 를 같이 넘겨 cross-month 패턴 매칭(다른 달 billing 으로 이 달 approval 매칭) 까지 처리.
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
     if (skip.has(row.id)) continue;
-    // 도넛/플랫폼 막대도 KPI 총 지출과 합이 일치하도록 effectiveMonthlyAmount 를 통과.
-    // 할부 승인은 분할분만 그 달 플랫폼 비중에 기여합니다.
     seed[row.platform].value += effectiveMonthlyAmount(row);
     seed[row.platform].count += 1;
   }
@@ -105,7 +107,8 @@ function monthSpark(rows: TxRow[], monthKey: string): number[] {
       row.status !== "cancel"
   );
   if (thisMonth.length === 0) return [0, 0, 0, 0, 0, 0];
-  const skip = findApprovalsCoveredByBilling(thisMonth);
+  // cross-month 매칭을 위해 allRows(=rows) 를 같이 전달.
+  const skip = findApprovalsCoveredByBilling(thisMonth, rows);
   const byDay = new Map<number, number>();
   for (const row of thisMonth) {
     if (skip.has(row.id)) continue;
@@ -157,7 +160,9 @@ function buildTrendPoints(rows: TxRow[], monthKey: string) {
   const points = [] as { label: string; value: number }[];
   for (let i = 11; i >= 0; i -= 1) {
     const key = shiftMonthKey(monthKey, -i);
-    const spend = sumSpend(rows.filter((row) => toMonthKey(row.date) === key));
+    const slice = rows.filter((row) => toMonthKey(row.date) === key);
+    // cross-month 패턴 매칭 dedup 을 위해 allRows(=rows) 같이 전달.
+    const spend = sumSpend(slice, rows);
     points.push({ label: MONTH_LABEL(key), value: spend });
   }
   return points;
@@ -184,11 +189,12 @@ function buildRecent(rows: TxRow[], monthKey: string): RecentItem[] {
 
 function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
   const thisMonth = rows.filter((row) => toMonthKey(row.date) === monthKey);
-  const platforms = sumByPlatform(thisMonth);
+  const platforms = sumByPlatform(thisMonth, rows);
   const top = pickTopPlatform(platforms);
-  const totalSpend = sumSpend(thisMonth);
+  const totalSpend = sumSpend(thisMonth, rows);
   const prevSpend = sumSpend(
-    rows.filter((row) => toMonthKey(row.date) === getPrevMonthKey(monthKey))
+    rows.filter((row) => toMonthKey(row.date) === getPrevMonthKey(monthKey)),
+    rows,
   );
   const changePct = prevSpend > 0 ? Math.round(((totalSpend - prevSpend) / prevSpend) * 100) : 0;
 
@@ -302,17 +308,17 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
   })();
   const periodLabel = isCurrentMonth ? "이번 달" : monthLabel;
 
-  const totalSpend = sumSpend(thisMonth);
-  const prevSpend = sumSpend(prevMonth);
+  const totalSpend = sumSpend(thisMonth, rows);
+  const prevSpend = sumSpend(prevMonth, rows);
 
   // 할부 승인 분할 추정으로 합산된 분 — KPI 보조 라인에 "할부 분할 추정 ₩X 포함" 으로 안내합니다.
   // 사용자가 "왜 60만원 결제가 KPI 에 10만원밖에 안 잡히지?" 라고 헷갈리지 않도록 명시합니다.
-  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth);
-  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth);
+  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth, rows);
+  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth, rows);
 
-  // approval+billing 페어 dedup — 같은 결제가 두 행으로 들어와도 "쇼핑 N건" 카운트는 1건.
-  const thisMonthSkip = findApprovalsCoveredByBilling(thisMonth);
-  const prevMonthSkip = findApprovalsCoveredByBilling(prevMonth);
+  // approval+billing 페어 dedup — cross-month 매칭 포함.
+  const thisMonthSkip = findApprovalsCoveredByBilling(thisMonth, rows);
+  const prevMonthSkip = findApprovalsCoveredByBilling(prevMonth, rows);
   const purchaseCount = thisMonth.filter(
     (row) =>
       row.type === "expense" && row.status !== "cancel" && !thisMonthSkip.has(row.id),
@@ -324,17 +330,27 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
   ).length;
   const prevAvg = prevPurchaseCount > 0 ? Math.round(prevSpend / prevPurchaseCount) : 0;
 
-  // "총 수입 · 환불"은 순수입 지표라서 취소는 제외합니다. 취소는 의미상 수입 흐름이지만
-  // "진짜 번 돈"이 아니기 때문에, 별도의 "취소 금액" KPI에서만 집계해 지표를 분리합니다.
-  const incomeRefund = thisMonth
-    .filter((row) => row.type === "income" && row.status !== "cancel")
+  /*
+   * 카드 3·4 라벨 통일(2026-04-28):
+   *   - "수입" = 순수 income (status not refund / not cancel) — 월급·이체 같은 진짜 들어온 돈
+   *   - "환불·취소" = refund + cancel 합산 — 모두 "이미 쓴 돈을 되돌려받음" 성격이라 한 카드로
+   * 이전엔 "총 수입·환불"(refund 포함) + "취소 금액"(cancel 만) 으로 분리됐는데, 사용자가
+   * "통일성 + 수입은 따로 보고 환불·취소는 합쳐 보고 싶다" 요청.
+   */
+  const pureIncome = thisMonth
+    .filter((row) => row.type === "income" && row.status !== "refund" && row.status !== "cancel")
     .reduce((sum, row) => sum + Math.max(0, row.amount), 0);
-  const refundCount = thisMonth.filter((row) => row.status === "refund").length;
-
-  // 취소 행은 저장 경로에 따라 부호가 다를 수 있어(수동 입력은 +, 과거 OCR은 -)
-  // Math.abs로 금액만 추출해 독립 카드에 보여줍니다.
+  const incomeOnlyCount = thisMonth.filter(
+    (row) => row.type === "income" && row.status !== "refund" && row.status !== "cancel",
+  ).length;
+  const refundRows = thisMonth.filter((row) => row.status === "refund");
+  const refundCount = refundRows.length;
+  const refundAmount = refundRows.reduce((sum, row) => sum + Math.abs(row.amount), 0);
+  // 취소 행 부호가 저장 경로에 따라 다를 수 있어(수동 입력 +, 과거 OCR -) Math.abs 로 안전하게 추출.
   const cancelRows = thisMonth.filter((row) => row.status === "cancel");
+  const cancelCount = cancelRows.length;
   const cancelAmount = cancelRows.reduce((sum, row) => sum + Math.abs(row.amount), 0);
+  const refundCancelAmount = refundAmount + cancelAmount;
 
   const spendChangePct = prevSpend > 0 ? Math.round(((totalSpend - prevSpend) / prevSpend) * 100) : 0;
   const avgChangePct = prevAvg > 0 ? Math.round(((avgOrder - prevAvg) / prevAvg) * 100) : 0;
@@ -378,29 +394,30 @@ export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => 
     },
     {
       key: "income",
-      label: "총 수입 · 환불",
-      value: incomeRefund,
+      label: "수입",
+      value: pureIncome,
       dotColor: tokens.color.pos,
       valueColor: tokens.color.pos,
       valuePrefix: "+",
-      sub: refundCount > 0 ? `환불 ${refundCount}건 포함` : "수입 · 환불 내역 없음",
+      sub:
+        incomeOnlyCount === 0
+          ? `${periodLabel} 수입 내역 없음`
+          : `수입 ${incomeOnlyCount}건`,
     },
     {
-      key: "cancel",
-      label: "취소 금액",
-      value: cancelAmount,
+      key: "refund-cancel",
+      label: "환불·취소",
+      value: refundCancelAmount,
       dotColor: tokens.color.neg,
       sub:
-        cancelRows.length === 0
-          ? `${periodLabel} 취소 내역 없음`
-          : cancelRows.length === 1
-            ? `취소 1건 · ${cancelRows[0].title}`
-            : `취소 ${cancelRows.length}건`,
+        refundCount + cancelCount === 0
+          ? `${periodLabel} 환불·취소 내역 없음`
+          : `환불 ${refundCount}건 · 취소 ${cancelCount}건`,
     },
   ];
 
   // 플랫폼 도넛 데이터
-  const platformTotals = sumByPlatform(thisMonth);
+  const platformTotals = sumByPlatform(thisMonth, rows);
   const donutTotal = Object.values(platformTotals).reduce((sum, entry) => sum + entry.value, 0);
   // "미지정"은 실제 데이터가 있을 때만 도넛 조각으로 추가합니다. 수동 입력에서 플랫폼을 고르지 않은
   // 거래가 없다면 기존 3개 플랫폼 도넛 모양 그대로 유지.

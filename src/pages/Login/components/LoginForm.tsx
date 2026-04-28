@@ -7,7 +7,7 @@ import { Link, useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
-import { TextInput } from "../../../components/form/TextInput";
+import { PasswordTextInput, TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
 import { authStore, useAuthSession } from "../../../stores/authStore";
 import { normalizeAuthError } from "../../../lib/authError";
@@ -19,19 +19,25 @@ interface LoginFieldErrors {
   form?: string;
 }
 
+function getLoginEmailError(email: string): string | undefined {
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) return "이메일을 입력해 주세요.";
+  if (!/.+@.+\..+/.test(trimmedEmail)) return "이메일 형식이 맞지 않습니다.";
+  return undefined;
+}
+
+function getLoginPasswordError(password: string): string | undefined {
+  if (!password) return "비밀번호를 입력해 주세요.";
+  return undefined;
+}
+
 function validateLoginFields(email: string, password: string): LoginFieldErrors {
   const errors: LoginFieldErrors = {};
-  const trimmedEmail = email.trim();
+  const emailError = getLoginEmailError(email);
+  const passwordError = getLoginPasswordError(password);
 
-  if (!trimmedEmail) {
-    errors.email = "이메일을 입력해 주세요.";
-  } else if (!/.+@.+\..+/.test(trimmedEmail)) {
-    errors.email = "이메일 형식이 맞지 않습니다.";
-  }
-
-  if (!password) {
-    errors.password = "비밀번호를 입력해 주세요.";
-  }
+  if (emailError) errors.email = emailError;
+  if (passwordError) errors.password = passwordError;
 
   return errors;
 }
@@ -67,8 +73,10 @@ const ForgotLink = styled(Link)`
   }
 `;
 
-const PasswordInput = styled(TextInput)`
-  letter-spacing: 0.08em;
+const PasswordInput = styled(PasswordTextInput)`
+  input {
+    letter-spacing: 0.08em;
+  }
 `;
 
 const Divider = styled.div`
@@ -99,7 +107,7 @@ const GoogleMark = () => (
 
 export const LoginForm: React.FC = () => {
   const navigate = useNavigate();
-  const { error: sessionError } = useAuthSession();
+  const { error: authError } = useAuthSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<LoginFieldErrors>({});
@@ -153,22 +161,31 @@ export const LoginForm: React.FC = () => {
             autoComplete="email"
             value={email}
             onChange={(event) => {
+              const nextValue = event.target.value;
               authStore.clearError();
-              setErrors((current) => ({ ...current, email: undefined, form: undefined }));
-              setEmail(event.target.value);
+              setErrors((current) => ({
+                ...current,
+                email: getLoginEmailError(nextValue),
+                form: undefined,
+              }));
+              setEmail(nextValue);
             }}
           />
         </FormField>
         <FormField label="비밀번호" errorText={errors.password}>
           <PasswordInput
-            type="password"
             placeholder="••••••••"
             autoComplete="current-password"
             value={password}
             onChange={(event) => {
+              const nextValue = event.target.value;
               authStore.clearError();
-              setErrors((current) => ({ ...current, password: undefined, form: undefined }));
-              setPassword(event.target.value);
+              setErrors((current) => ({
+                ...current,
+                password: getLoginPasswordError(nextValue),
+                form: undefined,
+              }));
+              setPassword(nextValue);
             }}
           />
         </FormField>
@@ -179,9 +196,9 @@ export const LoginForm: React.FC = () => {
         </Remember>
         <ForgotLink to="/forgot-password">비밀번호를 잊으셨나요?</ForgotLink>
       </Row>
-      {(errors.form || sessionError) && (
+      {(errors.form || authError) && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
-          {errors.form ?? sessionError}
+          {errors.form ?? authError}
         </div>
       )}
       <Button variant="primary" size="lg" block type="submit" disabled={submitting}>

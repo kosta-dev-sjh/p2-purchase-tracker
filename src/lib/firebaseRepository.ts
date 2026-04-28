@@ -94,70 +94,85 @@ export async function bootstrapCategories(
 export function subscribeUserProfile(
   uid: string,
   onValue: (profile: Partial<UserProfile>) => void,
+  onError?: (error: unknown) => void,
 ): () => void {
-  return onSnapshot(userDoc(uid), (snap) => {
-    const data = snap.data();
-    if (!data) return;
-    // Firestore Timestamp -> ISO 문자열 변환. 클라이언트(profileStore/ProfileSection)는
-    // ISO 문자열만 다루도록 통일해서, 쿨다운 계산도 일관됩니다.
-    // 기존 사용자(필드 없음)와 신규 사용자(null), 변경 이력 있음(Timestamp) 셋 다 다룹니다.
-    const rawNickAt = data.nicknameChangedAt;
-    let nicknameChangedAtPatch: { nicknameChangedAt: string | null } | object = {};
-    if (rawNickAt === null) {
-      nicknameChangedAtPatch = { nicknameChangedAt: null };
-    } else if (rawNickAt && typeof rawNickAt.toDate === "function") {
-      nicknameChangedAtPatch = {
-        nicknameChangedAt: (rawNickAt.toDate() as Date).toISOString(),
-      };
-    } else if (typeof rawNickAt === "string") {
-      nicknameChangedAtPatch = { nicknameChangedAt: rawNickAt };
-    }
-    onValue({
-      name: typeof data.displayName === "string" ? data.displayName : undefined,
-      nickname: typeof data.nickname === "string" ? data.nickname : undefined,
-      email: typeof data.email === "string" ? data.email : undefined,
-      avatarDataUrl:
-        typeof data.avatarDataUrl === "string" || data.avatarDataUrl === null
-          ? data.avatarDataUrl
-          : undefined,
-      passwordChangedAt:
-        typeof data.passwordChangedAt === "string" ? data.passwordChangedAt : undefined,
-      ...nicknameChangedAtPatch,
-    });
-  });
+  return onSnapshot(
+    userDoc(uid),
+    (snap) => {
+      const data = snap.data();
+      if (!data) return;
+      // Firestore Timestamp -> ISO 문자열 변환. 클라이언트(profileStore/ProfileSection)는
+      // ISO 문자열만 다루도록 통일해서, 쿨다운 계산도 일관됩니다.
+      // 기존 사용자(필드 없음)와 신규 사용자(null), 변경 이력 있음(Timestamp) 셋 다 다룹니다.
+      const rawNickAt = data.nicknameChangedAt;
+      let nicknameChangedAtPatch: { nicknameChangedAt: string | null } | object = {};
+      if (rawNickAt === null) {
+        nicknameChangedAtPatch = { nicknameChangedAt: null };
+      } else if (rawNickAt && typeof rawNickAt.toDate === "function") {
+        nicknameChangedAtPatch = {
+          nicknameChangedAt: (rawNickAt.toDate() as Date).toISOString(),
+        };
+      } else if (typeof rawNickAt === "string") {
+        nicknameChangedAtPatch = { nicknameChangedAt: rawNickAt };
+      }
+      onValue({
+        name: typeof data.displayName === "string" ? data.displayName : undefined,
+        nickname: typeof data.nickname === "string" ? data.nickname : undefined,
+        email: typeof data.email === "string" ? data.email : undefined,
+        avatarDataUrl:
+          typeof data.avatarDataUrl === "string" || data.avatarDataUrl === null
+            ? data.avatarDataUrl
+            : undefined,
+        passwordChangedAt:
+          typeof data.passwordChangedAt === "string" ? data.passwordChangedAt : undefined,
+        ...nicknameChangedAtPatch,
+      });
+    },
+    onError,
+  );
 }
 
 export function subscribeTransactions(
   uid: string,
   onValue: (rows: TxRow[]) => void,
+  onError?: (error: unknown) => void,
 ): () => void {
-  return onSnapshot(transactionsCol(uid), (snap) => {
-    const rows = normalizeTransactionRows(
-      snap.docs
-      .map((item) => {
-        const data = item.data();
-        const row = { id: item.id, ...data } as TxRow;
-        return stripUndefined(row);
-      })
-    )
-      .sort((a, b) => {
-        if (a.date === b.date) return b.id.localeCompare(a.id);
-        return String(b.date).localeCompare(String(a.date));
-      });
-    onValue(rows);
-  });
+  return onSnapshot(
+    transactionsCol(uid),
+    (snap) => {
+      const rows = normalizeTransactionRows(
+        snap.docs
+        .map((item) => {
+          const data = item.data();
+          const row = { id: item.id, ...data } as TxRow;
+          return stripUndefined(row);
+        })
+      )
+        .sort((a, b) => {
+          if (a.date === b.date) return b.id.localeCompare(a.id);
+          return String(b.date).localeCompare(String(a.date));
+        });
+      onValue(rows);
+    },
+    onError,
+  );
 }
 
 export function subscribeCategories(
   uid: string,
   onValue: (items: CategoryEntry[]) => void,
+  onError?: (error: unknown) => void,
 ): () => void {
-  return onSnapshot(categoriesCol(uid), (snap) => {
-    const items = snap.docs
-      .map((item) => ({ id: item.id, ...item.data() } as CategoryEntry))
-      .sort((a, b) => a.id.localeCompare(b.id));
-    onValue(items);
-  });
+  return onSnapshot(
+    categoriesCol(uid),
+    (snap) => {
+      const items = snap.docs
+        .map((item) => ({ id: item.id, ...item.data() } as CategoryEntry))
+        .sort((a, b) => a.id.localeCompare(b.id));
+      onValue(items);
+    },
+    onError,
+  );
 }
 
 export async function saveUserProfile(

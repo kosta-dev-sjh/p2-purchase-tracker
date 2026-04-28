@@ -5,6 +5,7 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
+import { PasswordTextInput } from "../../../components/form/TextInput";
 import { Button } from "../../../components/primitives/Button";
 import { tokens } from "../../../styles/tokens";
 import { SettingsBlock } from "./SettingsSection";
@@ -73,6 +74,16 @@ const ConfirmInput = styled.input`
 
   &:focus {
     box-shadow: ${tokens.shadow.focus};
+  }
+`;
+
+const ConfirmPasswordInput = styled(PasswordTextInput)`
+  input {
+    height: 36px;
+    border-color: ${tokens.color.neg};
+    background: #fff;
+    font-size: 13px;
+    font-weight: 600;
   }
 `;
 
@@ -189,8 +200,7 @@ export const DangerSection: React.FC = () => {
             aria-label="삭제 확인 문구"
           />
           {deletionProvider === "password" && (
-            <ConfirmInput
-              type="password"
+            <ConfirmPasswordInput
               value={password}
               onChange={(event) => setPassword(event.target.value)}
               placeholder="현재 비밀번호"

@@ -10,27 +10,29 @@ import type {
 } from "../../Transactions/components/TransactionTable";
 
 /**
- * 거래 유형별로 노출할 상태 목록. 쇼핑 중심 컨셉에 맞춰
- * - 지출: 구매 / 정기결제 / 기타
- * - 수입: 환불 / 취소 / 기타
- * 로 분기합니다.
+ * 거래 유형별로 노출할 상태 목록. 사용자 결정(2026-04-28): "기타" 가 디폴트이자 가장
+ * 자주 쓰일 폴백이라 맨 앞에 둠.
+ * - 지출: 기타 / 구매 / 정기결제
+ * - 수입: 기타 / 환불 / 취소
  *
  * '취소'가 수입 쪽에 있는 이유: 상품 주문이 취소되면 돈이 다시 들어오는 흐름이라
- * 의미상 수입(inflow)에 가깝습니다. 다만 "진짜 번 돈"은 아니므로, 집계 단계에서는
- * Home/Analysis의 순수입 계산(sumIncomeAndRefund)에서 status === "cancel"을 제외합니다.
- * 별도 "취소 금액" 카드는 status === "cancel"만 모아 독립적으로 보여줍니다.
+ * 의미상 수입(inflow)에 가깝습니다. 다만 "진짜 번 돈"은 아니므로 집계 단계에서는
+ * 순수입 계산(sumIncomeAndRefund)에서 status === "cancel"을 제외합니다.
  */
 export const STATUS_OPTIONS_BY_TYPE: Record<TxType, TxStatus[]> = {
-  expense: ["purchase", "sub", "etc"],
-  income: ["refund", "cancel", "etc"],
+  expense: ["etc", "purchase", "sub"],
+  income: ["etc", "refund", "cancel"],
 };
 
 /**
  * 사용자가 상태를 고르지 않은 채 저장했을 때의 안전한 디폴트.
- * 지출은 "구매", 수입은 "환불"로 수렴시켜 쇼핑 컨텍스트에서 가장 흔한 케이스로 맞춥니다.
+ * 모두 "기타" 로 통일(2026-04-28). 지출/수입 분기 없이 가장 무난한 폴백.
+ * _type 인자는 시그니처 호환을 위해 유지(과거 분기 로직 흔적). 둘 다(TS / ESLint)
+ * 통과시키려면: 언더스코어 prefix(TS noUnusedParameters 통과) + eslint-disable.
  */
-export function defaultStatusForType(type: TxType): TxStatus {
-  return type === "expense" ? "purchase" : "refund";
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function defaultStatusForType(_type: TxType): TxStatus {
+  return "etc";
 }
 
 /**

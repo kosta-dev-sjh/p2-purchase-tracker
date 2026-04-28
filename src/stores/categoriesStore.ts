@@ -12,6 +12,7 @@ import { tokens } from "../styles/tokens";
 import { CATEGORY_LABELS, DEFAULT_CATEGORY_KEY } from "../constants/labels";
 import type { ConceptId } from "../data/categoryConcepts";
 import { auth } from "../lib/firebase";
+import { trackBackgroundSync } from "../lib/firebaseBackgroundSync";
 import { addCategory, removeCategory, updateCategory } from "../lib/firebaseRepository";
 
 export interface CategoryEntry {
@@ -167,7 +168,7 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     set({ items: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addCategory(uid, entry);
+      trackBackgroundSync(addCategory(uid, entry));
     }
     return entry;
   },
@@ -179,7 +180,7 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     set({ items: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void removeCategory(uid, id);
+      trackBackgroundSync(removeCategory(uid, id));
     }
   },
   update: (id, patch) => {
@@ -199,7 +200,7 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     set({ items: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void updateCategory(uid, id, nextEntry);
+      trackBackgroundSync(updateCategory(uid, id, nextEntry));
     }
   },
   hydrate: (items) => {

@@ -3,7 +3,12 @@ interface FirebaseLikeError {
   message?: string;
 }
 
-type AuthErrorContext = "password-login" | "google-login" | "auth-session" | "email-register";
+type AuthErrorContext =
+  | "password-login"
+  | "google-login"
+  | "auth-session"
+  | "email-register"
+  | "password-reset";
 
 export interface NormalizedAuthError {
   code: string;
@@ -11,9 +16,15 @@ export interface NormalizedAuthError {
   silent?: boolean;
 }
 
-function extractErrorCode(error: unknown): string {
+export function extractErrorCode(error: unknown): string {
   if (!error || typeof error !== "object") return "";
   return ((error as FirebaseLikeError).code ?? "").trim();
+}
+
+export interface NormalizedSessionSyncError {
+  code: string;
+  message: string;
+  retriable: boolean;
 }
 
 export function normalizeAuthError(
@@ -21,6 +32,10 @@ export function normalizeAuthError(
   context: AuthErrorContext,
 ): NormalizedAuthError {
   const code = extractErrorCode(error);
+
+  if (context === "password-reset" && code === "auth/user-not-found") {
+    return { code, message: "없는 이메일입니다." };
+  }
 
   if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
     return {
@@ -95,8 +110,55 @@ export function normalizeAuthError(
   if (context === "email-register") {
     return { code, message: "회원가입에 실패했어요. 입력 내용을 확인한 뒤 다시 시도해 주세요." };
   }
+  if (context === "password-reset") {
+    return { code, message: "비밀번호 재설정 메일을 보내지 못했어요. 잠시 후 다시 시도해 주세요." };
+  }
   if (context === "auth-session") {
     return { code, message: "로그인 후 계정 정보를 준비하지 못했어요. 다시 시도해 주세요." };
   }
   return { code, message: "로그인에 실패했어요. 잠시 후 다시 시도해 주세요." };
+}
+
+export function normalizeSessionSyncError(error: unknown): NormalizedSessionSyncError {
+  const code = extractErrorCode(error);
+
+  switch (code) {
+    case "auth/network-request-failed":
+    case "functions/unavailable":
+    case "functions/deadline-exceeded":
+    case "unavailable":
+    case "cancelled":
+    case "aborted":
+      return {
+        code,
+        message: "인터넷 연결 또는 서버 상태가 불안정해 데이터를 동기화하지 못하고 있어요.",
+        retriable: true,
+      };
+    case "permission-denied":
+    case "functions/permission-denied":
+      return {
+        code,
+        message: "계정 데이터를 읽을 권한이 없어 동기화를 계속할 수 없어요. 관리자에게 문의해 주세요.",
+        retriable: false,
+      };
+    case "unauthenticated":
+    case "functions/unauthenticated":
+      return {
+        code,
+        message: "로그인 상태를 확인하지 못해 데이터를 동기화할 수 없어요. 다시 로그인해 주세요.",
+        retriable: false,
+      };
+    case "failed-precondition":
+      return {
+        code,
+        message: "Firebase 설정이 완전히 준비되지 않아 데이터를 불러오지 못하고 있어요.",
+        retriable: false,
+      };
+    default:
+      return {
+        code,
+        message: "계정 데이터를 준비하는 중 문제가 발생했어요. 잠시 후 다시 시도해 주세요.",
+        retriable: false,
+      };
+  }
 }

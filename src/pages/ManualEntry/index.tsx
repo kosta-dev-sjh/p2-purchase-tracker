@@ -603,6 +603,7 @@ export const ManualEntryPage: React.FC = () => {
               setMeta(next);
               if (error) setError(null);
             }}
+            txType={type}
           />
 
           {/* ── 실시간 중복 제안 카드 ── */}
@@ -649,29 +650,39 @@ export const ManualEntryPage: React.FC = () => {
             <StatusTags value={status} type={type} onChange={setStatus} />
           </div>
 
-          <SectionHeader>
-            <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
-            <AddButton type="button" onClick={() => setModal({ type: "add" })}>
-              + 상품 추가
-            </AddButton>
-          </SectionHeader>
-          {/* 거래 하나 안에 여러 상품이 들어갈 수 있다는 점을 여기서 보여줍니다. */}
-          <SectionHint>
-            상품을 추가하면 거래에 포함된 구매 항목을 함께 기록할 수 있어요.
-            수정이 필요하면 행의 '수정'을 눌러보세요.
-          </SectionHint>
-          <ProductRows
-            products={products}
-            // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
-            // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
-            platform={mapPlatform(meta.platform)}
-            onEdit={(id) => setModal({ type: "edit", id })}
-            onRemove={(id) =>
-              setProducts((current) =>
-                current.filter((product) => product.id !== id)
-              )
-            }
-          />
+          {/*
+           * 상품 등록 영역 노출 정책(2026-04-28):
+           *   - 지출(expense): 항상 노출 — 쿠팡 주문 같은 다항목 결제에 상품 등록이 자연스러움.
+           *   - 수입(income): status 가 환불·취소일 때만 노출 — 반품된 상품 목록을 적는 케이스가
+           *     실재함. 일반 수입(월급·이체 수령) 에는 상품 개념 자체가 없어 UI 노이즈만 됨.
+           */}
+          {(type === "expense" || status === "refund" || status === "cancel") && (
+            <>
+              <SectionHeader>
+                <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
+                <AddButton type="button" onClick={() => setModal({ type: "add" })}>
+                  + 상품 추가
+                </AddButton>
+              </SectionHeader>
+              {/* 거래 하나 안에 여러 상품이 들어갈 수 있다는 점을 여기서 보여줍니다. */}
+              <SectionHint>
+                상품을 추가하면 거래에 포함된 구매 항목을 함께 기록할 수 있어요.
+                수정이 필요하면 행의 '수정'을 눌러보세요.
+              </SectionHint>
+              <ProductRows
+                products={products}
+                // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
+                // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
+                platform={mapPlatform(meta.platform)}
+                onEdit={(id) => setModal({ type: "edit", id })}
+                onRemove={(id) =>
+                  setProducts((current) =>
+                    current.filter((product) => product.id !== id)
+                  )
+                }
+              />
+            </>
+          )}
 
           {error && <ErrorLine role="alert">{error}</ErrorLine>}
           {success && <SuccessLine role="status">{success}</SuccessLine>}

@@ -3,26 +3,38 @@ import type { User } from "firebase/auth";
 
 export type AuthStatus = "loading" | "authenticated" | "unauthenticated";
 
+export interface AuthSyncIssue {
+  code: string;
+  message: string;
+  retriable: boolean;
+}
+
 interface AuthState {
   status: AuthStatus;
   user: User | null;
   error: string | null;
+  syncIssue: AuthSyncIssue | null;
   setLoading: () => void;
   setAuthenticated: (user: User) => void;
   setUnauthenticated: () => void;
   setError: (message: string | null) => void;
   clearError: () => void;
+  setSyncIssue: (issue: AuthSyncIssue | null) => void;
+  clearSyncIssue: () => void;
 }
 
 const useAuthStoreBase = create<AuthState>((set) => ({
   status: "loading",
   user: null,
   error: null,
-  setLoading: () => set({ status: "loading", error: null }),
+  syncIssue: null,
+  setLoading: () => set({ status: "loading", error: null, syncIssue: null }),
   setAuthenticated: (user) => set({ status: "authenticated", user, error: null }),
-  setUnauthenticated: () => set({ status: "unauthenticated", user: null }),
+  setUnauthenticated: () => set({ status: "unauthenticated", user: null, syncIssue: null }),
   setError: (message) => set({ error: message }),
   clearError: () => set({ error: null }),
+  setSyncIssue: (issue) => set({ syncIssue: issue }),
+  clearSyncIssue: () => set({ syncIssue: null }),
 }));
 
 export const authStore = {
@@ -41,9 +53,15 @@ export const authStore = {
   clearError(): void {
     useAuthStoreBase.getState().clearError();
   },
-  load(): Pick<AuthState, "status" | "user" | "error"> {
-    const { status, user, error } = useAuthStoreBase.getState();
-    return { status, user, error };
+  setSyncIssue(issue: AuthSyncIssue | null): void {
+    useAuthStoreBase.getState().setSyncIssue(issue);
+  },
+  clearSyncIssue(): void {
+    useAuthStoreBase.getState().clearSyncIssue();
+  },
+  load(): Pick<AuthState, "status" | "user" | "error" | "syncIssue"> {
+    const { status, user, error, syncIssue } = useAuthStoreBase.getState();
+    return { status, user, error, syncIssue };
   },
 };
 

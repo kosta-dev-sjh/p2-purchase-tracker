@@ -121,6 +121,7 @@ const DonutWrap = styled.div`
   min-width: 0;
   position: relative;
   margin: 0 auto;
+  /* SVG focus outline 차단은 styles/global.ts 의 .recharts-wrapper 룰에서 통합 처리합니다. */
 `;
 
 const CenterLabel = styled.div`
@@ -130,11 +131,6 @@ const CenterLabel = styled.div`
   place-items: center;
   text-align: center;
   pointer-events: none;
-  /*
-   * hover/터치로 가운데 라벨 내용이 바뀔 때 시각적 점프가 일어나지 않게
-   * 부드럽게 전환합니다. 모바일에서 슬라이스 탭이 클릭처럼 느껴지도록.
-   */
-  transition: color ${tokens.motion.fast} ease;
 
   .amount {
     color: ${tokens.color.ink1};
@@ -148,24 +144,52 @@ const CenterLabel = styled.div`
     color: ${tokens.color.ink4};
     font-size: ${tokens.type.caption.size};
   }
+`;
 
-  .caption .swatch {
-    display: inline-block;
+/**
+ * 슬라이스 hover 시 떠 오르는 커스텀 툴팁. Recharts 기본 Tooltip 은 커서를 따라가
+ * 도넛 가운데 글자 위에 겹쳤음(2026-04-28). 도넛 wrap 안쪽 상단(가운데 글자 위쪽 여백) 에
+ * 고정 위치로 띄워, 가운데 텍스트를 침범하지 않으면서도 도넛에 가깝게 붙어 보이도록 합니다.
+ */
+const FloatingTip = styled.div`
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid ${tokens.color.line};
+  background: ${tokens.color.panel};
+  box-shadow: ${tokens.shadow.card};
+  color: ${tokens.color.ink1};
+  font-size: 12px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 2;
+
+  .swatch {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    margin-right: 6px;
-    vertical-align: middle;
   }
 
-  .caption .label {
+  .label {
     font-weight: 600;
     color: ${tokens.color.ink2};
   }
 
-  .caption .sep {
-    margin: 0 6px;
-    color: ${tokens.color.ink5 ?? tokens.color.ink4};
+  .pct {
+    color: ${tokens.color.ink3};
+    font-variant-numeric: tabular-nums;
+  }
+
+  .amount {
+    color: ${tokens.color.ink1};
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 `;
 
@@ -219,8 +243,7 @@ export const PlatformDonut: React.FC<{
   const centerAmount = mode === "amount" ? formatKRW(total) : `${countTotal}건`;
   const centerCaption = mode === "amount" ? `${periodLabel} 총소비` : `${periodLabel} 총 주문`;
 
-  // mode 토글 시 chartItems 가 새 배열이 되어 activeIndex 가 가리키던 카드가
-  // 사라질 수 있으므로, 범위를 벗어나면 안전하게 무시합니다.
+  // 활성 슬라이스 정보(있을 때만 FloatingTip 으로 노출).
   const activeItem =
     activeIndex !== null && activeIndex >= 0 && activeIndex < chartItems.length
       ? chartItems[activeIndex]
@@ -288,31 +311,33 @@ export const PlatformDonut: React.FC<{
                     );
                   })}
                 </Pie>
+                {/*
+                 * Recharts <Tooltip> 은 의도적으로 사용 안 함 — 커서를 따라가 도넛 가운데
+                 * 글자를 침범하던 회귀(2026-04-28). 대신 activeIndex 기반 커스텀 FloatingTip
+                 * 을 도넛 wrap 위쪽 바깥에 절대 위치로 띄워 가운데 라벨을 절대 침범하지 않게
+                 * 했습니다. 슬라이스 hover 추적 자체는 Pie 의 onMouseEnter/Leave 가 그대로
+                 * 처리합니다.
+                 */}
               </PieChart>
             </ResponsiveContainer>
             <CenterLabel>
+              {/*
+               * 가운데 라벨은 항상 고정 — 총액 + 기간 캡션. 슬라이스 hover 시 라벨을
+               * 갈아끼우지 않습니다(2026-04-28). 슬라이스 단위 정보는 위쪽 FloatingTip 에 표시.
+               */}
               <div>
-                {activeItem ? (
-                  <>
-                    <div className="amount">{activeItem.secondaryText}</div>
-                    <div className="caption">
-                      <span
-                        className="swatch"
-                        style={{ background: activeItem.color }}
-                      />
-                      <span className="label">{activeItem.label}</span>
-                      <span className="sep">·</span>
-                      <span>{activeItem.primaryText}</span>
-                    </div>
-                  </>
-                ) : (
-                  <>
-                    <div className="amount">{centerAmount}</div>
-                    <div className="caption">{centerCaption}</div>
-                  </>
-                )}
+                <div className="amount">{centerAmount}</div>
+                <div className="caption">{centerCaption}</div>
               </div>
             </CenterLabel>
+            {activeItem ? (
+              <FloatingTip role="status" aria-live="polite">
+                <span className="swatch" style={{ background: activeItem.color }} />
+                <span className="label">{activeItem.label}</span>
+                <span className="pct">{activeItem.primaryText}</span>
+                <span className="amount">{activeItem.secondaryText}</span>
+              </FloatingTip>
+            ) : null}
           </DonutWrap>
           <Legend>
             {chartItems.map((item) => (

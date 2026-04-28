@@ -12,6 +12,7 @@ interface FormFieldProps {
   required?: boolean;
   helpText?: string;
   errorText?: string;
+  statusText?: string;
   children: ReactNode;
 }
 
@@ -44,11 +45,19 @@ const ErrorText = styled.span`
   font-weight: 600;
 `;
 
+const StatusText = styled.span`
+  color: ${tokens.color.pos};
+  font-size: ${tokens.type.caption.size};
+  line-height: 1.45;
+  font-weight: 600;
+`;
+
 export const FormField = ({
   label,
   required,
   helpText,
   errorText,
+  statusText,
   children,
 }: FormFieldProps) => (
   <Wrapper>
@@ -57,6 +66,12 @@ export const FormField = ({
       {required && <Required> *</Required>}
     </Label>
     {children}
-    {errorText ? <ErrorText>{errorText}</ErrorText> : helpText ? <HelpText>{helpText}</HelpText> : null}
+    {errorText ? (
+      <ErrorText>{errorText}</ErrorText>
+    ) : statusText ? (
+      <StatusText>{statusText}</StatusText>
+    ) : helpText ? (
+      <HelpText>{helpText}</HelpText>
+    ) : null}
   </Wrapper>
 );

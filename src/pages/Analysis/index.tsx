@@ -138,7 +138,29 @@ export const AnalysisPage: React.FC = () => {
         <MonthlyTrend points={data.trend.points} average={data.trend.average} />
         <Row3>
           <RepeatTop3 items={data.repeat} />
-          <SubscriptionList items={data.subscriptions} total={data.subscriptionTotal} />
+          {/*
+           * 분석 페이지의 정기결제 카드(2026-04-28): "반복결제" 페이지가 모든 분류(공과금·할부·
+           * 자주 구매 포함) 를 다 보여주는 우산 뷰라면, 여기는 "정기적으로 청구되는 것" 만 — 즉
+           * subscription(구독·사용자 마킹) + utility(공과금·통신·보험) 두 분류만 노출. 할부/자주
+           * 구매는 "정기 청구" 가 아니므로 제외.
+           */}
+          {(() => {
+            const recurringOnly = data.subscriptions.filter(
+              (it) => it.tagKind === "subscription" || it.tagKind === "utility",
+            );
+            const recurringTotal = recurringOnly.reduce((sum, it) => sum + it.amount, 0);
+            return (
+              <SubscriptionList
+                items={recurringOnly}
+                total={recurringTotal}
+                title="정기결제"
+                description="매월 정기적으로 청구되는 구독·공과금. 항목을 누르면 거래내역에서 같은 가맹점 결제를 모두 보여줍니다."
+                footerLabel="이번 달 정기결제 합계"
+                emptyTitle="아직 감지된 정기결제가 없어요."
+                emptyBody="구독·공과금·보험·통신비처럼 매월 같은 날 같은 금액으로 빠지는 결제가 쌓이면 여기 모여요."
+              />
+            );
+          })()}
           <WeeklyPattern
             days={data.weekly.days}
             note={data.weekly.note}

@@ -438,6 +438,7 @@ export const OcrUploadPage: React.FC = () => {
             isOpen
             onClose={handleMismatchKeep}
             title="플랫폼이 다른 것 같아요"
+            dismissible={false}
           >
             <div style={{ color: tokens.color.ink2, fontSize: 13, lineHeight: 1.6, marginBottom: 16 }}>
               아래 이미지들은 분석 결과 다른 플랫폼 캡쳐로 보입니다.

@@ -21,10 +21,12 @@ import { getCurrentMonthKey, getPrevMonthKey } from "../../constants/months";
 import { detectConcept } from "../../data/categoryConcepts";
 import { normalizeMerchantKey } from "../../utils/categoryInference";
 import { subjectParticle } from "../../utils/koreanParticle";
+import { getCardInstallmentKind } from "../../utils/cardInstallment";
 import {
   countInstallmentApprovalEstimates,
   effectiveMonthlyAmount,
   findApprovalsCoveredByBilling,
+  findBillingsLinkedToApproval,
   sumActualMonthlyExpense,
   sumInstallmentEstimateAmount,
 } from "../../utils/expenseAccounting";
@@ -77,9 +79,9 @@ function shiftMonthKey(monthKey: string, delta: number): string {
  */
 const sumSpend = sumActualMonthlyExpense;
 
-function countPurchase(rows: TxRow[]): number {
+function countPurchase(rows: TxRow[], allRows?: TxRow[]): number {
   // 같은 결제의 approval+billing 페어는 KPI 와 같은 dedup 정책으로 1건으로 셉니다.
-  const skip = findApprovalsCoveredByBilling(rows);
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   return rows.filter(
     (row) =>
       row.type === "expense" && row.status !== "cancel" && !skip.has(row.id),
@@ -103,7 +105,7 @@ function sumCancel(rows: TxRow[]): number {
     .reduce((sum, row) => sum + Math.abs(row.amount), 0);
 }
 
-function buildPlatform(rows: TxRow[]): {
+function buildPlatform(rows: TxRow[], allRows?: TxRow[]): {
   items: PlatformBarItem[];
   totalSpend: number;
   totalIncome: number;
@@ -117,7 +119,7 @@ function buildPlatform(rows: TxRow[]): {
     unspecified: { value: 0, count: 0 },
   };
   // 같은 결제의 approval+billing 페어는 KPI 합산에서 dedup 되므로 플랫폼 막대도 동일 처리.
-  const skip = findApprovalsCoveredByBilling(rows);
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
     if (skip.has(row.id)) continue;
@@ -160,7 +162,8 @@ function buildPlatform(rows: TxRow[]): {
 function buildCategory(
   rows: TxRow[],
   colorMap?: Record<string, string>,
-  nameMap?: Record<string, string>
+  nameMap?: Record<string, string>,
+  allRows?: TxRow[],
 ): CategoryBarItem[] {
   const DEFAULT_COLORS: Record<string, string> = {
     living: tokens.color.cat2,
@@ -172,7 +175,7 @@ function buildCategory(
   const resolvedColors: Record<string, string> = colorMap ?? DEFAULT_COLORS;
   // 카테고리별 합계를 동적으로 누적. 커스텀 카테고리도 처음 등장 시 0으로 초기화됩니다.
   const totals: Record<string, number> = {};
-  const skip = findApprovalsCoveredByBilling(rows);
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
     if (skip.has(row.id)) continue;
@@ -249,7 +252,8 @@ const SUB_COLOR: Record<string, string> = {
   "밀리의 서재": tokens.color.cat4,
 };
 
-const FIXED_EXPENSE_CONCEPTS = new Set(["subscription", "telecom", "utility", "insurance"]);
+/** "utility" 카테고리로 묶을 개념들(공과금/통신/보험). UI 에서 "공과금" 칩으로 통합 표시. */
+const UTILITY_CONCEPTS = new Set(["telecom", "utility", "insurance"]);
 
 /**
  * 정기결제(고정지출 감지) 집계.
@@ -294,34 +298,149 @@ export function buildSubscriptions(
     buckets.set(key, bucket);
   }
 
+  /*
+   * 분류 태그 결정. 우선순위가 위에서 아래로 내려갑니다:
+   *   1) status === "sub"             → "subscription" (사용자 마킹)
+   *   2) concept = "subscription"     → "subscription" (넷플릭스 등 명백한 구독 가맹점)
+   *   3) concept ∈ UTILITY_CONCEPTS   → "utility"      (공과금/통신비/보험)
+   *   4) 할부 행 존재(이번 달)         → "installment"  (할부 결제 진행중)
+   *   5) 같은 가맹점 3건+              → "frequent"     (자주 구매)
+   *   6) 그 외                          → null (정기결제 목록에 포함 안 함)
+   *
+   * 정책 변경(2026-04-28): "2개월+ 비슷 금액 → 정기결제" 자동 패턴 매칭을 제거했습니다.
+   * 매월 비슷한 금액으로 두 번 들른 식당/병원이 모두 "정기결제" 로 잡혀 false positive 가
+   * 컸어요(예: 국밥집 매달 10,000 / 이비인후과 매달 4,000 등). 정기결제 태그는 이제
+   * "사용자 명시" 또는 "명백한 구독 가맹점 개념" 만 인정하고, 같은 가맹점 반복 결제는
+   * 일괄 "자주 구매" 로 떨어뜨립니다 — 사용자가 진짜 구독이라면 거래 상세에서 status 를
+   * "정기결제" 로 마킹하면 다음 빌드부터 즉시 승격됩니다.
+   */
+  type Bucket = {
+    rows: TxRow[];
+    months: Set<string>;
+    currentMonthRows: TxRow[];
+    concept: string | null;
+  };
+  const detectTagKind = (bucket: Bucket): SubscriptionItem["tagKind"] | null => {
+    if (bucket.rows.some((row) => row.status === "sub")) return "subscription";
+    if (bucket.concept === "subscription") return "subscription";
+    if (bucket.concept && UTILITY_CONCEPTS.has(bucket.concept)) return "utility";
+    const hasInstallmentInCurrentMonth = bucket.currentMonthRows.some((row) => {
+      const ci = row.detail?.cardImport;
+      if (!ci) return false;
+      const kind = getCardInstallmentKind(ci, row.amount);
+      return kind === "installment_approval" || kind === "installment_billing";
+    });
+    if (hasInstallmentInCurrentMonth) return "installment";
+
+    const expenseRows = bucket.rows.filter(
+      (row) => row.type === "expense" && row.status !== "cancel",
+    );
+    if (expenseRows.length >= 3) return "frequent";
+    return null;
+  };
+
   const items = Array.from(buckets.values())
     .filter((bucket) => bucket.currentMonthRows.length > 0)
-    .filter((bucket) => {
-      const hasExplicitSubscription = bucket.rows.some((row) => row.status === "sub");
-      const isFixedConcept = bucket.concept ? FIXED_EXPENSE_CONCEPTS.has(bucket.concept) : false;
-      const hasMonthlyRepeat =
-        bucket.months.size >= 2 &&
-        bucket.rows.some((row) => row.detail?.cardImport?.paymentMode !== "installment");
-      return hasExplicitSubscription || isFixedConcept || hasMonthlyRepeat;
-    })
     .map((bucket) => {
+      const tagKind = detectTagKind(bucket);
+      if (!tagKind) return null;
       const latest = [...bucket.currentMonthRows].sort((a, b) => b.date.localeCompare(a.date))[0];
       const parsed = latest ? parseDate(latest.date) : null;
+      /*
+       * "월마다 빠지는 돈" 정의:
+       *   - 일반 결제(구독/공과금/청구/자주 구매): amount 그대로
+       *   - 할부 승인(amount 가 총액): amount / installmentMonths 분할 추정
+       *
+       * Phase 5B (2026-04-28): approval 이 쌓인 billing 행과 패턴 매칭되면 그 billing 들의
+       * 평균을 "실제 청구 평균(이자 포함)" 으로 표시 — 사용자가 추가 데이터 import 한 만큼
+       * 추정 → 실측으로 자동 갱신됩니다. 이자 데이터가 따로 안 들어오는 카드사 한계를
+       * billing 행이 들어왔을 때 우회하는 메커니즘.
+       */
+      const ci = latest?.detail?.cardImport;
+      const isApproval =
+        latest && ci
+          ? getCardInstallmentKind(ci, latest.amount) === "installment_approval"
+          : false;
+      const installmentMonths = isApproval ? ci?.installmentMonths ?? 0 : 0;
+      const rawAmount = latest ? Math.abs(latest.amount) : 0;
+      const linkedBillings =
+        isApproval && latest ? findBillingsLinkedToApproval(latest, rows) : [];
+      const billingAvg =
+        linkedBillings.length > 0
+          ? Math.round(
+              linkedBillings.reduce((s, b) => s + Math.abs(b.amount), 0) /
+                linkedBillings.length,
+            )
+          : null;
+      const monthlyAmount =
+        billingAvg !== null
+          ? billingAvg
+          : isApproval && installmentMonths > 0
+            ? Math.round(rawAmount / installmentMonths)
+            : rawAmount;
+      // 추정인지 실측인지: 할부 승인이고 빌링 매칭 안 된 경우에만 "추정" 라벨 노출.
+      // 빌링 매칭되면 실제 청구액 평균이라 정확 → "추정" 안 붙임.
+      const isEstimated = isApproval && billingAvg === null && installmentMonths > 0;
+      /*
+       * 데이터로 매월 반복 패턴 확인 여부:
+       *   - 같은 가맹점 2개월 이상 결제
+       *   - 금액 편차 ±15% 이내(이자 변동·환불 미세조정 포함)
+       * tagKind 와 독립. concept 매칭(예: 새로 시작한 넷플릭스) 이라도 데이터로 아직
+       * 검증 안 됐으면 false. 사용자가 "이게 진짜 매월 같은 패턴인지" 확인할 수 있게.
+       * 할부 행은 cycleTotal 기반 자동 매월 패턴이라 cycleTotal>=2 일 때 true.
+       */
+      const patternVerified = (() => {
+        // 할부 결제는 회차 정보가 있으면 자동으로 반복 확인됨(매월 같은 금액 청구).
+        if (
+          tagKind === "installment" &&
+          ((ci?.installmentCycleTotal ?? 0) >= 2 || installmentMonths >= 2)
+        ) {
+          return true;
+        }
+        const expenseRows = bucket.rows.filter(
+          (r) => r.type === "expense" && r.status !== "cancel",
+        );
+        if (bucket.months.size < 2 || expenseRows.length < 2) return false;
+        const amounts = expenseRows.map((r) => Math.abs(r.amount));
+        const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
+        if (avg <= 0) return false;
+        const maxDev = Math.max(...amounts.map((a) => Math.abs(a - avg))) / avg;
+        return maxDev <= 0.15;
+      })();
+      /*
+       * 색 정책(2026-04-28): tagKind 기반으로 4개 분류만 색을 분리. 이전엔 concept 별로
+       * (telecom=cat3, insurance=cat4 등) 잡았는데 telecom 의 cat3 와 installment 의 warn
+       * 이 같은 #B45309 라 사용자가 "공과금이랑 할부가 같은 색이야?" 라고 헷갈림.
+       *   - subscription : accent(인디고)
+       *   - utility      : cat2(틸 그린)  ← telecom/insurance/utility 모두
+       *   - installment  : warn(앰버 브라운)
+       *   - frequent     : ink4(회색)
+       * SUB_COLOR(넷플릭스 등 명시 매핑) 은 brand 색 우선이라 그대로 유지.
+       */
+      const tagColor =
+        tagKind === "subscription"
+          ? tokens.color.accent
+          : tagKind === "utility"
+            ? tokens.color.cat2
+            : tagKind === "installment"
+              ? tokens.color.warn
+              : tokens.color.ink4;
       return {
         name: latest?.title ?? "알 수 없음",
-        amount: latest ? Math.abs(latest.amount) : 0,
+        amount: monthlyAmount,
+        installmentOriginalAmount:
+          isApproval && installmentMonths > 0 ? rawAmount : undefined,
+        installmentMonths:
+          isApproval && installmentMonths > 0 ? installmentMonths : undefined,
+        isEstimated,
+        patternVerified,
         nextDate: parsed ? `${parsed.month}.${parsed.day}` : "",
-        color:
-          SUB_COLOR[latest?.title ?? ""] ??
-          (bucket.concept === "utility"
-            ? tokens.color.cat2
-            : bucket.concept === "insurance"
-              ? tokens.color.cat4
-              : bucket.concept === "telecom"
-                ? tokens.color.cat3
-                : tokens.color.accent),
+        latestTxId: latest?.id,
+        tagKind,
+        color: SUB_COLOR[latest?.title ?? ""] ?? tagColor,
       };
     })
+    .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
     .sort((a, b) => b.amount - a.amount)
     .slice(0, Number.isFinite(limit) ? limit : undefined)
     .map((sub, index) => ({
@@ -330,6 +449,12 @@ export function buildSubscriptions(
       color: sub.color,
       nextDate: sub.nextDate,
       amount: sub.amount,
+      installmentOriginalAmount: sub.installmentOriginalAmount,
+      installmentMonths: sub.installmentMonths,
+      isEstimated: sub.isEstimated,
+      patternVerified: sub.patternVerified,
+      tagKind: sub.tagKind,
+      latestTxId: sub.latestTxId,
     }));
   const total = items.reduce((sum, item) => sum + item.amount, 0);
   return { items, total };
@@ -344,9 +469,9 @@ function weekdayIndex(dateStr: string): number {
   return (d.getDay() + 6) % 7;
 }
 
-function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string; subtitle: string } {
+function buildWeekly(rows: TxRow[], allRows?: TxRow[]): { days: WeeklyDay[]; note: string; subtitle: string } {
   const buckets = [0, 0, 0, 0, 0, 0, 0];
-  const skip = findApprovalsCoveredByBilling(rows);
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   for (const row of rows) {
     if (row.type !== "expense" || row.status === "cancel") continue;
     if (skip.has(row.id)) continue;
@@ -391,12 +516,13 @@ function buildWeekly(rows: TxRow[]): { days: WeeklyDay[]; note: string; subtitle
 
 function buildKpis(
   thisMonth: TxRow[],
-  prevMonth: TxRow[]
+  prevMonth: TxRow[],
+  allRows: TxRow[],
 ): KpiItem[] {
-  const totalSpend = sumSpend(thisMonth);
-  const prevSpend = sumSpend(prevMonth);
-  const count = countPurchase(thisMonth);
-  const prevCount = countPurchase(prevMonth);
+  const totalSpend = sumSpend(thisMonth, allRows);
+  const prevSpend = sumSpend(prevMonth, allRows);
+  const count = countPurchase(thisMonth, allRows);
+  const prevCount = countPurchase(prevMonth, allRows);
   const avg = count > 0 ? Math.round(totalSpend / count) : 0;
   const prevAvg = prevCount > 0 ? Math.round(prevSpend / prevCount) : 0;
   const refundPlusCancel = sumIncomeAndRefund(thisMonth) + sumCancel(thisMonth);
@@ -412,8 +538,8 @@ function buildKpis(
     return `${sign}${Math.abs(rounded).toFixed(1)}%`;
   };
 
-  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth);
-  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth);
+  const installmentEstimateAmount = sumInstallmentEstimateAmount(thisMonth, allRows);
+  const installmentEstimateCount = countInstallmentApprovalEstimates(thisMonth, allRows);
 
   return [
     {
@@ -463,7 +589,9 @@ function buildTrend(rows: TxRow[], monthKey: string) {
   const values: number[] = [];
   for (let i = 5; i >= 0; i -= 1) {
     const key = shiftMonthKey(monthKey, -i);
-    const spend = sumSpend(rows.filter((row) => toMonthKey(row.date) === key));
+    const slice = rows.filter((row) => toMonthKey(row.date) === key);
+    // cross-month dedup 을 위해 allRows(=rows) 같이 전달.
+    const spend = sumSpend(slice, rows);
     const month = Number(key.split("-")[1] ?? 0);
     points.push({ label: month > 0 ? `${month}월` : key, value: spend });
     values.push(spend);
@@ -484,12 +612,13 @@ function buildSummary(
    * 헤더 알림은 이 값으로 깔끔하게 통일해서 "이번 달 요약 / 2026년 3월 요약" 두 케이스 모두 자연스럽게 합니다.
    */
   periodLabel: string,
+  allRows: TxRow[],
 ): string {
-  const totalSpend = sumSpend(thisMonth);
+  const totalSpend = sumSpend(thisMonth, allRows);
   if (totalSpend === 0) {
     return `${periodLabel}은 아직 집계할 지출이 없어요. 거래를 입력하면 요약이 채워져요.`;
   }
-  const prevSpend = sumSpend(prevMonth);
+  const prevSpend = sumSpend(prevMonth, allRows);
   const deltaText =
     prevSpend > 0
       ? `지난달 대비 **지출은 ${totalSpend >= prevSpend ? "+" : "−"}${Math.abs(
@@ -539,14 +668,14 @@ export const buildAnalysisData = (
     return `${y}년 ${m}월`;
   })();
 
-  const platform = buildPlatform(thisMonth);
-  const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap);
+  const platform = buildPlatform(thisMonth, rows);
+  const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap, rows);
   const repeat = buildRepeat(thisMonth, categoryNameMap);
   const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(rows, monthKey);
   const trend = buildTrend(rows, monthKey);
-  const weekly = buildWeekly(thisMonth);
-  const kpis = buildKpis(thisMonth, prevMonth);
-  const summary = buildSummary(thisMonth, prevMonth, category, platform, periodLabel);
+  const weekly = buildWeekly(thisMonth, rows);
+  const kpis = buildKpis(thisMonth, prevMonth, rows);
+  const summary = buildSummary(thisMonth, prevMonth, category, platform, periodLabel, rows);
 
   return {
     summary,

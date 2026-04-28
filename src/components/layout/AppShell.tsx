@@ -54,7 +54,7 @@ const MOBILE_PRIMARY_NAV_ITEMS: MobileNavItemConfig[] = [
 ];
 
 const MOBILE_SECONDARY_NAV_ITEMS: MobileNavItemConfig[] = [
-  { key: "subscriptions", label: "정기결제", shortLabel: "정기결제", path: "/subscriptions" },
+  { key: "subscriptions", label: "반복결제", shortLabel: "반복결제", path: "/subscriptions" },
   { key: "settings", label: "설정", shortLabel: "설정", path: "/settings" },
 ];
 
@@ -200,17 +200,20 @@ const MobileBrand = styled.div`
   gap: 10px;
   min-width: 0;
 
+  /* 파비콘 SVG 그대로. 이전엔 "S" 글자였는데 파비콘과 통일(2026-04-28). */
   .mark {
     display: grid;
     width: 30px;
     height: 30px;
     place-items: center;
     border-radius: 9px;
-    background: ${tokens.color.accent};
-    color: #fff;
-    font-size: 14px;
-    font-weight: 700;
+    overflow: hidden;
     box-shadow: 0 10px 18px rgba(79, 70, 229, 0.2);
+  }
+  .mark img {
+    width: 100%;
+    height: 100%;
+    display: block;
   }
 
   .name {
@@ -480,7 +483,9 @@ export const AppShell = ({ activeNav, crumb, title, headerRight, children }: App
                * 바로 아래에 칩 네비게이션이 펼쳐지므로 별도 서브 카피("빠른 이동" 등)는
                * 정보를 더해 주지 않아 제거했습니다. 브랜드명만 노출.
                */}
-              <div className="mark">S</div>
+              <div className="mark">
+                <img src="/favicon.svg" alt="SpendTrack" />
+              </div>
               <div className="name">Spend Track</div>
             </MobileBrand>
             <MobileMeta>

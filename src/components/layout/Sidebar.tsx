@@ -94,9 +94,10 @@ const NAV_ITEMS: Array<{
   { key: "upload", label: "입력", path: "/upload" },
   { key: "transactions", label: "수입·지출 내역", path: "/transactions" },
   { key: "analysis", label: "소비 분석", path: "/analysis" },
-  // 데스크톱은 사이드바 폭(232px)이 충분하므로 정기결제도 메인 메뉴에 함께 둡니다.
+  // 데스크톱은 사이드바 폭(232px)이 충분하므로 반복결제도 메인 메뉴에 함께 둡니다.
   // 모바일에선 폭이 빠듯해서 AppShell 의 더보기 드롭다운 안으로 들어갑니다.
-  { key: "subscriptions", label: "정기결제", path: "/subscriptions" },
+  // "반복결제" — 정기결제 + 공과금 + 할부 + 자주 구매 4개를 모두 포괄하는 우산 라벨.
+  { key: "subscriptions", label: "반복결제", path: "/subscriptions" },
 ];
 
 const Aside = styled.aside`
@@ -124,17 +125,25 @@ const LogoArea = styled.div`
   padding: 6px 8px 18px;
 `;
 
+/**
+ * 로고 마크 — 파비콘 SVG 를 그대로 가져와 이미지로 노출(2026-04-28). 이전엔 단순 "S" 글자
+ * 였는데 파비콘은 이미 차트 아이콘으로 만들어져 있어 일관성 차원에서 사이드바·모바일·랜딩
+ * 모두 같은 SVG 를 쓰도록 통일.
+ */
 const LogoMark = styled.div`
   display: grid;
   width: 28px;
   height: 28px;
   place-items: center;
-  background: ${tokens.color.accent};
   border-radius: 8px;
-  color: #fff;
   flex-shrink: 0;
-  font-size: 14px;
-  font-weight: 700;
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
 `;
 
 const BrandText = styled.div`
@@ -291,7 +300,9 @@ export const Sidebar = ({ activeNav, user }: SidebarProps) => {
   return (
     <Aside>
       <LogoArea>
-        <LogoMark>S</LogoMark>
+        <LogoMark>
+          <img src="/favicon.svg" alt="SpendTrack" />
+        </LogoMark>
         <BrandText>
           <div className="name">SpendTrack</div>
           <div className="sub">쇼핑 소비 관리</div>

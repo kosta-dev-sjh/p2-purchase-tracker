@@ -19,8 +19,20 @@ export interface SummaryData {
   spendCount: number;
   incomeCount: number;
   totalSpend: number;
+  /** 수입 + 환불 (status !== "cancel"). 순지출 계산용. */
   incomeAndRefund: number;
+  /**
+   * 순수 수입 합계(type==="income" && status!=="refund" && status!=="cancel").
+   * "수입" 카드 표시 전용 — 환불·취소는 별도 카드(refundCancelAmount) 로 노출.
+   */
+  pureIncome: number;
+  /** 순수 수입 행 개수 — pureIncome 과 같은 필터. */
+  pureIncomeCount: number;
   refundCount: number;
+  cancelCount: number;
+  cancelAmount: number;
+  /** 환불 + 취소 합산. UI 의 "환불·취소" 카드 표시용. */
+  refundCancelAmount: number;
   netSpend: number;
   countLabel: string;
   spendDelta?: SummaryDelta;
@@ -157,33 +169,46 @@ export const SummaryStrip = React.memo(({ summary, filteredCount }: SummaryStrip
           : `지출 ${summary.spendCount} · 수입 ${summary.incomeCount}`}
       </Sub>
     </Cell>
+    {/*
+      카드 재배치(2026-04-28): "총 지출" 카드를 통째로 빼고 그 자리에 "수입" 카드를 둡니다.
+      사용자 피드백 — 거래내역 상단에서 가장 보고 싶은 두 숫자는 "순 지출" 과 "수입".
+      총 지출(gross)은 순 지출 카드의 sub 라인에 함께 노출해 한 카드로 묶였습니다.
+    */}
     <Cell>
-      <Label>총 지출</Label>
-      <Value className="tnum" $color={tokens.color.neg}>
-        {formatKRW(summary.totalSpend)}
+      <Label>수입</Label>
+      <Value className="tnum" $color={tokens.color.pos}>
+        {formatKRW(summary.pureIncome)}
       </Value>
       <Sub>
-        {summary.spendDelta ? (
-          <>
-            전월 대비
-            <Chip $tone={summary.spendDelta.direction}>{formatDelta(summary.spendDelta)}</Chip>
-          </>
-        ) : (
-          <>지출 거래 {summary.spendCount}건</>
-        )}
+        {summary.pureIncomeCount === 0
+          ? "수입 내역 없음"
+          : `수입 ${summary.pureIncomeCount}건`}
       </Sub>
     </Cell>
     <Cell>
-      <Label>총 수입·환불</Label>
-      <Value className="tnum" $color={tokens.color.pos}>
-        +{formatKRW(summary.incomeAndRefund)}
+      <Label>환불·취소</Label>
+      <Value className="tnum" $color={tokens.color.neg}>
+        {formatKRW(summary.refundCancelAmount)}
       </Value>
-      <Sub>환불 {summary.refundCount}건</Sub>
+      <Sub>
+        {summary.refundCount + summary.cancelCount === 0
+          ? "환불·취소 내역 없음"
+          : `환불 ${summary.refundCount}건 · 취소 ${summary.cancelCount}건`}
+      </Sub>
     </Cell>
     <Cell>
       <Label>순 지출</Label>
       <Value className="tnum">{formatKRW(summary.netSpend)}</Value>
-      <Sub>지출 − 수입</Sub>
+      {/*
+        sub 라인: 총 지출(=gross) 을 같이 보여 사용자가 "총·순" 두 숫자를 한 카드에서
+        비교할 수 있게. 전월 대비 chip 도 같은 줄에 — 너무 길어지면 줄바꿈으로 자연스럽게.
+      */}
+      <Sub>
+        지출 {formatKRW(summary.totalSpend)}
+        {summary.spendDelta && (
+          <Chip $tone={summary.spendDelta.direction}>{formatDelta(summary.spendDelta)}</Chip>
+        )}
+      </Sub>
     </Cell>
   </Strip>
   );

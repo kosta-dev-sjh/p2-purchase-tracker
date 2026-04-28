@@ -58,11 +58,32 @@ interface FallbackOcrProductsInput {
   imageMimeType?: string;
 }
 
+/**
+ * 카드 CSV/XLSX 임포트의 AI 폴백 입력. 카드사 헤더가 표준 양식(일시불할부구분/
+ * 할부개월/할부회차) 과 달라 자동 매핑이 0건인 시트에 한해 발동합니다(클라이언트의
+ * gate 가 결정). 비용·rate limit 영향을 통제하려고 시트당 1회만 호출되며, 한 호출에
+ * 해당 시트의 모든 행을 같이 보냅니다.
+ */
+interface ClassifyCardRowSnippet {
+  /** 클라이언트가 결과를 row 에 다시 매핑하기 위한 키. __sheetName/__rowIndex 조합 */
+  id: string;
+  date?: string;
+  merchant?: string;
+  amount?: string;
+  /** 그 외 카드사가 보낸 컬럼들(요약). AI 가 단서로 활용 — "할부", "무이자할부", "분할" 등 */
+  extras?: Record<string, string>;
+}
+
+interface ClassifyCardRowsInput {
+  rows: ClassifyCardRowSnippet[];
+}
+
 type GeminiProxyRequest =
   | { action: "generateInsight"; payload: { rulesText: string } }
   | { action: "fallbackOcr"; payload: { text: string } }
   | { action: "fallbackCsv"; payload: { text: string } }
-  | { action: "fallbackOcrProducts"; payload: FallbackOcrProductsInput };
+  | { action: "fallbackOcrProducts"; payload: FallbackOcrProductsInput }
+  | { action: "classifyCardRows"; payload: ClassifyCardRowsInput };
 
 interface DeleteAccountRequest {
   reauthProvider?: string;
@@ -567,6 +588,79 @@ ${productsBlock}`;
   return { products, changedIds: [...changedIds] };
 }
 
+/**
+ * 카드 행 결제 방식 분류(시트당 1회 호출).
+ *
+ * 정책(2026-04-28):
+ * - 클라이언트의 gate 가 일시불/할부 헤더 미매칭 시트에서만 호출.
+ * - paymentMode 는 lump_sum / installment 둘 중 하나로 강제 (불확실하면 lump_sum).
+ *   카드사 헤더가 빠진 케이스라도 사용자에게 "수상한 미분류" 가 남지 않게 폴백.
+ * - installmentMonths 는 installment 행에만 정수로(>=2). 그 외엔 미설정.
+ * - 5만원 미만 + 단서 없음 → lump_sum (한국 카드사 정책 — 할부 불가).
+ * - 단서 종류: 행 본문에 "할부", "무이자할부", "분할", "회차", "N개월" 등.
+ */
+async function runClassifyCardRows(
+  input: ClassifyCardRowsInput,
+): Promise<{ rows: Array<{ id: string; paymentMode: "lump_sum" | "installment"; installmentMonths?: number }> }> {
+  if (!Array.isArray(input.rows) || input.rows.length === 0) return { rows: [] };
+
+  const model = createModel();
+  const block = input.rows
+    .map((r, i) => {
+      const ext = r.extras
+        ? Object.entries(r.extras)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(", ")
+        : "";
+      return `${i + 1}. id=${r.id} | date=${r.date ?? ""} | merchant=${r.merchant ?? ""} | amount=${r.amount ?? ""}${
+        ext ? " | " + ext : ""
+      }`;
+    })
+    .join("\n");
+
+  const prompt = `너는 한국 카드사 이용내역 행을 보고 결제 방식을 분류하는 추출기다.
+헤더가 표준 양식과 달라 일시불/할부 컬럼이 자동 매핑되지 않은 파일이라, 행마다 단서로 추론한다.
+
+규칙(엄격히 준수):
+- 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
+- 각 라인 형식: \`id|paymentMode|installmentMonths\`
+- id 는 입력과 글자 단위로 정확히 같게 복사한다.
+- paymentMode 는 정확히 \`lump_sum\` 또는 \`installment\` 중 하나. 확신 없으면 \`lump_sum\`.
+- installmentMonths 는 할부일 때만 총 개월 수 정수(>=2). 일시불이면 빈칸.
+- "할부", "무이자할부", "분할", "리볼빙", "회차", "N개월" 같은 단서가 있으면 installment.
+- amount(쉼표 제거 후) 가 50000 미만이고 단서 없으면 lump_sum (한국 카드사 정책 — 할부 불가).
+- 단서가 전혀 없으면 lump_sum.
+- 입력된 행 수만큼 정확히 그만큼의 라인을 출력한다(추가/누락 금지).
+- 헤더 라인 출력 금지. 첫 라인부터 데이터.
+
+행:
+${block}`;
+
+  const result = await model.generateContent(prompt);
+  const text = (await result.response.text()).trim();
+  const out: Array<{ id: string; paymentMode: "lump_sum" | "installment"; installmentMonths?: number }> = [];
+  const inputIds = new Set(input.rows.map((r) => r.id));
+
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith("```") || line.startsWith("#")) continue;
+    const cols = line.split("|").map((c) => c.trim());
+    if (cols.length < 2) continue;
+    const [id, modeRaw, monthsStr] = cols;
+    if (!inputIds.has(id)) continue;
+    const paymentMode = modeRaw === "installment" ? "installment" : "lump_sum";
+    let installmentMonths: number | undefined;
+    if (paymentMode === "installment" && monthsStr) {
+      const m = monthsStr.match(/\d+/);
+      const n = m ? Number(m[0]) : NaN;
+      if (Number.isFinite(n) && n >= 2) installmentMonths = n;
+    }
+    out.push({ id, paymentMode, ...(installmentMonths ? { installmentMonths } : {}) });
+  }
+
+  return { rows: out };
+}
+
 export const deleteAccount = onCall(
   {
     region: "asia-northeast3",
@@ -863,6 +957,8 @@ export const geminiProxy = onCall(
         return await runFallbackCsv(data.payload.text);
       case "fallbackOcrProducts":
         return await runFallbackOcrProducts(data.payload);
+      case "classifyCardRows":
+        return await runClassifyCardRows(data.payload);
       default:
         throw new HttpsError("invalid-argument", "지원하지 않는 AI action 입니다.");
     }

@@ -246,12 +246,13 @@ const steps: StepDef[] = [
   },
   {
     title: "주문 캡처 · 카드 내역 · 수동 입력 중 선택",
-    body: "쇼핑몰 주문 캡처, 카드사 CSV/엑셀, 직접 입력 — 원하는 방식 아무거나. 들어오는 길이 달라도 같은 거래로 저장됩니다.",
+    body: "쇼핑몰 주문 캡처, 카드사 CSV/엑셀, 직접 입력 — 원하는 방식 아무거나. 거래내역의 + 버튼으로도 한 건씩 빠르게 추가할 수 있어요.",
     accent: tokens.color.accent,
     tags: [
       { label: "주문 캡처", tone: "accent" },
       { label: "카드 내역", tone: "accent" },
       { label: "수동 입력", tone: "accent" },
+      { label: "+ 빠른 추가", tone: "accent" },
     ],
   },
   {

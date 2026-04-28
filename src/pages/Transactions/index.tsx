@@ -15,6 +15,7 @@ import { SummaryStrip } from "./components/SummaryStrip";
 import { FilterBar, type InstallmentFilter } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
+import { QuickAddModal } from "./components/QuickAddModal";
 import { buildTransactionSummary } from "./data";
 import {
   computeMaxMonthKey,
@@ -101,6 +102,72 @@ const PanelInner = styled.div<{ $open: boolean }>`
 const Grid = styled.div`
   display: grid;
   gap: 16px;
+`;
+
+/**
+ * "+ 거래 추가" 플로팅 액션 버튼(2026-04-28).
+ * 데스크톱: 알약 모양 + "거래 추가" 라벨 + 아이콘
+ * 모바일: 원형 + 아이콘 only (텍스트 생략으로 공간 절약)
+ * 클릭 시 페이지 이동 대신 모달을 띄워 현재 페이지 컨텍스트를 유지 — UI 흐름이 끊기지 않음.
+ */
+const FabAddButton = styled.button`
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 12px 18px 12px 14px;
+  border: none;
+  border-radius: 999px;
+  background: ${tokens.color.accent};
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  box-shadow:
+    0 8px 18px rgba(79, 70, 229, 0.32),
+    0 2px 4px rgba(16, 24, 40, 0.08);
+  transition:
+    background ${tokens.motion.fast} ease,
+    transform ${tokens.motion.fast} ease;
+
+  &:hover {
+    background: ${tokens.color.accentHover};
+    transform: translateY(-1px);
+  }
+
+  &:active {
+    transform: translateY(0);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 3px rgba(79, 70, 229, 0.32),
+      0 8px 18px rgba(79, 70, 229, 0.32);
+  }
+
+  .label {
+    display: inline-block;
+  }
+
+  ${media.mobile} {
+    right: 16px;
+    bottom: 80px; /* 모바일 하단 네비 바 위에 떠 있도록 띄움. */
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    border-radius: 50%;
+    /* 모바일은 SVG 아이콘만. 텍스트는 시각적으로 숨기되 스크린리더용으로 aria-label 유지. */
+    .label {
+      display: none;
+    }
+  }
 `;
 
 const SearchScopeBar = styled.div`
@@ -209,6 +276,19 @@ export const TransactionsPage: React.FC = () => {
   // 필터 상태는 모두 페이지 상단에서 관리해서 표와 상세 패널이 같은 기준을 보게 합니다.
   const location = useLocation();
   const navigate = useNavigate();
+  /**
+   * 진입 시 location.state.scrollToTransactionId 가 있으면 그 거래의 id 를 첫 렌더부터
+   * highlightId 로 잡습니다 (2026-04-28 회귀 수정).
+   * 이전엔 useEffect 로 "첫 렌더 → 그 다음 렌더에서 highlight 세팅" 순서였는데, 그 사이에
+   * 대상 행이 rowEnter 페이드 애니메이션을 한 번 시작했다가 highlight 펄스로 바꿔치기 돼서
+   * 사용자에게 "행이 가만히 있지 못하고 재렌더링되는" 것처럼 보였습니다.
+   */
+  const initialScrollToId = useMemo<string | null>(() => {
+    const state = location.state as { scrollToTransactionId?: string } | null;
+    return state?.scrollToTransactionId ?? null;
+    // 이 값은 마운트 시점의 navigation state 만 반영하면 되므로 의존성 비어있음.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   // 진입 시 디폴트 월은 "오늘 시점의 현재 월". 과거 목업처럼 특정 월에 고정되지 않습니다.
   const [month, setMonth] = useState(() => getCurrentMonthKey());
   const [search, setSearch] = useState("");
@@ -217,6 +297,14 @@ export const TransactionsPage: React.FC = () => {
   const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
   const [installmentFilter, setInstallmentFilter] = useState<InstallmentFilter>("all");
+  /**
+   * 반복결제·분석 카드에서 가맹점명 검색으로 진입했을 때 추가로 적용할 "동일 일자(±2일)"
+   * 필터의 기준 day-of-month. 검증된 반복결제 클릭 시 같이 들어옴(2026-04-28).
+   * null 이면 동일 일자 필터 비활성화. filteredRows useMemo 가 참조하므로 그보다 위에 선언.
+   */
+  const [recurringDayFilter, setRecurringDayFilter] = useState<number | null>(null);
+  /** 거래 추가 FAB → QuickAddModal 노출 여부. 닫으면 자동 false. */
+  const [quickAddOpen, setQuickAddOpen] = useState(false);
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
@@ -247,8 +335,8 @@ export const TransactionsPage: React.FC = () => {
   );
   const searchScopeRange = useMemo(() => getSearchScopeRange(allRows), [allRows]);
   const summary = useMemo(
-    () => buildTransactionSummary(monthRows, prevMonthRows),
-    [monthRows, prevMonthRows]
+    () => buildTransactionSummary(monthRows, prevMonthRows, allRows),
+    [monthRows, prevMonthRows, allRows]
   );
 
   const filteredRows = useMemo(() => {
@@ -287,6 +375,17 @@ export const TransactionsPage: React.FC = () => {
         return false;
       }
 
+      // 정기결제 클릭으로 진입한 경우만 동일 일자(±2일) 필터 추가 적용. 일반 검색에는 영향 없음.
+      if (recurringDayFilter !== null) {
+        const dayMatch = row.date.match(/[./-](\d{1,2})$/);
+        const day = dayMatch ? Number(dayMatch[1]) : null;
+        if (day === null) return false;
+        const diff = Math.abs(day - recurringDayFilter);
+        // 월말 31일 ↔ 1일 같은 wrap-around 도 허용 — 31일 결제가 다음 달 1일로 슬립되는 케이스.
+        const wrapDiff = Math.min(diff, 31 - diff);
+        if (wrapDiff > 2) return false;
+      }
+
       if (!query) {
         return true;
       }
@@ -309,7 +408,7 @@ export const TransactionsPage: React.FC = () => {
       return sortOrder === "desc" ? -diff : diff;
     });
     return sorted;
-  }, [allRows, category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  }, [allRows, category, installmentFilter, monthRows, platform, recurringDayFilter, search, sortOrder, statusFilter, typeFilter]);
   const searchScopeHint = useMemo(() => {
     if (search.trim().length === 0 || !searchScopeRange) return "";
     return `전체 검색 · ${searchScopeRange.min} ~ ${searchScopeRange.max} 데이터에서 ${filteredRows.length}건 찾았어요`;
@@ -318,13 +417,16 @@ export const TransactionsPage: React.FC = () => {
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // 외부 진입(scrollToTransactionId) 의 경우 첫 렌더부터 selectedId 를 잡아둬, 상세 패널이
+  // 마운트 시점에 이미 열린 상태로 그려지도록 합니다(rowEnter 와의 간섭 회피 + 깜빡임 차단).
+  const [selectedId, setSelectedId] = useState<string | null>(initialScrollToId);
   /**
    * 홈 "최근 거래" 등 다른 화면에서 특정 거래로 진입했을 때 그 행을 부드럽게 스크롤하고
    * 잠깐 강조하기 위한 상태. highlightId 는 강조 대상 행의 id, pulseToken 은 같은 id 가
    * 연달아 들어와도 펄스를 다시 트리거하기 위한 단조 증가 카운터.
+   * initialScrollToId 가 있으면 첫 렌더부터 highlightId 를 잡아 대상 행이 rowEnter 를 건너뛰게 합니다.
    */
-  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<string | null>(initialScrollToId);
   const [pulseToken, setPulseToken] = useState(0);
 
   const resetVisibleCount = useCallback(() => {
@@ -338,6 +440,8 @@ export const TransactionsPage: React.FC = () => {
 
   const handleSearchChange = useCallback((nextSearch: string) => {
     setSearch(nextSearch);
+    // 사용자가 검색어를 직접 손대면 정기결제에서 따라온 동일 일자 필터는 해제 — 더 자유로운 검색 모드.
+    setRecurringDayFilter(null);
     resetVisibleCount();
   }, [resetVisibleCount]);
 
@@ -481,12 +585,40 @@ export const TransactionsPage: React.FC = () => {
   }, []);
 
   /**
+   * 반복결제 페이지·분석 카드에서 location.state.searchTransactionName 으로 진입한 경우.
+   * 검색창에 가맹점명을 채워 그 결제와 관련된 모든 거래(과거·현재) 를 한 번에 볼 수 있게 합니다.
+   * 동선상 다른 필터는 초기화해 검색 결과가 가려지지 않게 합니다.
+   * recurringDay 가 같이 오면 day-of-month ±2일 필터도 켭니다.
+   */
+  useEffect(() => {
+    const state = location.state as {
+      searchTransactionName?: string;
+      recurringDay?: number;
+    } | null;
+    const name = state?.searchTransactionName?.trim();
+    if (!name) return;
+    setSearch(name);
+    setTypeFilter("all");
+    setPlatform("all");
+    setCategory("all");
+    setStatusFilter("all");
+    setInstallmentFilter("all");
+    setRecurringDayFilter(
+      typeof state?.recurringDay === "number" ? state.recurringDay : null,
+    );
+    // 검색 진입은 월 필터를 풀어 줘야 과거 거래까지 다 보임. month 는 그대로 두지만
+    // 사용자가 원하면 직접 다른 달로 이동 가능.
+    setVisibleCount(INITIAL_VISIBLE);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
+  /**
    * 홈 "최근 거래"·소비분석 등에서 location.state.scrollToTransactionId 로 진입한 경우의 처리.
    * 편집 모달은 띄우지 않고, 대상 거래가 표에 보이도록 다음을 강제합니다:
    *   1) 검색·유형·플랫폼·카테고리·상태·할부 필터 모두 초기화 (필터로 가려져 있으면 안 보이니까)
    *   2) 거래 일자에 맞춰 month 동기화 + visibleCount 리셋
    *   3) selectedId = 대상 id (오른쪽 상세 패널 열기, 모바일은 아코디언 열기)
-   *   4) highlightId / pulseToken 갱신 → TransactionTable 이 ref 로 scrollIntoView + 펄스
+   *   4) highlightId / pulseToken 갱신 → TransactionTable 이 ref 로 scrollIntoView
    * 처리 후 navigate replace 로 state 를 비워 새로고침·뒤로가기 시 다시 트리거되지 않게 합니다.
    */
   useEffect(() => {
@@ -662,6 +794,7 @@ export const TransactionsPage: React.FC = () => {
             )}
             <TransactionTable
               rows={visibleRows}
+              allRows={allRows}
               totalCount={filteredRows.length}
               selectedId={selected?.id ?? ""}
               onSelect={handleSelectRow}
@@ -688,6 +821,45 @@ export const TransactionsPage: React.FC = () => {
           </PanelSlot>
         </Body>
       </Grid>
+      <FabAddButton
+        type="button"
+        aria-label="새 거래 추가"
+        title="새 거래 추가"
+        onClick={() => setQuickAddOpen(true)}
+      >
+        <svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true">
+          <path
+            d="M7 3V11M3 7H11"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+          />
+        </svg>
+        <span className="label">거래 추가</span>
+      </FabAddButton>
+      {quickAddOpen && (
+        <QuickAddModal
+          onClose={() => setQuickAddOpen(false)}
+          onSubmit={(row) => {
+            transactionsStore.addFromManual(row);
+            setQuickAddOpen(false);
+            // 저장된 행의 월로 자동 점프해 사용자가 결과를 즉시 확인할 수 있게.
+            const key = toMonthKey(row.date);
+            if (key) {
+              setMonth(key);
+              resetVisibleCount();
+            }
+            setSelectedId(row.id);
+            setHighlightId(row.id);
+            setPulseToken((c) => c + 1);
+          }}
+          onOpenFullForm={() => {
+            setQuickAddOpen(false);
+            navigate("/manual-entry");
+          }}
+        />
+      )}
       {editTarget && (
         <TransactionEditModal
           key={editEpoch}

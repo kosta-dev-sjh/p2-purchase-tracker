@@ -16,10 +16,13 @@ import {
 import { httpsCallable } from "firebase/functions";
 import { auth, functions } from "./firebase";
 import { authStore } from "../stores/authStore";
-import { normalizeAuthError } from "./authError";
 import { categoriesStore, DEFAULT_CATEGORIES } from "../stores/categoriesStore";
 import { profileStore, DEFAULT_PROFILE } from "../stores/profileStore";
 import { transactionsStore } from "../stores/transactionsStore";
+import {
+  clearBackgroundSyncIssue,
+  reportBackgroundSyncIssue,
+} from "./firebaseBackgroundSync";
 import { aiInsightsStore } from "../stores/aiInsightsStore";
 import {
   bootstrapCategories,
@@ -162,37 +165,57 @@ export function startFirebaseSync(): void {
       if (!user) {
         authStore.setUnauthenticated();
         authStore.clearError();
+        clearBackgroundSyncIssue();
         resetLocalState();
         return;
       }
 
       authStore.setAuthenticated(user);
-      await ensureBootstrap(user);
-      const restoreResult = await restorePendingDeletionIfNeeded();
-      if (restoreResult.status === "purged") {
-        await signOut(auth);
-        return;
+      authStore.clearError();
+      clearBackgroundSyncIssue();
+
+      try {
+        await ensureBootstrap(user);
+      } catch (error) {
+        reportBackgroundSyncIssue(error);
       }
 
-      stopProfile = subscribeUserProfile(user.uid, (partial) => {
-        profileStore.hydrate({ ...DEFAULT_PROFILE, ...partial });
-      });
-      stopCategories = subscribeCategories(user.uid, (items) => {
-        categoriesStore.hydrate(items.length > 0 ? items : [...DEFAULT_CATEGORIES]);
-      });
-      stopTransactions = subscribeTransactions(user.uid, (rows) => {
-        transactionsStore.hydrate(rows);
-      });
-    } catch (error) {
-      const normalized = normalizeAuthError(error, "auth-session");
-      authStore.setError(normalized.message);
-      authStore.setUnauthenticated();
-      resetLocalState();
       try {
-        await signOut(auth);
-      } catch {
-        // 이미 세션이 정리된 경우는 무시합니다.
+        const restoreResult = await restorePendingDeletionIfNeeded();
+        if (restoreResult.status === "purged") {
+          await signOut(auth);
+          return;
+        }
+      } catch (error) {
+        reportBackgroundSyncIssue(error);
       }
+
+      stopProfile = subscribeUserProfile(
+        user.uid,
+        (partial) => {
+          clearBackgroundSyncIssue();
+          profileStore.hydrate({ ...DEFAULT_PROFILE, ...partial });
+        },
+        reportBackgroundSyncIssue,
+      );
+      stopCategories = subscribeCategories(
+        user.uid,
+        (items) => {
+          clearBackgroundSyncIssue();
+          categoriesStore.hydrate(items.length > 0 ? items : [...DEFAULT_CATEGORIES]);
+        },
+        reportBackgroundSyncIssue,
+      );
+      stopTransactions = subscribeTransactions(
+        user.uid,
+        (rows) => {
+          clearBackgroundSyncIssue();
+          transactionsStore.hydrate(rows);
+        },
+        reportBackgroundSyncIssue,
+      );
+    } catch (error) {
+      reportBackgroundSyncIssue(error);
     }
   });
 }

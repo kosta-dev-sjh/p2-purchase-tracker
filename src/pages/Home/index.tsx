@@ -111,7 +111,17 @@ export const HomePage: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
 
   useEffect(() => {
-    const monthRows = rows.filter(r => r.date.startsWith(month));
+    /*
+     * month 는 "YYYY-MM"(대시) 인데 TxRow.date 는 "YYYY.MM.DD"(점) 컨벤션이라,
+     * 예전엔 `r.date.startsWith(month)` 로 비교해 항상 false → AI 호출이 영구히 막혀
+     * ✨ 인사이트 블록이 안 뜨는 회귀가 있었습니다.
+     * buildHomeData 의 toMonthKey 와 동일한 정규식으로 정규화해 비교합니다.
+     * 점·대시·슬래시 어떤 구분자라도 매칭됩니다.
+     */
+    const monthRows = rows.filter((r) => {
+      const m = r.date.match(/^(\d{4})[./-](\d{1,2})/);
+      return m ? `${m[1]}-${m[2].padStart(2, "0")}` === month : false;
+    });
     if (monthRows.length === 0) return;
 
     // 데이터 변동 감지를 위한 지문(Hash) 생성: 건수 + 총액

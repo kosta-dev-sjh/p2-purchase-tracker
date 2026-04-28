@@ -128,8 +128,21 @@ function normalizeDate(raw: unknown): string | null {
   return `${year}.${month.padStart(2, "0")}.${day.padStart(2, "0")}`;
 }
 
+/**
+ * status 추론.
+ *
+ * 입력은 statusRaw + cancellationRaw 를 합친 한 문자열입니다(현재 호출부 형태 유지).
+ * 추가 회귀(2026-04-28): 롯데카드 "취소여부" 컬럼은 명시적 Y/N 토글로 내려옵니다.
+ *   취소여부 = "Y" → cancel
+ *   취소여부 = "N" → 일반 구매
+ * 기존 정규식 `/취소|거절/` 는 한국어 문자열만 매치해 Y/N 을 놓쳤고, 결과적으로
+ * 실제 취소된 거래가 일반 구매로 import 되어 합계가 어긋나는 회귀가 있었습니다.
+ * 단어 경계로 isolated "Y" 만 잡고, "Yummy" 같이 다른 셀에 우연히 들어간 Y 와는
+ * 구분합니다(공백·구분자 양쪽으로 둘러싸인 단독 Y/y).
+ */
 function inferStatus(statusRaw: string, amount: number): TxStatus {
   if (/취소|거절/.test(statusRaw)) return "cancel";
+  if (/(^|\s)[Yy](\s|$)/.test(statusRaw)) return "cancel";
   if (/환불|반품/.test(statusRaw)) return "refund";
   if (amount < 0) return "refund";
   return "purchase";
@@ -200,10 +213,12 @@ function parsePaymentMode(
   if (/할부/.test(normalized) || (months !== null && months > 1) || cycle) {
     return "installment";
   }
-  if (/일시불/.test(normalized) || months === 0 || months === 1) {
-    return "lump_sum";
-  }
-  return "unknown";
+  /*
+   * 한국 카드사 CSV 는 할부일 때 "할부"·할부개월·회차 중 하나가 항상 붙습니다.
+   * 그 신호가 없으면 일시불로 보는 게 합리적 — 사용자 결정(2026-04-28). 이전엔 모호한
+   * 입력이 "unknown" 으로 떨어져 거래 상세에 "미기록" 으로 보여서 혼란을 줬어요.
+   */
+  return "lump_sum";
 }
 
 function looksLikeSummaryRow(raw: CsvRow, merchantRaw: string, dateRaw: string): boolean {
@@ -240,8 +255,24 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
     const billedAmountRaw = pickFirstValue(raw, BILLING_AMOUNT_HEADERS);
     const categoryRaw = pickFirstValue(raw, CATEGORY_HEADERS);
     const statusRaw = pickFirstValue(raw, STATUS_HEADERS);
-    const paymentModeRaw = pickFirstValue(raw, PAYMENT_MODE_HEADERS);
-    const installmentMonthsRaw = pickFirstValue(raw, INSTALLMENT_MONTHS_HEADERS);
+    /*
+     * AI 폴백(2026-04-28): 카드사 헤더가 표준 양식과 어긋나 PAYMENT_MODE/INSTALLMENT
+     * 헤더가 시트 전체에서 0건 매칭이면, fileImport 의 gate 가 시트의 모든 행에
+     * `__ai_paymentMode` / `__ai_installmentMonths` 합성 키를 미리 채워서 옵니다.
+     * 정식 헤더가 매칭되면 그 값이 우선이고, 비어 있을 때만 AI 값을 폴백으로 씁니다 —
+     * "AI 가 손댄 것처럼 보여주는 거짓말" 회피.
+     */
+    let paymentModeRaw = pickFirstValue(raw, PAYMENT_MODE_HEADERS);
+    let installmentMonthsRaw = pickFirstValue(raw, INSTALLMENT_MONTHS_HEADERS);
+    let aiApplied = false;
+    if (!paymentModeRaw && raw.__ai_paymentMode) {
+      paymentModeRaw = String(raw.__ai_paymentMode);
+      aiApplied = true;
+    }
+    if (!installmentMonthsRaw && raw.__ai_installmentMonths) {
+      installmentMonthsRaw = String(raw.__ai_installmentMonths);
+      aiApplied = true;
+    }
     const installmentCycleRaw = pickFirstValue(raw, INSTALLMENT_CYCLE_HEADERS);
     const approvalNumberRaw = pickFirstValue(raw, APPROVAL_NUMBER_HEADERS);
     const dueDateRaw = pickFirstValue(raw, PAYMENT_DUE_DATE_HEADERS);
@@ -257,8 +288,18 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
     const date = normalizeDate(dateRaw);
     const amount = parseAmount(amountRaw);
     const billedAmount = parseAmount(billedAmountRaw);
-    const installmentMonths = parsePositiveInteger(installmentMonthsRaw);
+    const installmentMonthsRawParsed = parsePositiveInteger(installmentMonthsRaw);
     const installmentCycle = parseInstallmentCycle(installmentCycleRaw);
+    /*
+     * 할부개월 헤더가 없는 카드사 (예: NH 청구내역) 도 회차 표기(예: "5/5") 만으로 총 회차 =
+     * 할부 개월수임을 알 수 있습니다(2026-04-28). 헤더 누락 케이스의 회귀 차단 — 이전엔
+     * installmentMonths 가 null 이라 거래 상세·편집 모달에서 할부개월이 빈 값으로 보였어요.
+     */
+    const installmentMonths =
+      installmentMonthsRawParsed ??
+      (installmentCycle && installmentCycle.total > 0
+        ? installmentCycle.total
+        : null);
     const remainingBalance = parseAmount(remainingBalanceRaw);
     const paymentMode = parsePaymentMode(paymentModeRaw, installmentMonths, installmentCycle);
     const recordKind = inferCardRecordKind({
@@ -341,6 +382,7 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
           ...(fingerprintParts.length > 0
             ? { rawRowFingerprint: fingerprintParts.join("|") }
             : {}),
+          ...(aiApplied ? { aiApplied: true } : {}),
         },
       },
     };

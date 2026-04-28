@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.geminiProxy = exports.purgeExpiredDeletedAccounts = exports.restorePendingDeletion = exports.deleteAccount = void 0;
+exports.geminiProxy = exports.purgeExpiredDeletedAccounts = exports.updateNickname = exports.restorePendingDeletion = exports.deleteAccount = void 0;
 const generative_ai_1 = require("@google/generative-ai");
 const app_1 = require("firebase-admin/app");
 const auth_1 = require("firebase-admin/auth");
@@ -15,6 +15,13 @@ const adminDb = (0, firestore_1.getFirestore)();
 const RECENT_AUTH_MAX_AGE_SECONDS = 10 * 60;
 const ACCOUNT_DELETION_GRACE_DAYS = 7;
 const ACCOUNT_DELETION_GRACE_MS = ACCOUNT_DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000;
+// 닉네임 변경 쿨다운(서버 강제). 빈번한 변경(임퍼소네이션, 봇 어뷰즈) 방어가 목적이라
+// 클라이언트 disable 만으로는 부족합니다. 모든 nickname 쓰기는 updateNickname callable
+// 을 통해서만 통과시키고, Firestore users/{uid}.nicknameChangedAt 와 비교해 실패시킵니다.
+const NICKNAME_COOLDOWN_HOURS = 24;
+const NICKNAME_COOLDOWN_MS = NICKNAME_COOLDOWN_HOURS * 60 * 60 * 1000;
+const NICKNAME_MIN_LENGTH = 1;
+const NICKNAME_MAX_LENGTH = 20;
 const FAST_GENERATION_CONFIG = {
     temperature: 0,
     topP: 0.1,
@@ -444,6 +451,74 @@ ${productsBlock}`;
     });
     return { products, changedIds: [...changedIds] };
 }
+/**
+ * 카드 행 결제 방식 분류(시트당 1회 호출).
+ *
+ * 정책(2026-04-28):
+ * - 클라이언트의 gate 가 일시불/할부 헤더 미매칭 시트에서만 호출.
+ * - paymentMode 는 lump_sum / installment 둘 중 하나로 강제 (불확실하면 lump_sum).
+ *   카드사 헤더가 빠진 케이스라도 사용자에게 "수상한 미분류" 가 남지 않게 폴백.
+ * - installmentMonths 는 installment 행에만 정수로(>=2). 그 외엔 미설정.
+ * - 5만원 미만 + 단서 없음 → lump_sum (한국 카드사 정책 — 할부 불가).
+ * - 단서 종류: 행 본문에 "할부", "무이자할부", "분할", "회차", "N개월" 등.
+ */
+async function runClassifyCardRows(input) {
+    if (!Array.isArray(input.rows) || input.rows.length === 0)
+        return { rows: [] };
+    const model = createModel();
+    const block = input.rows
+        .map((r, i) => {
+        const ext = r.extras
+            ? Object.entries(r.extras)
+                .map(([k, v]) => `${k}=${v}`)
+                .join(", ")
+            : "";
+        return `${i + 1}. id=${r.id} | date=${r.date ?? ""} | merchant=${r.merchant ?? ""} | amount=${r.amount ?? ""}${ext ? " | " + ext : ""}`;
+    })
+        .join("\n");
+    const prompt = `너는 한국 카드사 이용내역 행을 보고 결제 방식을 분류하는 추출기다.
+헤더가 표준 양식과 달라 일시불/할부 컬럼이 자동 매핑되지 않은 파일이라, 행마다 단서로 추론한다.
+
+규칙(엄격히 준수):
+- 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
+- 각 라인 형식: \`id|paymentMode|installmentMonths\`
+- id 는 입력과 글자 단위로 정확히 같게 복사한다.
+- paymentMode 는 정확히 \`lump_sum\` 또는 \`installment\` 중 하나. 확신 없으면 \`lump_sum\`.
+- installmentMonths 는 할부일 때만 총 개월 수 정수(>=2). 일시불이면 빈칸.
+- "할부", "무이자할부", "분할", "리볼빙", "회차", "N개월" 같은 단서가 있으면 installment.
+- amount(쉼표 제거 후) 가 50000 미만이고 단서 없으면 lump_sum (한국 카드사 정책 — 할부 불가).
+- 단서가 전혀 없으면 lump_sum.
+- 입력된 행 수만큼 정확히 그만큼의 라인을 출력한다(추가/누락 금지).
+- 헤더 라인 출력 금지. 첫 라인부터 데이터.
+
+행:
+${block}`;
+    const result = await model.generateContent(prompt);
+    const text = (await result.response.text()).trim();
+    const out = [];
+    const inputIds = new Set(input.rows.map((r) => r.id));
+    for (const rawLine of text.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("```") || line.startsWith("#"))
+            continue;
+        const cols = line.split("|").map((c) => c.trim());
+        if (cols.length < 2)
+            continue;
+        const [id, modeRaw, monthsStr] = cols;
+        if (!inputIds.has(id))
+            continue;
+        const paymentMode = modeRaw === "installment" ? "installment" : "lump_sum";
+        let installmentMonths;
+        if (paymentMode === "installment" && monthsStr) {
+            const m = monthsStr.match(/\d+/);
+            const n = m ? Number(m[0]) : NaN;
+            if (Number.isFinite(n) && n >= 2)
+                installmentMonths = n;
+        }
+        out.push({ id, paymentMode, ...(installmentMonths ? { installmentMonths } : {}) });
+    }
+    return { rows: out };
+}
 exports.deleteAccount = (0, https_1.onCall)({
     region: "asia-northeast3",
     timeoutSeconds: 120,
@@ -563,6 +638,89 @@ exports.restorePendingDeletion = (0, https_1.onCall)({
         restoredAt: restoredAt.toISOString(),
     };
 });
+/**
+ * 닉네임 변경 callable.
+ *
+ * 정책(2026-04-28 합의):
+ * - 클라이언트의 nickname 직접 쓰기를 막고, 모든 변경은 이 함수만 통과합니다.
+ * - 같은 사용자가 24시간 안에 다시 변경할 수 없습니다(쿨다운).
+ * - 트리밍 후 길이 1~20자만 허용하고, 그 외 입력은 invalid-argument 로 반려합니다.
+ * - 동일 닉네임으로의 "변경"은 쿨다운을 갱신하지 않고 noop 으로 둡니다(공격용 더미
+ *   업데이트로 쿨다운을 리셋시키는 우회를 방지).
+ * - 트랜잭션 안에서 nicknameChangedAt 와 비교 + 갱신을 한 번에 수행해, 동시 호출에서도
+ *   하나만 통과합니다.
+ */
+exports.updateNickname = (0, https_1.onCall)({
+    region: "asia-northeast3",
+    timeoutSeconds: 30,
+    memory: "256MiB",
+    invoker: "public",
+    cors: true,
+}, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "로그인된 사용자만 닉네임을 변경할 수 있습니다.");
+    }
+    const raw = request.data?.nickname;
+    if (typeof raw !== "string") {
+        throw new https_1.HttpsError("invalid-argument", "닉네임 값이 올바르지 않습니다.");
+    }
+    const next = raw.trim();
+    if (next.length < NICKNAME_MIN_LENGTH || next.length > NICKNAME_MAX_LENGTH) {
+        throw new https_1.HttpsError("invalid-argument", `닉네임은 ${NICKNAME_MIN_LENGTH}~${NICKNAME_MAX_LENGTH}자 사이여야 합니다.`);
+    }
+    // 줄바꿈/제어문자 차단. 닉네임에 들어갈 이유가 없고, UI 에서 표시 깨짐의 원인이 됩니다.
+    if (/[\x00-\x1f\x7f]/.test(next)) {
+        throw new https_1.HttpsError("invalid-argument", "닉네임에 사용할 수 없는 문자가 포함돼 있어요.");
+    }
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const now = Date.now();
+    // 트랜잭션으로 cooldown 검사 + 쓰기를 원자화해, 동시에 들어온 두 요청 중 하나만 성공.
+    const result = await adminDb.runTransaction(async (tx) => {
+        const snap = await tx.get(userRef);
+        if (!snap.exists) {
+            // 정상 흐름이면 bootstrap 이 끝난 뒤이므로 doc 이 있어야 합니다.
+            throw new https_1.HttpsError("failed-precondition", "사용자 프로필이 아직 준비되지 않았어요.");
+        }
+        const data = snap.data() ?? {};
+        const currentNickname = typeof data.nickname === "string" ? data.nickname : "";
+        const lastChangedAt = toDateOrNull(data.nicknameChangedAt);
+        // 같은 값이면 cooldown 도 안 건드리고 그냥 끝냅니다(어뷰즈 방지 + 무의미한 쓰기 절약).
+        if (currentNickname === next) {
+            return {
+                changed: false,
+                nicknameChangedAt: lastChangedAt ? lastChangedAt.toISOString() : null,
+            };
+        }
+        if (lastChangedAt) {
+            const elapsed = now - lastChangedAt.getTime();
+            if (elapsed < NICKNAME_COOLDOWN_MS) {
+                const retryAfterMs = NICKNAME_COOLDOWN_MS - elapsed;
+                throw new https_1.HttpsError("resource-exhausted", `닉네임은 ${NICKNAME_COOLDOWN_HOURS}시간에 한 번만 변경할 수 있어요.`, {
+                    retryAfterMs,
+                    nextAvailableAt: new Date(lastChangedAt.getTime() + NICKNAME_COOLDOWN_MS).toISOString(),
+                });
+            }
+        }
+        tx.set(userRef, {
+            nickname: next,
+            nicknameChangedAt: firestore_1.FieldValue.serverTimestamp(),
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        return {
+            changed: true,
+            // 클라이언트에 즉시 보여줄 ISO. serverTimestamp 는 응답에는 안 실리니 now 를 씁니다.
+            nicknameChangedAt: new Date(now).toISOString(),
+        };
+    });
+    return {
+        ok: true,
+        changed: result.changed,
+        nickname: next,
+        nicknameChangedAt: result.nicknameChangedAt,
+        cooldownHours: NICKNAME_COOLDOWN_HOURS,
+    };
+});
 exports.purgeExpiredDeletedAccounts = (0, scheduler_1.onSchedule)({
     region: "asia-northeast3",
     schedule: "every 60 minutes",
@@ -607,6 +765,8 @@ exports.geminiProxy = (0, https_1.onCall)({
             return await runFallbackCsv(data.payload.text);
         case "fallbackOcrProducts":
             return await runFallbackOcrProducts(data.payload);
+        case "classifyCardRows":
+            return await runClassifyCardRows(data.payload);
         default:
             throw new https_1.HttpsError("invalid-argument", "지원하지 않는 AI action 입니다.");
     }

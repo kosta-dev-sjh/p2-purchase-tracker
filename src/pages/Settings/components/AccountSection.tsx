@@ -4,6 +4,7 @@
  */
 import React, { useState } from "react";
 import styled from "styled-components";
+import { PasswordTextInput } from "../../../components/form/TextInput";
 import { Button } from "../../../components/primitives/Button";
 import { tokens } from "../../../styles/tokens";
 import { SettingsBlock } from "./SettingsSection";
@@ -75,6 +76,26 @@ const Input = styled.input`
   ${media.mobile} {
     min-width: 0;
     width: 100%;
+  }
+`;
+
+const PasswordInput = styled(PasswordTextInput)`
+  flex: 1;
+  min-width: 220px;
+
+  input {
+    min-width: 220px;
+    height: 36px;
+  }
+
+  ${media.mobile} {
+    min-width: 0;
+    width: 100%;
+
+    input {
+      min-width: 0;
+      width: 100%;
+    }
   }
 `;
 
@@ -241,8 +262,7 @@ export const AccountSection: React.FC = () => {
             <div className="label">비밀번호 변경</div>
             {needsCurrentPassword && (
               <EditorRow>
-                <Input
-                  type="password"
+                <PasswordInput
                   value={currentPassword}
                   onChange={(event) => setCurrentPassword(event.target.value)}
                   placeholder="현재 비밀번호"
@@ -251,15 +271,13 @@ export const AccountSection: React.FC = () => {
               </EditorRow>
             )}
             <EditorRow>
-              <Input
-                type="password"
+              <PasswordInput
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 placeholder="새 비밀번호 (8자 이상)"
                 autoComplete="new-password"
               />
-              <Input
-                type="password"
+              <PasswordInput
                 value={confirm}
                 onChange={(event) => setConfirm(event.target.value)}
                 placeholder="새 비밀번호 확인"

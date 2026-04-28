@@ -38,19 +38,23 @@ const Brand = styled(Link)`
   text-decoration: none;
 `;
 
+/**
+ * 랜딩 헤더 로고 — 파비콘 SVG 와 통일(2026-04-28). 이전엔 "S" 글자였음.
+ * 사이드바·모바일·랜딩 모두 같은 SVG 자산을 사용해 브랜드 일관성 유지.
+ */
 const Logo = styled.div`
   display: grid;
   width: 32px;
   height: 32px;
   place-items: center;
   border-radius: 8px;
-  background: ${tokens.color.accent};
-  color: #fff;
-  font-size: 14px;
-  font-weight: 700;
-  letter-spacing: -0.02em;
-  /* 미세한 광택 그라디언트로 단조로움 제거 */
-  background-image: linear-gradient(135deg, ${tokens.color.accent}, ${tokens.color.accentActive});
+  overflow: hidden;
+
+  img {
+    width: 100%;
+    height: 100%;
+    display: block;
+  }
 `;
 
 const BrandName = styled.span`
@@ -120,7 +124,9 @@ interface Props {
 export const LandingHeader = ({ scrolled }: Props) => (
   <Wrap $scrolled={scrolled}>
     <Brand to="/">
-      <Logo>S</Logo>
+      <Logo>
+        <img src="/favicon.svg" alt="SpendTrack" />
+      </Logo>
       <BrandName>SpendTrack</BrandName>
     </Brand>
     <Actions>

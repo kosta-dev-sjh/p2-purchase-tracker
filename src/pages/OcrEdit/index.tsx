@@ -789,14 +789,26 @@ export const OcrEditPage: React.FC = () => {
           onClose={() => setSaveResult(null)}
           onConfirm={() => {
             ocrStore.clear();
-            const firstDate =
-              saveResult.savedRows[0]?.date ??
-              (saveResult.mergedActions[0]
-                ? allRows.find((r) => r.id === saveResult.mergedActions[0].existingId)?.date
-                : undefined) ??
-              saveResult.skipped[0]?.date;
+            /*
+             * OCR 은 여러 장 이미지·날짜 섞인 batch import 이라 "어느 달로 보낼지" 가 모호.
+             * 가장 자연스러운 동선: 방금 저장된 거래 중 "가장 최근 날짜" 로 점프.
+             * 사용자가 "내가 방금 추가한 게 어디 있지?" 할 때 보통 최근 항목부터 확인하므로
+             * 가장 최근으로 가는 게 맞음(2026-04-28). 첫 항목으로 가던 이전 동작은 batch
+             * 안에서 어느 게 첫 항목인지 사용자 의식 밖이라 부정확했음.
+             */
+            const candidateDates: string[] = [
+              ...saveResult.savedRows.map((r) => r.date),
+              ...saveResult.mergedActions
+                .map(
+                  (m) => allRows.find((r) => r.id === m.existingId)?.date ?? "",
+                )
+                .filter(Boolean),
+              ...saveResult.skipped.map((s) => s.date ?? "").filter(Boolean),
+            ];
+            // "YYYY.MM.DD" 문자열 정렬은 사전순 = 시간순이라 그대로 비교 OK.
+            const latestDate = candidateDates.sort().pop();
             navigate("/transactions", {
-              state: firstDate ? { targetDate: firstDate } : undefined,
+              state: latestDate ? { targetDate: latestDate } : undefined,
             });
           }}
         />

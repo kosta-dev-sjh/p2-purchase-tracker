@@ -63,25 +63,35 @@ const Row = styled.li`
   padding: 10px 12px;
   margin: 0 -12px;
   border-radius: ${tokens.radius.control};
-  transition: background ${tokens.motion.fast} ease;
   cursor: pointer;
+  /*
+   * 클릭 후 li[tabindex] 의 브라우저 기본 outline 차단. 항상 적용해야 mouseup 직후
+   * 잠깐 뜨는 것도 차단됩니다.
+   *
+   * transition 제거(2026-04-28): 이전엔 background transition 으로 hover-out 시
+   * tint → panel 페이드가 발생해, 사용자가 "클릭 후 항목이 투명해졌다 다시 올라온다"
+   * 처럼 느꼈습니다(재렌더로 오해). 호버 상태 변화는 즉시 적용되도록 transition 을 뺐어요.
+   */
+  outline: none;
 
   & + & {
     border-top: 1px solid ${tokens.color.line2};
   }
 
-  &:hover,
+  &:hover {
+    background: ${tokens.color.tint};
+    border-top-color: transparent;
+  }
+
+  &:hover + & {
+    border-top-color: transparent;
+  }
+
+  /* 키보드 포커스만 시각적 강조(마우스 클릭에는 트리거되지 않음). */
   &:focus-visible {
     background: ${tokens.color.tint};
     border-top-color: transparent;
-    outline: none;
   }
-
-  &:focus-visible {
-    box-shadow: ${tokens.shadow.focus};
-  }
-
-  &:hover + &,
   &:focus-visible + & {
     border-top-color: transparent;
   }

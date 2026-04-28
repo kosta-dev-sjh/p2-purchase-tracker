@@ -68,15 +68,17 @@ export const DEFAULT_CATEGORY_KEY = "etc" as const;
  * 표준 카테고리의 표시 순서. 모든 화면(설정·카테고리 목록, 수동입력 칩, 내역 필터)이 이 순서를
  * 공유해 페이지마다 정렬이 다르던 일관성 이슈(QA #26)를 해소합니다.
  *
- * 정책: 일상 빈도가 높은 순으로 living → fashion → digital → food, 마지막에 폴백 etc. 커스텀
- * 카테고리는 이 표 뒤에 사용자가 추가한 순으로 이어 붙입니다.
+ * 정책 (2026-04-28 수정): "기타" 가 기본 선택값이자 폴백이라 맨 앞에 둡니다. 이전엔 일상 빈도
+ * 순(living → fashion → digital → food → etc) 으로 잡았는데 "기본 선택값이 첫 자리에 있어야
+ * 사용자 시선이 자연스럽게 흐른다" 는 사용자 결정을 반영. 커스텀 카테고리는 표준 5개 뒤에
+ * 사용자가 추가한 순으로 이어 붙입니다.
  */
 export const STANDARD_CATEGORY_ORDER = [
+  "etc",
   "living",
   "fashion",
   "digital",
   "food",
-  "etc",
 ] as const;
 
 /**

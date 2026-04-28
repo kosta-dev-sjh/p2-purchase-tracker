@@ -23,6 +23,7 @@ import {
   normalizeTransactionRows,
 } from "../utils/transactionNormalize";
 import { auth } from "../lib/firebase";
+import { trackBackgroundSync } from "../lib/firebaseBackgroundSync";
 import {
   addTransactions,
   removeTransaction,
@@ -241,7 +242,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: normalized });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void replaceTransactions(uid, normalized);
+      trackBackgroundSync(replaceTransactions(uid, normalized));
     }
   },
   addFromImport: (rows) => {
@@ -251,7 +252,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, enriched);
+      trackBackgroundSync(addTransactions(uid, enriched));
     }
   },
   addFromManual: (row) => {
@@ -262,7 +263,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     learnMerchantTemplate(deriveMerchantTemplateKeys(normalized), normalized);
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [normalized]);
+      trackBackgroundSync(addTransactions(uid, [normalized]));
     }
   },
   addMany: (rows) => {
@@ -272,7 +273,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, enriched);
+      trackBackgroundSync(addTransactions(uid, enriched));
     }
   },
   addOne: (row) => {
@@ -282,7 +283,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void addTransactions(uid, [normalized]);
+      trackBackgroundSync(addTransactions(uid, [normalized]));
     }
   },
   updateOne: (id, patch) => {
@@ -294,7 +295,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void updateTransaction(uid, id, patch);
+      trackBackgroundSync(updateTransaction(uid, id, patch));
     }
 
     // 사용자가 카테고리를 명시적으로 바꾼 경우만 학습 캐시에 기록합니다.
@@ -332,7 +333,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: next });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void removeTransaction(uid, id);
+      trackBackgroundSync(removeTransaction(uid, id));
     }
   },
   appendItemsToTransaction: (id, items, source = "OCR") => {
@@ -354,7 +355,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     if (uid) {
       const updated = next.find((row) => row.id === id);
       if (updated) {
-        void updateTransaction(uid, id, updated);
+        trackBackgroundSync(updateTransaction(uid, id, updated));
       }
     }
   },
@@ -363,7 +364,7 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     set({ rows: [] });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void replaceTransactions(uid, []);
+      trackBackgroundSync(replaceTransactions(uid, []));
     }
     return [];
   },

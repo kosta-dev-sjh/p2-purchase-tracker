@@ -7,7 +7,7 @@ import styled from "styled-components";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
-import { TextInput } from "../../../components/form/TextInput";
+import { PasswordTextInput, TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
 import { normalizeAuthError } from "../../../lib/authError";
 import { PasswordStrength } from "./PasswordStrength";
@@ -22,6 +22,30 @@ interface RegisterFieldErrors {
   agree?: string;
 }
 
+function getRegisterNameError(name: string): string | undefined {
+  const trimmedName = name.trim();
+  if (!trimmedName) return "이름을 입력해 주세요.";
+  if (/\s/.test(trimmedName)) return "이름에 공백을 포함할 수 없어요.";
+  if (trimmedName.length < 2) return "이름은 2자 이상 입력해 주세요.";
+  return undefined;
+}
+
+function getRegisterEmailError(email: string): string | undefined {
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) return "이메일을 입력해 주세요.";
+  if (/\s/.test(email)) return "이메일에 공백을 포함할 수 없어요.";
+  if (!/.+@.+\..+/.test(trimmedEmail)) return "이메일 형식이 맞지 않습니다.";
+  return undefined;
+}
+
+function getRegisterPasswordError(password: string): string | undefined {
+  if (!password) return "비밀번호를 입력해 주세요.";
+  if (/\s/.test(password)) return "비밀번호에 공백을 포함할 수 없어요.";
+  if (password.length < 8) return "비밀번호는 8자 이상이어야 해요.";
+  if (!/\d/.test(password)) return "비밀번호에 숫자를 포함해 주세요.";
+  return undefined;
+}
+
 function validateRegisterFields(
   name: string,
   email: string,
@@ -29,37 +53,16 @@ function validateRegisterFields(
   agreed: boolean,
 ): RegisterFieldErrors {
   const errors: RegisterFieldErrors = {};
-  const trimmedName = name.trim();
-  const trimmedEmail = email.trim();
+  const nameError = getRegisterNameError(name);
+  const emailError = getRegisterEmailError(email);
+  const passwordError = getRegisterPasswordError(password);
 
   if (!agreed) {
     errors.agree = "이용약관과 개인정보 처리방침에 동의하셔야 회원가입이 가능합니다.";
   }
-  if (!trimmedName) {
-    errors.name = "이름을 입력해 주세요.";
-  } else if (/\s/.test(trimmedName)) {
-    errors.name = "이름에 공백을 포함할 수 없어요.";
-  } else if (trimmedName.length < 2) {
-    errors.name = "이름은 2자 이상 입력해 주세요.";
-  }
-
-  if (!trimmedEmail) {
-    errors.email = "이메일을 입력해 주세요.";
-  } else if (/\s/.test(email)) {
-    errors.email = "이메일에 공백을 포함할 수 없어요.";
-  } else if (!/.+@.+\..+/.test(trimmedEmail)) {
-    errors.email = "이메일 형식이 맞지 않습니다.";
-  }
-
-  if (!password) {
-    errors.password = "비밀번호를 입력해 주세요.";
-  } else if (/\s/.test(password)) {
-    errors.password = "비밀번호에 공백을 포함할 수 없어요.";
-  } else if (password.length < 8) {
-    errors.password = "비밀번호는 8자 이상이어야 해요.";
-  } else if (!/\d/.test(password)) {
-    errors.password = "비밀번호에 숫자를 포함해 주세요.";
-  }
+  if (nameError) errors.name = nameError;
+  if (emailError) errors.email = emailError;
+  if (passwordError) errors.password = passwordError;
 
   return errors;
 }
@@ -90,8 +93,10 @@ const Agree = styled.label`
   }
 `;
 
-const PasswordInput = styled(TextInput)`
-  letter-spacing: 0.08em;
+const PasswordInput = styled(PasswordTextInput)`
+  input {
+    letter-spacing: 0.08em;
+  }
 `;
 
 const Divider = styled.div`
@@ -181,8 +186,13 @@ export const RegisterForm: React.FC = () => {
             autoComplete="name"
             value={name}
             onChange={(event) => {
-              setErrors((current) => ({ ...current, name: undefined, form: undefined }));
-              setName(event.target.value);
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                name: getRegisterNameError(nextValue),
+                form: undefined,
+              }));
+              setName(nextValue);
             }}
           />
         </FormField>
@@ -193,8 +203,13 @@ export const RegisterForm: React.FC = () => {
             autoComplete="email"
             value={email}
             onChange={(event) => {
-              setErrors((current) => ({ ...current, email: undefined, form: undefined }));
-              setEmail(event.target.value);
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                email: getRegisterEmailError(nextValue),
+                form: undefined,
+              }));
+              setEmail(nextValue);
             }}
           />
         </FormField>
@@ -204,13 +219,17 @@ export const RegisterForm: React.FC = () => {
           errorText={errors.password}
         >
           <PasswordInput
-            type="password"
             placeholder="8자 이상, 숫자 포함"
             autoComplete="new-password"
             value={password}
             onChange={(event) => {
-              setErrors((current) => ({ ...current, password: undefined, form: undefined }));
-              setPassword(event.target.value);
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                password: getRegisterPasswordError(nextValue),
+                form: undefined,
+              }));
+              setPassword(nextValue);
             }}
           />
           <PasswordStrength value={password} />
