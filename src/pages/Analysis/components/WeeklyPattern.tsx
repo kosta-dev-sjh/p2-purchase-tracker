@@ -46,13 +46,16 @@ interface WeeklyPatternProps {
   subtitle?: string;
 }
 
-/**
- * 차트 높이는 바 140px + 상단 라벨(k 단위) 여유 + 하단 요일 라벨을 포함해 ~180px로 고정.
- * 기존 div 레이아웃과 같은 크기감을 유지합니다.
+/*
+ * 차트 높이(2026-04-28 사용자 피드백): 양옆 카드(반복구매 TOP5 / 정기결제) 와 시각 높이가
+ * 맞아야 카드 위·아래 공백이 사라집니다. 이전 180px 는 카드 안에서 차트가 작아 위·아래로
+ * 큰 빈 공간이 보였어요. 240px 로 늘려 막대 자체가 카드 본문을 채우도록 합니다.
+ *
+ * note(하단 한 줄 설명) 와 합쳐 카드 전체 높이가 양옆과 비슷하게 맞아 떨어지는 값.
  */
 const ChartWrap = styled.div`
-  height: 180px;
-  /* recharts LabelList가 잘리지 않도록 살짝 여유를 둡니다. */
+  height: 240px;
+  /* recharts LabelList가 잘리지 않게 살짝 여유. */
   margin: -4px -8px 0;
 `;
 
@@ -124,13 +127,13 @@ export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note, subtit
       </CardHd>
       <CardBd>
         <ChartWrap>
-          {/* initialDimension 으로 첫 동기 렌더 -1 워닝 차단. ChartWrap height 180 과 동일. */}
+          {/* initialDimension 으로 첫 동기 렌더 -1 워닝 차단. ChartWrap height 240 과 동일. */}
           <ResponsiveContainer
             width="100%"
             height="100%"
-            minHeight={180}
+            minHeight={240}
             minWidth={1}
-            initialDimension={{ width: 1, height: 180 }}
+            initialDimension={{ width: 1, height: 240 }}
           >
             <BarChart
               data={days}

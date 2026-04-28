@@ -585,6 +585,36 @@ export const TransactionsPage: React.FC = () => {
   }, []);
 
   /**
+   * 분석 페이지의 EssentialStrip(공과금·관리비·교육비·정기결제 카드) 클릭 진입 처리(2026-04-28).
+   *
+   * state.presetCategory 가 들어오면 카테고리 필터로, presetStatus="sub" 가 들어오면 상태
+   * 필터로 좁힙니다. 사용자가 보고 있던 month 도 같이 동기화해 같은 달 거래만 노출.
+   * searchTransactionName 핸들러와 분리한 이유는 진입 의도가 다르기 때문 — 가맹점 검색은
+   * 모든 달 거래를 펼쳐 보지만, 분류 필터는 그 달 안에서만 좁혀 보는 게 사용자 멘탈 모델.
+   */
+  useEffect(() => {
+    const state = location.state as {
+      presetCategory?: string;
+      presetStatus?: "sub";
+      presetType?: "expense" | "income";
+      presetMonth?: string;
+    } | null;
+    const cat = state?.presetCategory;
+    const stat = state?.presetStatus;
+    if (!cat && !stat) return;
+    setSearch("");
+    setTypeFilter(state?.presetType ?? "all");
+    setPlatform("all");
+    setCategory(cat ?? "all");
+    setStatusFilter(stat ?? "all");
+    setInstallmentFilter("all");
+    setRecurringDayFilter(null);
+    if (state?.presetMonth) setMonth(state.presetMonth);
+    setVisibleCount(INITIAL_VISIBLE);
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, navigate]);
+
+  /**
    * 반복결제 페이지·분석 카드에서 location.state.searchTransactionName 으로 진입한 경우.
    * 검색창에 가맹점명을 채워 그 결제와 관련된 모든 거래(과거·현재) 를 한 번에 볼 수 있게 합니다.
    * 동선상 다른 필터는 초기화해 검색 결과가 가려지지 않게 합니다.

@@ -288,7 +288,47 @@ function buildInsights(rows: TxRow[], monthKey: string): InsightItem[] {
       body: "수동 입력이나 주문 캡처로 거래를 추가하면 인사이트가 생성됩니다.",
     });
   }
+  /*
+   * 인사이트 카드 노출 갯수(2026-04-28 재확인): 3장 고정.
+   * 한때 essentials(공과금/관리비/교육비/정기결제) 한 줄 인사이트를 4번째로 추가했었는데
+   * 사용자 피드백 — "Home 인사이트는 3개만 깔끔하게 보고 싶고, 반복결제·공과금 분석은
+   * 분석/반복결제 페이지에서 보고 싶다" → 카드는 3개 유지하고, AI 한 줄 요약 rulesText 에만
+   * essentials 정보를 별도로 첨부해 자연스럽게 반영(buildInsightsRulesContext 참고).
+   */
   return insights.slice(0, 3);
+}
+
+/**
+ * AI generateInsight 호출 시 rulesText 에 추가로 첨부할 컨텍스트 문자열.
+ * Home 의 인사이트 카드(3장) 와는 별개로, AI 가 한 줄 요약에 활용할 수 있는 "이번 달 고정
+ * 흐름 합계" 를 풀어 줍니다. 이렇게 분리하면 화면 카드는 깔끔하게 3장 유지하면서
+ * 사용자가 원하던 "반복결제 패턴 한 줄 인사이트" 가 AI 요약에 자연스럽게 들어갑니다.
+ */
+export function buildInsightsRulesContext(rows: TxRow[], monthKey: string): string {
+  const thisMonth = rows.filter((row) => toMonthKey(row.date) === monthKey);
+  if (thisMonth.length === 0) return "";
+  const skip = findApprovalsCoveredByBilling(thisMonth, rows);
+  const buckets: Array<{ label: string; predicate: (row: TxRow) => boolean }> = [
+    { label: "공과금", predicate: (r) => r.categories.includes("utility") },
+    { label: "관리비", predicate: (r) => r.categories.includes("maintenance") },
+    { label: "교육비", predicate: (r) => r.categories.includes("education") },
+    { label: "정기결제", predicate: (r) => r.status === "sub" },
+  ];
+  const entries = buckets
+    .map(({ label, predicate }) => {
+      let amount = 0;
+      for (const row of thisMonth) {
+        if (row.type !== "expense" || row.status === "cancel") continue;
+        if (skip.has(row.id)) continue;
+        if (!predicate(row)) continue;
+        amount += effectiveMonthlyAmount(row);
+      }
+      return { label, amount };
+    })
+    .filter((e) => e.amount > 0);
+  if (entries.length === 0) return "";
+  const breakdown = entries.map((e) => `${e.label} ${formatKRW(e.amount)}`).join(", ");
+  return `이번 달 고정 흐름: ${breakdown}.`;
 }
 
 export const buildHomeData = (rows: TxRow[], monthKey: string): HomeMockData => {

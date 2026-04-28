@@ -165,6 +165,23 @@ export interface TxRow {
  *   상품 컬럼은 detail.items 가 있을 때만 "+N개" 칩을 노출해 거래명을 어지럽히지 않으면서
  *   "이 거래엔 상세 상품이 따로 있다"를 한눈에 알 수 있게 합니다.
  */
+/*
+ * Container query wrapper(2026-04-28).
+ *
+ * 기존엔 viewport media query(768/1024px) 만으로 모바일/태블릿/데스크톱을 분기했는데,
+ * 사이드바 layout 의 main 영역 폭은 viewport 보다 약 240px 작아 — viewport 1000px 라도
+ * main 은 760px. 이 차이로 사용자 화면(viewport 870px → main ~630px) 에서 표가 화면
+ * 밖으로 잘리는 회귀가 반복됐습니다.
+ *
+ * container query 로 부모(Card → ContainerScope) 폭 기반으로 분기하면 사이드바 유무·
+ * 메뉴 접힘 상태와 무관하게 main 의 실제 폭만 보고 카드/표를 토글할 수 있습니다.
+ *  - 880px 미만: 가로 스크롤 없이 풀 8컬럼 표 → 모바일 카드(MobileList) 로 전환
+ *  - 880px 이상: 표 그대로 (clamp 컬럼이 부드럽게 줄어듦)
+ */
+const ContainerScope = styled.div`
+  container-type: inline-size;
+`;
+
 const Table = styled.div`
   display: grid;
   grid-template-columns:
@@ -175,13 +192,14 @@ const Table = styled.div`
     clamp(64px, 7vw, 84px)
     clamp(104px, 11vw, 132px)
     clamp(124px, 14vw, 168px)
-    clamp(96px, 11vw, 124px);
+    /* 상태/결제 컬럼: "정기결제 + 일시불" 두 태그가 한 줄에 들어가도록 max 를 살짝 늘림.
+       그래도 못 들어가면 StatusCell 의 flex-wrap 이 두 줄로 자연스럽게 흘려보냄. */
+    clamp(108px, 13vw, 152px);
   font-size: 13px;
-  /* 768px 이하에선 모바일 카드로 전환되니, 그 직전까지 깨지지 않을 정도로만 보장. */
   min-width: 720px;
 
-  ${media.tablet} {
-    /* 1024px 이하에선 폰트·셀 패딩이 좁아지므로 max 도 한 단 낮춤. */
+  /* container query: 컨테이너가 좁아지면 컬럼 max 도 한 단 낮춰 부드럽게 줄어듦. */
+  @container (max-width: 1024px) {
     grid-template-columns:
       clamp(56px, 6.5vw, 70px)
       clamp(82px, 9.5vw, 100px)
@@ -190,7 +208,7 @@ const Table = styled.div`
       clamp(60px, 7vw, 80px)
       clamp(96px, 11vw, 124px)
       clamp(116px, 14vw, 152px)
-      clamp(92px, 11vw, 116px);
+      clamp(104px, 13vw, 144px);
     min-width: 700px;
   }
 `;
@@ -199,6 +217,14 @@ const TableScroll = styled.div`
   overflow-x: auto;
   overflow-y: hidden;
 
+  /*
+   * 880px 컨테이너 임계: 이 폭 미만이면 표 8컬럼이 모두 들어가도 답답하니 카드 view 로 전환.
+   * media.mobile(768px viewport) 분기는 backward compat 용으로 같이 두되, container query
+   * 가 우선이라 사이드바 layout 에서도 main 폭 기준으로 정확히 토글됩니다.
+   */
+  @container (max-width: 880px) {
+    display: none;
+  }
   ${media.mobile} {
     display: none;
   }
@@ -207,6 +233,11 @@ const TableScroll = styled.div`
 const MobileList = styled.div`
   display: none;
 
+  @container (max-width: 880px) {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
   ${media.mobile} {
     display: grid;
     gap: 10px;
@@ -683,13 +714,21 @@ const ItemCountChip = styled.span`
   white-space: nowrap;
 `;
 
+/*
+ * 상태/결제 셀(2026-04-28 잘림 회귀 수정).
+ *
+ * 두 태그(상태 칩 + 결제방식 칩) 가 함께 들어가는데 좁은 viewport 에서 마지막 grid
+ * 컬럼 폭이 부족하면 두 번째 칩이 잘려 보였습니다(`overflow: hidden` 때문).
+ *  - flex-wrap: wrap 으로 좁아지면 두 줄로 자연스럽게 떨어지게.
+ *  - overflow 제거 — 칩 자체는 padding 작은 둥근 pill 이라 한 줄로 못 들어가면
+ *    그냥 줄바꿈해 표시되는 게 자르는 것보다 가독성 좋음.
+ *  - row-gap 4px 으로 두 줄일 때 행 사이 간격 살짝 띄움.
+ */
 const StatusCell = styled.div`
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 4px 6px;
 `;
 
 const Footer = styled.div`
@@ -849,6 +888,7 @@ export const TransactionTable = memo<Props>(({
 
   return (
     <Card padding={0}>
+      <ContainerScope>
       <TableScroll>
         <Table>
           <HeaderCell className="tag">유형</HeaderCell>
@@ -1302,6 +1342,7 @@ export const TransactionTable = memo<Props>(({
       ) : (
         <Footer>모든 거래를 확인했어요 · 총 {totalCount}건</Footer>
       )}
+      </ContainerScope>
     </Card>
   );
 });

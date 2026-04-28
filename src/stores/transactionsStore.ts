@@ -18,6 +18,7 @@ import {
   normalizeMerchantKey,
   shouldInferCategory,
 } from "../utils/categoryInference";
+import { detectConcept } from "../data/categoryConcepts";
 import {
   normalizeTransactionRow,
   normalizeTransactionRows,
@@ -160,11 +161,35 @@ function enrichCategories(rows: TxRow[]): TxRow[] {
     const memo = template?.memo?.trim();
     const title = template?.title?.trim();
 
+    /*
+     * 정기결제 자동 status 전환(2026-04-28).
+     *
+     * 가맹점이 "subscription" concept(넷플릭스/유튜브 프리미엄/통신 자동납부 등) 으로
+     * 잡히면 거래 상태를 자동으로 "sub" 로 올려줍니다. 이전엔 csvImport 가 default
+     * "purchase" 를 박아 거래내역 상세에서는 일반 구매로 보이는데, 분석/반복결제 카드는
+     * subscription 으로 잡혀 일관성이 깨지는 회귀가 있었습니다.
+     *
+     * 안전 가드:
+     *  - 사용자가 명시적으로 status 를 골라 저장한 행(refund/cancel/sub/etc) 은 안 건드림.
+     *    csv 는 default purchase 만 고쳐 주고, 그 외 사용자 의도 status 는 보존.
+     *  - templateStatus 가 있으면 그걸 우선 — 사용자가 같은 가맹점에 대해 학습시킨 의도 유지.
+     */
+    const conceptStatusUpgrade =
+      row.status === "purchase" &&
+      detectConcept(row.detail?.cardImport?.originalMerchant || row.title) ===
+        "subscription"
+        ? "sub"
+        : undefined;
+
     return {
       ...row,
       ...(title ? { title } : {}),
       ...(memo ? { memo } : {}),
-      ...(template?.status ? { status: template.status } : {}),
+      ...(template?.status
+        ? { status: template.status }
+        : conceptStatusUpgrade
+          ? { status: conceptStatusUpgrade }
+          : {}),
       categories: templateCategories ? [...templateCategories] : nextCategories,
     };
   });
@@ -177,21 +202,52 @@ function enrichCategories(rows: TxRow[]): TxRow[] {
  */
 const STORAGE_KEY = "spendtrack:transactions:v5";
 
+/**
+ * 정기결제 자동 status 정규화(2026-04-28).
+ *
+ * 신규 import 는 enrichCategories 가 처리하지만, 그 정책이 도입되기 전 import 한 거래는
+ * status="purchase" 인 채로 store 에 남아 있어 거래내역 "정기결제" 필터·DetailPanel
+ * 표시가 EssentialStrip(concept 기반 합산) 와 일관되지 않았습니다.
+ *
+ * 정책: subscription concept 매칭 + status="purchase" 행만 한 번에 "sub" 로 정규화.
+ *  - 사용자가 명시 변경한 status(refund/cancel/sub/etc) 는 안 건드림.
+ *  - 비용은 저장 행 N 에 대해 정규식 매칭 N 회. 200행 기준 ms 단위.
+ *  - 호출 시점은 readCurrent / writeCurrent / hydrate 진입 — store 라이프사이클 1회.
+ *    매 거래 변경마다 돌지 않으므로 렉/호출 폭발 없음.
+ */
+function normalizeStatusByConcept(rows: TxRow[]): TxRow[] {
+  let changed = false;
+  const next = rows.map((row) => {
+    if (row.type !== "expense") return row;
+    if (row.status !== "purchase") return row;
+    const merchant = row.detail?.cardImport?.originalMerchant || row.title;
+    if (detectConcept(merchant) !== "subscription") return row;
+    changed = true;
+    return { ...row, status: "sub" as const };
+  });
+  return changed ? next : rows;
+}
+
 function readCurrent(): TxRow[] | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed)
-      ? normalizeTransactionRows(parsed as TxRow[])
-      : null;
+    if (!Array.isArray(parsed)) return null;
+    const normalized = normalizeStatusByConcept(
+      normalizeTransactionRows(parsed as TxRow[]),
+    );
+    return normalized;
   } catch {
     return null;
   }
 }
 
 function writeCurrent(rows: TxRow[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalizeTransactionRows(rows)));
+  // writeCurrent 도 sweep 거치게 — store 가 들고 있는 메모리와 storage 를 동시에 일관시켜
+  // 같은 사용자 다음 진입 시 redundant sweep 없이 즉시 일치된 상태로 시작합니다.
+  const normalized = normalizeStatusByConcept(normalizeTransactionRows(rows));
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(normalized));
 }
 
 /**
@@ -369,7 +425,10 @@ const useTransactionsStoreBase = create<TransactionsState>((set, get) => ({
     return [];
   },
   hydrate: (rows) => {
-    const normalized = normalizeTransactionRows(rows);
+    // Firebase 에서 받아온 외부 데이터도 sweep 거치게 — 이전에 저장된 status="purchase"
+    // 라도 subscription concept 매칭 행은 자동으로 "sub" 로 정규화. 매 변경마다 도는
+    // 게 아니라 firebaseSync 의 onAuthStateChanged 직후 hydrate 호출 시 1회.
+    const normalized = normalizeStatusByConcept(normalizeTransactionRows(rows));
     writeCurrent(normalized);
     set({ rows: normalized });
     return normalized;

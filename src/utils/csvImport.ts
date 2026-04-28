@@ -41,6 +41,19 @@ const CATEGORY_MAP: Record<string, TxCategory> = {
   "식품/음료": "food",
   식품: "food",
   음료: "food",
+  // 가계부 흐름 카테고리(2026-04-28). 카드사가 업종을 이런 키워드로 내려주면 자동 매핑.
+  공과금: "utility",
+  공공요금: "utility",
+  전기요금: "utility",
+  가스요금: "utility",
+  수도요금: "utility",
+  관리비: "maintenance",
+  아파트관리비: "maintenance",
+  교육: "education",
+  교육비: "education",
+  학원: "education",
+  도서: "education",
+  서적: "education",
   // CSV에 "기타"라고 적혀 있거나 카테고리 칸이 비어 있으면 모두 "기타"로 분류합니다.
   기타: "etc",
 };

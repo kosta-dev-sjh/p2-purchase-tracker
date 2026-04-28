@@ -38,52 +38,44 @@ export interface SummaryData {
   spendDelta?: SummaryDelta;
 }
 
+/*
+ * KPI 스트립(2026-04-28 부모 폭 기반 반응형 재설계).
+ *
+ * 회귀 배경: viewport 단위 media query(media.tablet/mobile) 만 보고 4→2→1열로 끊었는데,
+ * 데스크톱 사이드바가 있는 layout 에서는 main 영역의 실제 폭이 viewport 보다 훨씬 작아
+ * 사용자가 창을 줄이면 카드가 부모 폭을 넘어 좌우로 잘리는 회귀가 있었습니다.
+ *
+ * 해결: auto-fit + minmax 로 "부모 폭이 N카드 들어갈 만하면 N열, 안 들어가면 자동 wrap"
+ * 패턴 적용. 이렇게 하면 viewport 가 줄어들 때마다 카드가 부드럽게 한 줄씩 떨어지고,
+ * 카드 자체는 "최소 폭 160px 이상" 을 항상 보장해 숫자가 안 잘림.
+ */
 const Strip = styled.div`
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
   background: ${tokens.color.panel};
   border: 1px solid ${tokens.color.line};
   border-radius: ${tokens.radius.card};
   box-shadow: ${tokens.shadow.card};
   overflow: hidden;
-
-  ${media.tablet} {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  ${media.mobile} {
-    grid-template-columns: 1fr;
-  }
 `;
 
+/*
+ * Cell 보더 정책(2026-04-28 단순화).
+ *
+ * auto-fit grid 라 셀이 몇 행/몇 열로 wrap 될지 미리 알 수 없습니다. 그래서 셀별로 항상
+ * right + bottom 보더를 옅게 두고, Strip 의 외곽 카드 border 가 마지막 행/마지막 열의
+ * 보더를 자연스럽게 가려 줍니다(Strip overflow: hidden). nth-child 분기를 제거해
+ * 어떤 wrap 모양에서도 분리선이 깔끔하게 그려집니다.
+ */
 const Cell = styled.div`
   /* Home/Analysis KpiStrip과 동일한 16px 20px 패딩으로 통일. 셀 내부 리듬이 페이지 간 동일하게 느껴지도록 맞췄습니다. */
   padding: 16px 20px;
   border-right: 1px solid ${tokens.color.line2};
-
-  &:last-child {
-    border-right: none;
-  }
-
-  ${media.tablet} {
-    &:nth-child(2n) {
-      border-right: none;
-    }
-    &:nth-child(odd) {
-      border-right: 1px solid ${tokens.color.line2};
-    }
-    &:nth-child(-n + 2) {
-      border-bottom: 1px solid ${tokens.color.line2};
-    }
-  }
+  border-bottom: 1px solid ${tokens.color.line2};
 
   ${media.mobile} {
-    border-right: none;
-    border-bottom: 1px solid ${tokens.color.line2};
-
-    &:last-child {
-      border-bottom: none;
-    }
+    /* 모바일에서 셀 패딩 살짝 줄여 1열에서도 카드 본문이 답답해지지 않게. */
+    padding: 14px 16px;
   }
 `;
 

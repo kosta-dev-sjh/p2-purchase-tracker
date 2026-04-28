@@ -115,6 +115,65 @@ const KpiCard = styled.div`
 `;
 
 /**
+ * 활성 필터의 합계를 표 상단에 명시(2026-04-28 사용자 피드백).
+ * 사용자가 탭을 누르면 표에 보이는 항목이 줄어드는데, 페이지 어디에도 그 분류의 합계가
+ * 다시 표시되지 않아 "지금 보고 있는 게 무엇의 합계지?" 가 모호했습니다. 표 바로 위에
+ * "이번 달 [공과금] 합계 ₩X · N건" 헤더 행으로 명시.
+ *
+ * 디자인(개정): 1차 시안의 라벤더 배경 + 좌측 strip 이 카드의 다른 영역과 톤이 너무 분리돼
+ * 어색하다는 피드백 → 배경을 빼고 점선 보더 한 줄로 단정하게 처리. 표 위 "행 헤더" 처럼
+ * 자연스럽게 얹혀 보입니다.
+ */
+const FilterTotalBanner = styled.div`
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0 0 12px;
+  padding: 10px 2px 12px;
+  border-bottom: 1px solid ${tokens.color.line2};
+
+  .label {
+    color: ${tokens.color.ink3};
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: -0.01em;
+
+    strong {
+      color: ${tokens.color.ink1};
+      font-weight: 700;
+    }
+  }
+
+  .total {
+    color: ${tokens.color.ink1};
+    font-family: ${tokens.font.mono};
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  .count {
+    margin-left: 6px;
+    color: ${tokens.color.ink4};
+    font-family: ${tokens.font.sans};
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  ${media.mobile} {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+
+    .total {
+      font-size: 15px;
+    }
+  }
+`;
+
+/**
  * 분류 필터 칩 그룹 — 전체 / 공과금 / 할부 결제 / 정기결제 / 자주 구매 중 하나만 활성화.
  * 모바일 좁은 폭에서는 가로 스크롤 허용해 칩이 잘리지 않게.
  */
@@ -559,6 +618,18 @@ export const SubscriptionsPage: React.FC = () => {
         : current.items.filter((it) => it.tagKind === filter),
     [current.items, filter],
   );
+  /*
+   * 활성 필터의 합계 — "이번 달 [필터명] 합계 ₩X" 배너에 노출. 전체 필터(all) 면
+   * current.total 을 그대로 쓰지만, 특정 분류면 visibleItems 에서 다시 합산해
+   * 정확한 분류 합계를 보여 줍니다.
+   */
+  const visibleTotal = useMemo(
+    () =>
+      filter === "all"
+        ? current.total
+        : visibleItems.reduce((sum, it) => sum + it.amount, 0),
+    [filter, current.total, visibleItems],
+  );
   // 활성 항목 카드의 보조 라벨도 합계 카드와 같은 "전월 대비 …" 톤으로 통일.
   // 이전에는 'sub 태그' 같은 내부 구현 용어가 노출돼 사용자에게 혼란을 줬습니다.
   const itemDelta = useMemo(() => {
@@ -636,6 +707,17 @@ export const SubscriptionsPage: React.FC = () => {
             </EmptyState>
           ) : (
             <>
+              {/*
+                필터 합계 배너 — 활성 필터가 무엇이든 "이번 달 [필터명] 합계 ₩X · N건" 으로
+                표 상단에 명시. 사용자가 탭 전환할 때 항상 같은 자리에 합계가 보이도록 고정 위치.
+              */}
+              <FilterTotalBanner role="status" aria-live="polite">
+                <span className="label">
+                  이번 달 <strong>{FILTER_LABELS[filter]}</strong> 합계
+                  <span className="count">· {visibleItems.length}건</span>
+                </span>
+                <span className="total">{formatKRW(visibleTotal)}/월</span>
+              </FilterTotalBanner>
               {/* 분류별 필터 칩 — 전체/공과금/할부/정기결제/자주 구매 한 가지로 좁혀 보기. */}
               <FilterChips role="tablist" aria-label="분류 필터">
                 {FILTER_ORDER.filter(

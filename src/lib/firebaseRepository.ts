@@ -47,6 +47,16 @@ function categoriesCol(uid: string) {
   return collection(db, "users", uid, "categories");
 }
 
+/*
+ * AI 소비 인사이트 캐시(2026-04-28). Home 의 ✨ 한 줄 요약을 매번 재호출하지 않고
+ * 월별로 Firestore 에 저장해 모든 디바이스/브라우저가 같은 캐시를 공유합니다.
+ * 키는 monthKey("YYYY-MM"), 값은 { hash, insightText } — 거래 데이터 hash 가 같으면
+ * 캐시 hit 라 호출 자체가 발동하지 않습니다.
+ */
+function aiInsightsCol(uid: string) {
+  return collection(db, "users", uid, "aiInsights");
+}
+
 export async function bootstrapUserProfile(
   user: User,
   seed?: Partial<UserProfile>,
@@ -289,4 +299,42 @@ export async function updateCategory(
 
 export async function removeCategory(uid: string, id: string): Promise<void> {
   await deleteDoc(doc(categoriesCol(uid), id));
+}
+
+/**
+ * AI 인사이트 캐시 한 건 저장. setInsight 호출 시 백그라운드 sync 로 호출됩니다.
+ * 같은 monthKey 에 hash 가 다른 새 인사이트가 생기면 그대로 덮어씁니다.
+ */
+export async function saveAiInsight(
+  uid: string,
+  monthKey: string,
+  payload: { hash: string; insightText: string },
+): Promise<void> {
+  await setDoc(
+    doc(aiInsightsCol(uid), monthKey),
+    {
+      hash: payload.hash,
+      insightText: payload.insightText,
+      updatedAt: serverTimestamp(),
+    },
+    { merge: true },
+  );
+}
+
+/**
+ * 사용자의 모든 AI 인사이트 캐시 로드. 로그인 직후 hydrate 흐름에서 호출 →
+ * 모든 디바이스에서 같은 캐시 공유. Firestore 가 비어 있으면 빈 객체.
+ */
+export async function loadAiInsights(
+  uid: string,
+): Promise<Record<string, { hash: string; insightText: string }>> {
+  const snap = await getDocs(aiInsightsCol(uid));
+  const out: Record<string, { hash: string; insightText: string }> = {};
+  snap.forEach((d) => {
+    const data = d.data() as { hash?: unknown; insightText?: unknown };
+    if (typeof data.hash === "string" && typeof data.insightText === "string") {
+      out[d.id] = { hash: data.hash, insightText: data.insightText };
+    }
+  });
+  return out;
 }

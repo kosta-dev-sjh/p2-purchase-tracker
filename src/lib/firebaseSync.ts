@@ -27,6 +27,7 @@ import { aiInsightsStore } from "../stores/aiInsightsStore";
 import {
   bootstrapCategories,
   bootstrapUserProfile,
+  loadAiInsights,
   saveUserProfile,
   subscribeCategories,
   subscribeTransactions,
@@ -214,6 +215,19 @@ export function startFirebaseSync(): void {
         },
         reportBackgroundSyncIssue,
       );
+      /*
+       * AI 인사이트 캐시 hydrate(2026-04-28 추가). Firestore 의 users/{uid}/aiInsights 에
+       * 저장된 월별 한 줄 요약을 한 번 가져와 인메모리 + localStorage 와 합칩니다. 같은
+       * 사용자가 다른 디바이스/브라우저로 로그인해도 동일 hash 면 AI 호출이 발동하지 않게.
+       * 실패는 reportBackgroundSyncIssue 로 흘려보내고 인사이트 카드는 그대로 동작.
+       */
+      loadAiInsights(user.uid)
+        .then((remote) => {
+          if (Object.keys(remote).length > 0) {
+            aiInsightsStore.hydrate(remote);
+          }
+        })
+        .catch(reportBackgroundSyncIssue);
     } catch (error) {
       reportBackgroundSyncIssue(error);
     }

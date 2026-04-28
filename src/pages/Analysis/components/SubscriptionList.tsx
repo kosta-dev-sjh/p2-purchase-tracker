@@ -73,14 +73,15 @@ export interface SubscriptionItem {
 
 /**
  * 본문 스크롤 영역. 항목이 많아져도 카드가 무한히 길어지지 않도록 max-height 로 제한하고
- * overflow-y: auto 로 내부 스크롤. 다른 KPI/차트 카드들과 높이를 비슷하게 맞춰 페이지가
- * 깔끔하게 정렬되게 합니다(2026-04-28 사용자 요청).
+ * overflow-y: auto 로 내부 스크롤.
  *
- * 모바일에서는 화면 자체가 좁아 max-height 를 살짝 줄이고, 데스크톱에선 5~6개 항목이
- * 한눈에 보이도록 ~340px 으로 잡았습니다.
+ * 높이 정책(2026-04-28 사용자 피드백): 분석 페이지의 Row3 안에서 양쪽 카드(반복구매
+ * TOP3 + 요일별 지출 패턴) 와 시각 높이가 맞아야 라인이 어긋나지 않습니다. 이전 340px
+ * 는 양쪽보다 높아져 카드 라인이 늘어나 보였어요. 4~5개 항목이 잘 보이는 ~260px 으로
+ * 낮춰 양쪽 차트 카드와 자연스럽게 정렬.
  */
 const ScrollArea = styled.div`
-  max-height: 340px;
+  max-height: 260px;
   overflow-y: auto;
   /*
    * 가로 스크롤 차단(2026-04-28). 좁은 카드에서 자식 그리드의 auto 컬럼(태그·금액) 이
@@ -92,7 +93,7 @@ const ScrollArea = styled.div`
   padding-right: 4px;
 
   ${media.mobile} {
-    max-height: 280px;
+    max-height: 240px;
   }
 `;
 

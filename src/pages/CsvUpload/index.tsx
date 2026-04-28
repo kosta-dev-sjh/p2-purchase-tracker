@@ -16,6 +16,7 @@ import { transactionsStore, useTransactionsStore } from "../../stores/transactio
 import type { CsvImportResult } from "../../utils/csvImport";
 import { importFile, detectFileKind } from "../../utils/fileImport";
 import { checkDuplicates, autoResolveDuplicates, type TxItemDiff, type MergeAction } from "../../utils/duplicateCheck";
+import { normalizeTransactionRows } from "../../utils/transactionNormalize";
 import { formatKRW } from "../../utils/format";
 import { decodeCsvBuffer } from "../../utils/csvParse";
 import { readXlsxAsCsvText } from "../../utils/xlsxImport";
@@ -282,10 +283,21 @@ export const CsvUploadPage: React.FC = () => {
   /**
    * 파싱 결과를 기존 스토어와 비교해 fresh / exactDup / itemDiff 로 분류합니다.
    * result가 없으면 null을 반환해 미리보기 카드 전체를 숨깁니다.
+   *
+   * 회귀 수정(2026-04-28): incoming(파싱 직후) 과 existing(스토어 저장값) 둘 다 같은
+   * normalize 룰을 통과해야 fingerprint 가 일치합니다. 이전엔 incoming 만 normalize 를
+   * 안 거쳐 cardImport.recordKind 가 "billing" 인 채로 fp 가 만들어졌고, storage 의
+   * existing 행은 normalizeCardImport 가 lump_sum 행을 "approval" 로 다운그레이드해
+   * 같은 거래라도 fp 가 어긋났습니다. 결과적으로 같은 파일 재업로드 시 일시불 행만
+   * 새 데이터로 인식되는 회귀.
+   *
+   * 둘 다 normalize 후 비교하면 fp 가 일관되게 잡혀 같은 파일 reupload = 모두 exactDup.
+   * normalize 는 idempotent 해서 나중 toSave 단계에서 store 가 다시 normalize 해도 안전.
    */
   const dupCheck = useMemo(() => {
     if (!result || result.imported.length === 0) return null;
-    return checkDuplicates(result.imported, allRows);
+    const normalizedIncoming = normalizeTransactionRows(result.imported);
+    return checkDuplicates(normalizedIncoming, allRows);
   }, [result, allRows]);
 
   /**

@@ -24,6 +24,7 @@ import {
 import { useTransactionsStore } from "../../stores/transactionsStore";
 import { useAiInsightsStore } from "../../stores/aiInsightsStore";
 import { generateInsight } from "../../utils/aiService";
+import { buildInsightsRulesContext } from "./data";
 import { WelcomeTutorial } from "../../components/onboarding/WelcomeTutorial";
 
 const HeaderRight = styled.div`
@@ -134,7 +135,17 @@ export const HomePage: React.FC = () => {
       // finally 에서 한 번만 풀어 줍니다.
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsAiLoading(true);
-      const rulesText = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
+      /*
+       * AI 한 줄 요약 입력은 두 갈래 합쳐 보냅니다(2026-04-28):
+       *   1) 기존 인사이트 카드 3장 텍스트 — "쿠팡 비중이 …", "주로 OO를 사셨어요" 등.
+       *   2) 가계부 필수 항목(공과금/관리비/교육비/정기결제) 합계 한 줄. Home 카드엔 노출
+       *      안 하지만 AI 가 반복결제 흐름을 자연스럽게 한 줄에 녹여낼 수 있게 합니다.
+       */
+      const cardLines = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
+      const essentialsContext = buildInsightsRulesContext(rows, month);
+      const rulesText = essentialsContext
+        ? `${cardLines}\n${essentialsContext}`
+        : cardLines;
 
       // 실패하면 null 이 돌아옵니다. 그 경우 캐시에 쓰지 않아야
       // 다음 hash 변동 때 자연스럽게 재시도됩니다.

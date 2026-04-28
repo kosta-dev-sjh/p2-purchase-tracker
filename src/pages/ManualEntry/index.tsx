@@ -468,8 +468,16 @@ export const ManualEntryPage: React.FC = () => {
    * 폼 값과 상품 목록은 즉시 리셋해 (1) 토스트 노출 700ms 동안 본인이 방금 저장한 거래가
    * candidateMatches에 자기 자신으로 잡혀 SuggestionCard가 떠버리는 회귀를 막고, (2) 사용자가
    * 우연히 같은 페이지로 다시 돌아왔을 때 이전 입력값이 그대로 남아 있는 혼란도 같이 해소합니다.
+   *
+   * scrollToTransactionId 가 같이 들어오면 거래내역 페이지가 그 행을 선택 상태(DetailPanel
+   * 펼침) 로 만들어 사용자가 방금 저장한 거래의 상세까지 곧바로 확인할 수 있게 합니다
+   * (2026-04-28 사용자 피드백 — "수동 입력 후 그 항목의 거래상세까지 띄워야 깔끔").
    */
-  const navigateAfterSave = (toState: { targetDate?: string } | undefined) => {
+  const navigateAfterSave = (
+    toState:
+      | { targetDate?: string; scrollToTransactionId?: string }
+      | undefined,
+  ) => {
     setMeta(EMPTY_META);
     setProducts([]);
     setStatus(defaultStatusForType(type));
@@ -483,7 +491,7 @@ export const ManualEntryPage: React.FC = () => {
     if (dupDismissed) {
       // 수동 입력은 사용자가 카테고리를 직접 고른 결과라 자동추정을 태우지 않는다.
       transactionsStore.addFromManual(row);
-      navigateAfterSave({ targetDate: row.date });
+      navigateAfterSave({ targetDate: row.date, scrollToTransactionId: row.id });
       return;
     }
 
@@ -500,10 +508,17 @@ export const ManualEntryPage: React.FC = () => {
     // 무언가 저장됐으면 거래내역으로 바로 이동합니다.
     if (resolved.toSave.length > 0 || resolved.toMerge.length > 0) {
       // 저장된 행의 날짜(또는 기존 거래에 병합된 경우 그 날짜)로 이동합니다.
+      const savedRow = resolved.toSave[0];
+      const mergedExistingId = resolved.toMerge[0]?.existingId;
       const savedDate =
-        resolved.toSave[0]?.date ??
-        allRows.find((r) => r.id === resolved.toMerge[0]?.existingId)?.date;
-      navigateAfterSave(savedDate ? { targetDate: savedDate } : undefined);
+        savedRow?.date ??
+        allRows.find((r) => r.id === mergedExistingId)?.date;
+      // 신규 저장이면 그 행, merge 면 기존 행 id 로 상세 펼침.
+      const targetId = savedRow?.id ?? mergedExistingId;
+      navigateAfterSave({
+        ...(savedDate ? { targetDate: savedDate } : {}),
+        ...(targetId ? { scrollToTransactionId: targetId } : {}),
+      });
       return;
     }
 

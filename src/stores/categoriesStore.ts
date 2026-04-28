@@ -46,6 +46,17 @@ const STANDARD_CONCEPT_BINDINGS: Record<string, ConceptId[]> = {
   living: ["mart"],
   fashion: ["fashion"],
   digital: ["digital"],
+  /*
+   * 가계부 흐름 카테고리(2026-04-28):
+   *  - utility:     공과금 concept 자체. 통신은 의도적으로 미바인딩(별도 추적 원하는 사용자 多).
+   *  - maintenance: 관리비 concept.
+   *  - education:   교육비 concept.
+   * 한 개념이 여러 카테고리에 동시 묶이지 않도록 utility 의 통신은 빼두고, 사용자가 원할 때만
+   * 설정에서 직접 바인딩하도록 둡니다(reassignConcepts 가 충돌 시 한쪽으로 정리).
+   */
+  utility: ["utility"],
+  maintenance: ["maintenance"],
+  education: ["education"],
   etc: [],
 };
 
@@ -90,6 +101,42 @@ export const DEFAULT_CATEGORIES: CategoryEntry[] = [
     isLocked: false,
     conceptIds: STANDARD_CONCEPT_BINDINGS.food,
   },
+  /*
+   * 고정 카테고리(2026-04-28 잠금 정책 변경): utility/maintenance/education 은
+   * EssentialStrip / 분석 / Home 인사이트 텍스트가 "이 키가 존재한다" 는 가정으로 합산
+   * 키와 라벨을 박아두는 가계부 핵심 흐름이라, 사용자가 삭제하면 합계가 0 으로 떨어지고
+   * "왜 공과금이 트래킹 안 되지?" 회귀가 발생합니다. etc 와 같은 정책으로 isLocked=true
+   * 로 잠가 색·이름·삭제 모두 막습니다(설정 화면이 isLocked 행에서 수정/삭제 버튼을
+   * 숨기고 LockBadge "기본" 을 노출).
+   *
+   * 색상 변경이 막히는 건 일부 사용자에게 약간의 제약이지만, "공과금 카테고리 색을 다른
+   * 카테고리와 같은 톤으로 맞추고 싶다" 류의 요청이 있으면 그때 isLocked 정책을 다시
+   * 검토. 지금은 회귀 차단을 우선합니다.
+   */
+  {
+    id: "utility",
+    name: CATEGORY_LABELS.utility,
+    color: tokens.color.cat6,
+    isStandard: true,
+    isLocked: true,
+    conceptIds: STANDARD_CONCEPT_BINDINGS.utility,
+  },
+  {
+    id: "maintenance",
+    name: CATEGORY_LABELS.maintenance,
+    color: tokens.color.cat7,
+    isStandard: true,
+    isLocked: true,
+    conceptIds: STANDARD_CONCEPT_BINDINGS.maintenance,
+  },
+  {
+    id: "education",
+    name: CATEGORY_LABELS.education,
+    color: tokens.color.cat8,
+    isStandard: true,
+    isLocked: true,
+    conceptIds: STANDARD_CONCEPT_BINDINGS.education,
+  },
 ];
 
 /**
@@ -97,11 +144,64 @@ export const DEFAULT_CATEGORIES: CategoryEntry[] = [
  * 사용자 커스텀 카테고리는 conceptIds를 빈 배열로 남겨 두고, 모달에서 별도로 바인딩하게 둡니다.
  */
 function migrateEntry(entry: CategoryEntry | (Omit<CategoryEntry, "conceptIds"> & Partial<Pick<CategoryEntry, "conceptIds">>)): CategoryEntry {
+  let next: CategoryEntry;
   if (Array.isArray((entry as CategoryEntry).conceptIds)) {
-    return entry as CategoryEntry;
+    next = entry as CategoryEntry;
+  } else {
+    const fallback = STANDARD_CONCEPT_BINDINGS[entry.id] ?? [];
+    next = { ...(entry as CategoryEntry), conceptIds: fallback };
   }
-  const fallback = STANDARD_CONCEPT_BINDINGS[entry.id] ?? [];
-  return { ...(entry as CategoryEntry), conceptIds: fallback };
+  /*
+   * isLocked 보정(2026-04-28). 잠금 정책이 utility/maintenance/education 까지 확장되면서
+   * 이미 1차 v2 마이그레이션을 거친 사용자는 isLocked=false 로 박혀있을 수 있습니다.
+   * 표준 카테고리의 잠금 상태는 DEFAULT_CATEGORIES 가 단일 진실원이므로, 표준 키이면
+   * 거기 정의된 isLocked 값으로 덮어씁니다(사용자 커스텀 카테고리는 미변동).
+   */
+  const standard = DEFAULT_CATEGORIES.find((d) => d.id === next.id);
+  if (standard && next.isLocked !== standard.isLocked) {
+    next = { ...next, isLocked: standard.isLocked, isStandard: true };
+  }
+  return next;
+}
+
+/**
+ * 모든 store mutation 진입점에서 한 번 거치는 normalize 단계(2026-04-28 추가).
+ *
+ * 회귀 배경: migrateEntry 는 readCurrent 첫 진입에서만 적용되고 hydrate(Firebase sync) /
+ * update / addCustom 경로는 거치지 않았습니다. 그 결과 표준 카테고리(utility/maintenance/
+ * education) 가 isLocked=false 로 박힌 v2 storage 가 hydrate 로 들어오면 회색 처리·수정
+ * 잠금이 안 걸리는 회귀가 발생.
+ *
+ * 정책: 표준 키(DEFAULT_CATEGORIES 의 id) 이면 isStandard=true / isLocked 도 DEFAULT 의
+ * 값으로 강제. 사용자 커스텀 카테고리(custom_*) 는 건드리지 않습니다.
+ */
+function normalizeStandardLockState(items: CategoryEntry[]): CategoryEntry[] {
+  let changed = false;
+  const next = items.map((entry) => {
+    const standard = DEFAULT_CATEGORIES.find((d) => d.id === entry.id);
+    if (!standard) return entry;
+    if (entry.isLocked === standard.isLocked && entry.isStandard === true) return entry;
+    changed = true;
+    return { ...entry, isStandard: true, isLocked: standard.isLocked };
+  });
+  return changed ? next : items;
+}
+
+/**
+ * 기존 사용자에게 신규 표준 카테고리(2026-04-28: utility/maintenance/education) 를
+ * 자동 보충합니다. 이미 들어 있으면 noop. v2 storage 자체를 다시 bump 하지 않고
+ * "결과 배열에 누락된 표준만 끼워 넣는" 식 — 사용자가 직접 만든 custom_* 항목은
+ * 건드리지 않고 표준 행 사이에만 안전하게 삽입.
+ */
+function ensureNewStandards(items: CategoryEntry[]): CategoryEntry[] {
+  const existingIds = new Set(items.map((e) => e.id));
+  const missing = DEFAULT_CATEGORIES.filter((d) => !existingIds.has(d.id));
+  if (missing.length === 0) return items;
+  // 표준 그룹은 STANDARD_CATEGORY_ORDER 순으로 위쪽에 모이니, 그 뒤에 custom 이 이어지도록
+  // missing 을 표준 그룹 끝(첫 custom 등장 직전) 에 삽입.
+  const firstCustomIdx = items.findIndex((e) => !e.isStandard);
+  if (firstCustomIdx === -1) return [...items, ...missing];
+  return [...items.slice(0, firstCustomIdx), ...missing, ...items.slice(firstCustomIdx)];
 }
 
 function readCurrent(): CategoryEntry[] | null {
@@ -109,7 +209,13 @@ function readCurrent(): CategoryEntry[] | null {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) return (parsed as CategoryEntry[]).map(migrateEntry);
+      if (Array.isArray(parsed)) {
+        const migrated = (parsed as CategoryEntry[]).map(migrateEntry);
+        const enriched = normalizeStandardLockState(ensureNewStandards(migrated));
+        // 변경(추가/잠금 보정) 이 발생했으면 storage 도 같이 새로 써서 다음 로드 때 일관.
+        if (enriched !== migrated) writeCurrent(enriched);
+        return enriched;
+      }
       return null;
     }
     // v2가 비어 있으면 v1을 탐색해 옮겨 담는다.
@@ -118,8 +224,9 @@ function readCurrent(): CategoryEntry[] | null {
       const legacy = JSON.parse(legacyRaw);
       if (Array.isArray(legacy)) {
         const migrated = (legacy as CategoryEntry[]).map(migrateEntry);
-        writeCurrent(migrated);
-        return migrated;
+        const enriched = normalizeStandardLockState(ensureNewStandards(migrated));
+        writeCurrent(enriched);
+        return enriched;
       }
     }
     return null;
@@ -163,7 +270,7 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     };
     // 같은 개념이 기존 카테고리에 이미 바인딩돼 있으면 중복을 피하기 위해 기존에서 떼어낸다.
     // (한 개념은 한 카테고리에만 쓰여야 자동 분류가 결정적이다.)
-    const next = reassignConcepts(get().items, entry);
+    const next = normalizeStandardLockState(reassignConcepts(get().items, entry));
     writeCurrent(next);
     set({ items: next });
     const uid = auth.currentUser?.uid;
@@ -195,7 +302,9 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     // conceptIds가 바뀌었으면 충돌 해소를 돌린다.
     const needsReassign = patch.conceptIds !== undefined;
     const base = get().items.map((entry) => (entry.id === id ? nextEntry : entry));
-    const next = needsReassign ? reassignConcepts(base, nextEntry) : base;
+    const next = normalizeStandardLockState(
+      needsReassign ? reassignConcepts(base, nextEntry) : base,
+    );
     writeCurrent(next);
     set({ items: next });
     const uid = auth.currentUser?.uid;
@@ -204,9 +313,16 @@ const useCategoriesStoreBase = create<CategoriesState>((set, get) => ({
     }
   },
   hydrate: (items) => {
-    writeCurrent(items);
-    set({ items });
-    return items;
+    /*
+     * Firebase sync 등 외부 경로에서 들어오는 items 도 표준 키 잠금 상태를 한 번 더
+     * 보정합니다(2026-04-28). 이전에는 hydrate 가 입력값을 그대로 setState 해서
+     * 표준 카테고리(utility/maintenance/education) 가 isLocked=false 로 박힌 외부
+     * 데이터에 그대로 덮여 회색 잠금 처리가 풀리는 회귀가 있었습니다.
+     */
+    const normalized = normalizeStandardLockState(items);
+    writeCurrent(normalized);
+    set({ items: normalized });
+    return normalized;
   },
 }));
 

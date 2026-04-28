@@ -32,6 +32,21 @@ import {
 } from "../../utils/expenseAccounting";
 import { formatKRW } from "../../utils/format";
 
+/**
+ * "필수 항목" 합계 — 가계부에서 따로 추적하고 싶은 4가지 흐름(2026-04-28 사용자 피드백).
+ *  · utility(공과금), maintenance(관리비), education(교육비) 는 카테고리 기반 합산
+ *  · subscription(정기결제) 은 status === "sub" 기반 합산 (카테고리와는 다른 축)
+ * 카테고리별 지출 카드와는 별도 섹션으로 노출해 "이번 달 고정 흐름이 얼마인지" 가 또렷이 보이게.
+ */
+export interface EssentialBucket {
+  key: "utility" | "maintenance" | "education" | "subscription";
+  label: string;
+  amount: number;
+  count: number;
+  /** 전월 대비 차액(양수=증가, 음수=감소). 표시는 절대값+부호 칩으로 처리. */
+  prevAmount: number;
+}
+
 export interface AnalysisMockData {
   summary: string;
   kpis: KpiItem[];
@@ -45,6 +60,8 @@ export interface AnalysisMockData {
   repeat: RepeatItem[];
   subscriptions: SubscriptionItem[];
   subscriptionTotal: number;
+  /** 공과금/관리비/교육비/정기결제 4종 합계 — 카테고리별 지출과 별도 섹션. */
+  essentials: EssentialBucket[];
   trend: { points: { label: string; value: number }[]; average: number };
   weekly: { days: WeeklyDay[]; note: string; subtitle: string };
 }
@@ -230,9 +247,13 @@ function buildRepeat(rows: TxRow[], nameMap?: Record<string, string>): RepeatIte
       if (b.count !== a.count) return b.count - a.count;
       return b.amount - a.amount;
     })
-    .slice(0, 3)
+    /*
+     * TOP3 → TOP5 확장(2026-04-28 사용자 피드백). 정기결제 카드와 시각 높이를 맞추려면
+     * 같은 행 수를 가져야 카드 위쪽 공백이 사라집니다.
+     */
+    .slice(0, 5)
     .map((entry, index) => ({
-      rank: (index + 1) as 1 | 2 | 3,
+      rank: (index + 1) as RepeatItem["rank"],
       title: entry.title,
       platform: PLATFORM_LABELS[entry.platform],
       category: nameMap?.[entry.category]
@@ -382,30 +403,84 @@ export function buildSubscriptions(
       // 빌링 매칭되면 실제 청구액 평균이라 정확 → "추정" 안 붙임.
       const isEstimated = isApproval && billingAvg === null && installmentMonths > 0;
       /*
-       * 데이터로 매월 반복 패턴 확인 여부:
-       *   - 같은 가맹점 2개월 이상 결제
-       *   - 금액 편차 ±15% 이내(이자 변동·환불 미세조정 포함)
-       * tagKind 와 독립. concept 매칭(예: 새로 시작한 넷플릭스) 이라도 데이터로 아직
-       * 검증 안 됐으면 false. 사용자가 "이게 진짜 매월 같은 패턴인지" 확인할 수 있게.
-       * 할부 행은 cycleTotal 기반 자동 매월 패턴이라 cycleTotal>=2 일 때 true.
+       * billing 행의 원금/개월수 메타(2026-04-28 추가).
+       *
+       * billing 행은 회차가 명시돼 있어 카드사 측 계산값(billedAmount) 이 정확하므로
+       * "(월 추정)" 라벨은 안 붙지만, sub 라인에 "원금 ₩X · N개월" 은 함께 보여 줘야
+       * 사용자가 이 결제의 총 규모를 한눈에 알 수 있습니다(거래내역 표 정책과 일치).
+       *
+       * 우선순위:
+       *  1) cardImport.approvedAmount (CSV 의 원본 "이용금액") 이 있으면 그대로
+       *  2) 없으면 회차당 청구액 × cycleTotal 로 역산 (이자 미포함 추정값)
+       * 개월수는 cycleTotal > installmentMonths > undefined 순.
+       */
+      const isBilling =
+        !isApproval &&
+        ci?.recordKind === "billing" &&
+        ci?.paymentMode === "installment";
+      const billingCycleTotal =
+        ci?.installmentCycleTotal ?? ci?.installmentMonths ?? 0;
+      const billingOriginal = isBilling
+        ? ci?.approvedAmount ??
+          (billingCycleTotal > 1
+            ? Math.round(rawAmount * billingCycleTotal)
+            : undefined)
+        : undefined;
+      const billingMonths =
+        isBilling && billingCycleTotal > 0 ? billingCycleTotal : undefined;
+      /*
+       * 데이터로 매월 반복 패턴 확인 여부(2026-04-28 강화: 일자 매칭 추가).
+       *
+       * 정의(모두 충족해야 ✓):
+       *   1) 같은 가맹점에서 **할부가 아닌** 일반 결제가
+       *   2) **서로 다른 달** 에 2건 이상
+       *   3) 금액 편차 ±15% 이내
+       *   4) **결제 일자(day-of-month) 가 ±5일 이내로 비슷** ← 이번 라운드 추가
+       *
+       * 4) 추가 배경: 사용자 보고로 "씨제이올리브영 전북대점" 이 ✓ 로 잡혀 있는데 데이터를
+       * 보니 2026.04.03 + 2026.03.27 두 건. 같은 가맹점·금액 비슷·다른 달 까지 충족이라
+       * 우리 룰에는 걸렸지만 실제로는 "매달 27~3일 사이 = 매월 같은 날 결제" 로 보기 어려운
+       * 케이스. 정기결제는 **카드사 측 재시도 폭(3~5일)** 안에서 매달 같은 날 비슷하게
+       * 빠지는 흐름이라, day-of-month 가 ±5일 이내인 결제만 "반복" 으로 인정합니다.
+       *
+       * month boundary 회귀(예: 1.30 + 2.1 = 사실상 2일 차이) 차단 위해 modular distance
+       * (min(|d1-d2|, 31-|d1-d2|)) 사용 — 31일 사이클 위에서 가장 짧은 거리.
+       *
+       * 할부 행 제외(이전 라운드 유지): "한 번 결제 → N개월 분할" 이라 검증 단위 아님.
        */
       const patternVerified = (() => {
-        // 할부 결제는 회차 정보가 있으면 자동으로 반복 확인됨(매월 같은 금액 청구).
-        if (
-          tagKind === "installment" &&
-          ((ci?.installmentCycleTotal ?? 0) >= 2 || installmentMonths >= 2)
-        ) {
+        const verifiedRows = bucket.rows.filter((r) => {
+          if (r.type !== "expense") return false;
+          if (r.status === "cancel") return false;
+          const rci = r.detail?.cardImport;
+          if (rci) {
+            const k = getCardInstallmentKind(rci, r.amount);
+            if (k === "installment_approval" || k === "installment_billing") return false;
+          }
           return true;
-        }
-        const expenseRows = bucket.rows.filter(
-          (r) => r.type === "expense" && r.status !== "cancel",
-        );
-        if (bucket.months.size < 2 || expenseRows.length < 2) return false;
-        const amounts = expenseRows.map((r) => Math.abs(r.amount));
+        });
+        if (verifiedRows.length < 2) return false;
+        const verifiedMonths = new Set(verifiedRows.map((r) => toMonthKey(r.date)));
+        if (verifiedMonths.size < 2) return false;
+        // 금액 편차
+        const amounts = verifiedRows.map((r) => Math.abs(r.amount));
         const avg = amounts.reduce((s, a) => s + a, 0) / amounts.length;
         if (avg <= 0) return false;
         const maxDev = Math.max(...amounts.map((a) => Math.abs(a - avg))) / avg;
-        return maxDev <= 0.15;
+        if (maxDev > 0.15) return false;
+        // 결제 일자(day-of-month) ±5일 이내 — 정기결제 재시도 폭 표준값.
+        const days = verifiedRows
+          .map((r) => parseDate(r.date)?.day ?? 0)
+          .filter((d) => d >= 1 && d <= 31);
+        if (days.length < 2) return false;
+        const base = days[0];
+        const RECURRING_DAY_TOLERANCE = 5;
+        const allClose = days.every((d) => {
+          const raw = Math.abs(d - base);
+          const modular = Math.min(raw, 31 - raw);
+          return modular <= RECURRING_DAY_TOLERANCE;
+        });
+        return allClose;
       })();
       /*
        * 색 정책(2026-04-28): tagKind 기반으로 4개 분류만 색을 분리. 이전엔 concept 별로
@@ -428,10 +503,13 @@ export function buildSubscriptions(
       return {
         name: latest?.title ?? "알 수 없음",
         amount: monthlyAmount,
+        // 원금/개월수 — approval 우선, 그 외엔 billing 메타로 채워 둘 다 sub 라인에 노출.
         installmentOriginalAmount:
-          isApproval && installmentMonths > 0 ? rawAmount : undefined,
+          isApproval && installmentMonths > 0 ? rawAmount : billingOriginal,
         installmentMonths:
-          isApproval && installmentMonths > 0 ? installmentMonths : undefined,
+          isApproval && installmentMonths > 0
+            ? installmentMonths
+            : billingMonths,
         isEstimated,
         patternVerified,
         nextDate: parsed ? `${parsed.month}.${parsed.day}` : "",
@@ -671,11 +749,22 @@ export const buildAnalysisData = (
   const platform = buildPlatform(thisMonth, rows);
   const category = buildCategory(thisMonth, categoryColorMap, categoryNameMap, rows);
   const repeat = buildRepeat(thisMonth, categoryNameMap);
-  const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(rows, monthKey);
+  /*
+   * 분석 페이지의 정기결제 카드는 SubscriptionList 의 ScrollArea(max-height + overflow-y) 가
+   * 자체 wheel 스크롤을 갖고 있어 항목이 많아도 카드 높이는 일정합니다. 그러므로 데이터 단계
+   * 에서 상위 N건만 자르면 사용자가 "이 가맹점 결제는 어디 갔지?" 하고 헷갈리는 회귀가 발생.
+   * 분석에서도 풀 리스트를 받아 카드 안에서 굴려 보도록 limit: Infinity (2026-04-28 사용자 피드백).
+   */
+  const { items: subscriptions, total: subscriptionTotal } = buildSubscriptions(
+    rows,
+    monthKey,
+    Number.POSITIVE_INFINITY,
+  );
   const trend = buildTrend(rows, monthKey);
   const weekly = buildWeekly(thisMonth, rows);
   const kpis = buildKpis(thisMonth, prevMonth, rows);
   const summary = buildSummary(thisMonth, prevMonth, category, platform, periodLabel, rows);
+  const essentials = buildEssentials(thisMonth, prevMonth, rows);
 
   return {
     summary,
@@ -685,7 +774,113 @@ export const buildAnalysisData = (
     repeat,
     subscriptions,
     subscriptionTotal,
+    essentials,
     trend,
     weekly,
   };
 };
+
+/**
+ * 필수 항목 합계 4종(2026-04-28 사용자 피드백 — 가계부 핵심 흐름):
+ *  · utility(공과금), maintenance(관리비), education(교육비): 카테고리에 포함된 거래 합산
+ *  · subscription(정기결제): status === "sub" 거래 합산
+ *
+ * 합산 단위는 KPI 총 지출과 동일한 effectiveMonthlyAmount(할부 승인은 분할분).
+ * approval+billing 페어 dedup 도 적용해 같은 결제가 두 번 카운트되지 않도록 합니다.
+ * 다중 카테고리 거래(예: ["utility","etc"]) 는 utility 가 한 번만 카운트되도록 categories.includes 체크.
+ */
+function buildEssentialAmount(
+  rows: TxRow[],
+  predicate: (row: TxRow) => boolean,
+  allRows: TxRow[],
+): { amount: number; count: number } {
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
+  let amount = 0;
+  let count = 0;
+  for (const row of rows) {
+    if (row.type !== "expense" || row.status === "cancel") continue;
+    if (skip.has(row.id)) continue;
+    if (!predicate(row)) continue;
+    amount += effectiveMonthlyAmount(row);
+    count += 1;
+  }
+  return { amount, count };
+}
+
+/*
+ * 행이 어떤 essentials 분류에 속하는지 결정하는 공용 검사기(2026-04-28 보강).
+ *
+ * 회귀 배경: 사용자 데이터에 "공과금/정기결제" 가 분명 있는데 EssentialStrip 가 0원으로 떴음.
+ * 원인은 `row.categories.includes("utility")` 만 보던 점인데, 자동 카테고리 추정이 켜진
+ * 시점 이전에 들어온 행은 카테고리가 etc 인 채로 저장돼 있어 매칭에서 빠집니다.
+ *
+ * 폴백 체인:
+ *  1) 카테고리에 직접 들어 있으면 우선 매칭(가장 정확).
+ *  2) 가맹점명에서 detectConcept 로 추정한 concept 이 같은 의미군이면 매칭.
+ *     - utility 카테고리: utility / telecom concept (둘 다 "고정 청구" 라는 가계부 흐름)
+ *     - maintenance 카테고리: maintenance concept
+ *     - education 카테고리: education concept
+ *  3) 정기결제는 status="sub" + concept subscription 둘 중 하나라도 매칭.
+ *
+ * 이렇게 하면 카테고리 미정정 행도 합계에 자연스럽게 포함되고, 사용자가 카테고리를 직접
+ * "기타" 로 둔 행도 의도가 명확하면 잡힙니다(가맹점이 "한국전력" 이면 그건 공과금이 맞음).
+ */
+function rowConcept(row: TxRow): string | null {
+  // 가맹점명은 화면 표시명(title) 보다 카드 원문(originalMerchant) 이 정규화 정확도가 높음.
+  // 둘 다 시도하고 먼저 매칭되는 concept 우선.
+  const candidates = [row.detail?.cardImport?.originalMerchant, row.title].filter(
+    (v): v is string => Boolean(v),
+  );
+  for (const merchant of candidates) {
+    const c = detectConcept(merchant);
+    if (c) return c;
+  }
+  return null;
+}
+
+function buildEssentials(
+  thisMonth: TxRow[],
+  prevMonth: TxRow[],
+  allRows: TxRow[],
+): EssentialBucket[] {
+  const matchUtility = (row: TxRow) => {
+    if (row.categories.includes("utility")) return true;
+    const c = rowConcept(row);
+    return c === "utility" || c === "telecom";
+  };
+  const matchMaintenance = (row: TxRow) => {
+    if (row.categories.includes("maintenance")) return true;
+    return rowConcept(row) === "maintenance";
+  };
+  const matchEducation = (row: TxRow) => {
+    if (row.categories.includes("education")) return true;
+    return rowConcept(row) === "education";
+  };
+  const matchSubscription = (row: TxRow) => {
+    if (row.status === "sub") return true;
+    return rowConcept(row) === "subscription";
+  };
+
+  const buckets: Array<{
+    key: EssentialBucket["key"];
+    label: string;
+    predicate: (row: TxRow) => boolean;
+  }> = [
+    { key: "utility", label: "공과금", predicate: matchUtility },
+    { key: "maintenance", label: "관리비", predicate: matchMaintenance },
+    { key: "education", label: "교육비", predicate: matchEducation },
+    { key: "subscription", label: "정기결제", predicate: matchSubscription },
+  ];
+
+  return buckets.map(({ key, label, predicate }) => {
+    const cur = buildEssentialAmount(thisMonth, predicate, allRows);
+    const prev = buildEssentialAmount(prevMonth, predicate, allRows);
+    return {
+      key,
+      label,
+      amount: cur.amount,
+      count: cur.count,
+      prevAmount: prev.amount,
+    };
+  });
+}

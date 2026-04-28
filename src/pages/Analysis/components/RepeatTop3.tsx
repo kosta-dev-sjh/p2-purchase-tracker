@@ -10,7 +10,8 @@ import { tokens } from "../../../styles/tokens";
 import { formatKRW } from "../../../utils/format";
 
 export interface RepeatItem {
-  rank: 1 | 2 | 3;
+  /** 1~5위(2026-04-28 TOP3 → TOP5 확장). 정기결제 카드와 시각 높이 맞추기. */
+  rank: 1 | 2 | 3 | 4 | 5;
   title: string;
   platform: string;
   category: string;
@@ -20,13 +21,15 @@ export interface RepeatItem {
 
 /**
  * 레퍼런스 HTML `.rep-num` / `.rep-num.top` 규칙을 그대로 가져옵니다.
- * 1위만 accent 팔레트로 강조하고, 2/3위는 중립 tint + ink3로 보여 주어
+ * 1위만 accent 팔레트로 강조하고, 2~5위는 중립 tint + ink3로 보여 주어
  * 과한 원색 사용을 피하고 정보 위계를 맞춥니다.
  */
 const RANK_STYLE: Record<number, { bg: string; fg: string }> = {
   1: { bg: tokens.color.accentSubtle, fg: tokens.color.accentHover },
   2: { bg: tokens.color.tint, fg: tokens.color.ink3 },
   3: { bg: tokens.color.tint, fg: tokens.color.ink3 },
+  4: { bg: tokens.color.tint, fg: tokens.color.ink3 },
+  5: { bg: tokens.color.tint, fg: tokens.color.ink3 },
 };
 
 const List = styled.ul`
@@ -121,9 +124,14 @@ const EmptyState = styled.div`
 `;
 
 export const RepeatTop3: React.FC<{ items: RepeatItem[] }> = ({ items }) => (
+  /*
+   * 컴포넌트 이름은 RepeatTop3 그대로 둡니다(2026-04-28 TOP5 확장 후).
+   * 외부에서 import 하는 경로/식별자가 바뀌지 않게 하기 위해 라벨만 "TOP 5" 로 손봤습니다.
+   * 사용자 화면 카피로는 "TOP 5" 만 보이며, 5건 미만이면 자연스럽게 적게 노출됩니다.
+   */
   <Card>
     <CardHd>
-      <CardTitle>반복 구매 TOP 3</CardTitle>
+      <CardTitle>반복 구매 TOP 5</CardTitle>
       <Chip $tone="info">이번 달 3회 이상 구매</Chip>
     </CardHd>
     <CardBd>
