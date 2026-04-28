@@ -15,6 +15,30 @@ const popupAuthHeaders = {
 
 export default defineConfig(({ mode }) => ({
   base: '/',
+  build: {
+    modulePreload: {
+      resolveDependencies: (_filename, deps, context) => {
+        if (context.hostType !== 'html') return deps;
+        return deps.filter((dep) => !dep.includes('recharts-') && !dep.includes('tesseract-'));
+      },
+    },
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return undefined;
+          if (id.includes('react-dom')) return 'react-dom';
+          if (id.includes('react-router-dom') || id.includes('react-router')) return 'router';
+          if (id.includes('react')) return 'react';
+          if (id.includes('styled-components')) return 'styled';
+          if (id.includes('tesseract.js')) return 'tesseract';
+          if (id.includes('recharts')) return 'recharts';
+          if (id.includes('zustand')) return 'zustand';
+          if (id.includes('/firebase/')) return 'firebase';
+          return 'vendor';
+        },
+      },
+    },
+  },
   server: {
     headers: popupAuthHeaders,
   },
