@@ -12,6 +12,7 @@ interface ModalProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  dismissible?: boolean;
 }
 
 const Overlay = styled.button`
@@ -103,20 +104,32 @@ const Body = styled.div`
   }
 `;
 
-export const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
+export const Modal = ({
+  isOpen,
+  onClose,
+  title,
+  children,
+  dismissible = true,
+}: ModalProps) => {
   if (!isOpen) {
     return null;
   }
 
   return (
     <>
-      <Overlay type="button" aria-label="모달 닫기" onClick={onClose} />
+      <Overlay
+        type="button"
+        aria-label={dismissible ? "모달 닫기" : "모달 배경"}
+        onClick={dismissible ? onClose : undefined}
+      />
       <ModalCard role="dialog" aria-modal="true" aria-label={title}>
         <Header>
           <Title>{title}</Title>
-          <CloseButton type="button" aria-label="닫기" onClick={onClose}>
-            ×
-          </CloseButton>
+          {dismissible ? (
+            <CloseButton type="button" aria-label="닫기" onClick={onClose}>
+              ×
+            </CloseButton>
+          ) : null}
         </Header>
         <Divider />
         <Body>{children}</Body>
@@ -124,4 +137,3 @@ export const Modal = ({ isOpen, onClose, title, children }: ModalProps) => {
     </>
   );
 };
-

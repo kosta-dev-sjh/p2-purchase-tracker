@@ -138,6 +138,11 @@ const Body = styled.div`
     padding-left: 18px;
   }
 
+  ol {
+    margin: 10px 0 0;
+    padding-left: 18px;
+  }
+
   li + li {
     margin-top: 6px;
   }

@@ -8,7 +8,7 @@
  *       곧바로 써먹을 수 있게 해뒀습니다.
  * 위치: src\pages\Settings\components\CategoryAddModal.tsx
  */
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
@@ -136,14 +136,53 @@ const HexInputRow = styled.div`
   gap: 10px;
 `;
 
-const HexPreview = styled.span<{ $color: string }>`
-  display: inline-block;
+/**
+ * HEX 입력 옆 색상 미리보기. 단순히 색만 보여주는 게 아니라 버튼으로 동작해
+ * 클릭하면 숨겨진 `<input type="color">`를 통해 OS 네이티브 색상 팔레트가 뜬다.
+ * 다른 폼 컨트롤과 톤을 맞추기 위해 라인/포커스/호버 처리를 공통 토큰 기준으로 잡았다.
+ */
+const HexPreview = styled.button<{ $color: string }>`
+  position: relative;
   width: 28px;
   height: 28px;
   border-radius: ${tokens.radius.control};
   border: 1px solid ${tokens.color.line};
   background: ${({ $color }) => $color};
   flex-shrink: 0;
+  padding: 0;
+  cursor: pointer;
+  transition:
+    border-color ${tokens.motion.fast} ease,
+    box-shadow ${tokens.motion.fast} ease,
+    transform ${tokens.motion.fast} ease;
+
+  &:hover {
+    border-color: ${tokens.color.ink4};
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(16, 24, 40, 0.1);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: ${tokens.shadow.focus};
+    border-color: ${tokens.color.accent};
+  }
+`;
+
+/**
+ * 화면에는 보이지 않지만 HexPreview 클릭 시 click()으로 활성화되는 네이티브 color input.
+ * display:none 으로 두면 일부 브라우저(특히 Safari)가 picker 좌표를 잡지 못해 화면 밖에 띄우는
+ * 경우가 있어, 시각적으로는 안 보이게 하되 DOM 위치는 HexPreview 옆에 유지한다.
+ */
+const HiddenColorInput = styled.input.attrs({ type: "color" })`
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  border: 0;
+  padding: 0;
+  margin: 0;
 `;
 
 const ErrorLine = styled.div`
@@ -249,6 +288,13 @@ export const CategoryAddModal = ({
   const [error, setError] = useState<string | null>(null);
 
   /**
+   * HexPreview 버튼이 눌리면 이 input 의 click() 을 호출해 OS 네이티브 색상 팔레트를 띄운다.
+   * 사용자가 picker 에서 색을 고르면 `onChange` 가 #RRGGBB 형식의 값을 그대로 넘겨주므로
+   * 별도 정규화 없이 hex 입력값과 색을 동시에 갱신한다.
+   */
+  const colorInputRef = useRef<HTMLInputElement | null>(null);
+
+  /**
    * 이름 입력값이 어떤 개념 별칭과 매칭되는지 실시간 계산. 이미 체크돼 있거나 다른 카테고리에서
    * 가져가지 못하는 개념이더라도, 여기서는 제안만 내고 실제 바인딩 충돌은 스토어(reassignConcepts)가
    * 해결하므로 모달 쪽은 단순 제안에 집중한다.
@@ -272,6 +318,32 @@ export const CategoryAddModal = ({
     if (normalized) {
       setColor(normalized);
     }
+  };
+
+  /**
+   * 네이티브 color input 에서 색을 골랐을 때 — 항상 #RRGGBB 형식이 보장되므로
+   * 표시 hex draft 와 실제 color 를 동시에 대문자 정규화해 동기화한다.
+   */
+  const handleNativePick = (value: string) => {
+    const upper = value.toUpperCase();
+    setColor(upper);
+    setHexDraft(upper);
+  };
+
+  const openNativePicker = () => {
+    const node = colorInputRef.current;
+    if (!node) return;
+    // showPicker() 가 가능한 환경에서는 그쪽을 우선 사용한다 (Chrome/Edge 최신).
+    // 미지원 브라우저(Safari 등) 폴백으로 click() 을 호출.
+    if (typeof node.showPicker === "function") {
+      try {
+        node.showPicker();
+        return;
+      } catch {
+        // 일부 환경에서 showPicker 가 SecurityError 를 던질 수 있어 click 으로 폴백.
+      }
+    }
+    node.click();
   };
 
   const toggleConcept = (conceptId: ConceptId) => {
@@ -409,9 +481,22 @@ export const CategoryAddModal = ({
           </SwatchGrid>
         </FormField>
 
-        <FormField label="HEX 코드로 지정" helpText="선택한 팔레트 색을 미세 조정하거나, 원하는 색상을 직접 입력할 수 있어요.">
+        <FormField label="HEX 코드로 지정" helpText="선택한 팔레트 색을 미세 조정하거나, 원하는 색상을 직접 입력할 수 있어요. 왼쪽 색상 사각형을 누르면 색상 팔레트로도 고를 수 있어요.">
           <HexInputRow>
-            <HexPreview $color={normalizeHex(hexDraft) ?? color} aria-hidden="true" />
+            <HexPreview
+              type="button"
+              $color={normalizeHex(hexDraft) ?? color}
+              onClick={openNativePicker}
+              aria-label="색상 팔레트 열기"
+              title="색상 팔레트 열기"
+            />
+            <HiddenColorInput
+              ref={colorInputRef}
+              value={normalizeHex(hexDraft) ?? color}
+              onChange={(event) => handleNativePick(event.target.value)}
+              tabIndex={-1}
+              aria-hidden="true"
+            />
             <TextInput
               value={hexDraft}
               onChange={(event) => handleHexChange(event.target.value)}

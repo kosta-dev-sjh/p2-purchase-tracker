@@ -151,7 +151,7 @@ export const LandingCta = () => {
           쇼핑몰 주문 캡처, 카드사 CSV, 다이어리에 적어둔 메모 — 전부 SpendTrack 한 곳에서.
         </Sub>
         <Row>
-          <Primary to="/register">무료로 시작하기</Primary>
+          <Primary to="/register">시작하기</Primary>
           <Ghost to="/login">이미 계정이 있어요</Ghost>
         </Row>
       </Inner>

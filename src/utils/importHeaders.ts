@@ -22,14 +22,28 @@ export const MERCHANT_HEADERS = [
   "merchant",
 ] as const;
 
+/*
+ * AMOUNT_HEADERS 는 "원금/승인금액" 컬럼을 찾을 때 쓰는 헤더 사전.
+ *
+ * 회귀 배경(2026-04-28): NH(ChungGu) 같이 2행 병합 헤더 카드사는 헤더가 다음과
+ * 같이 둘 다 노출됩니다.
+ *   이용금액(현지금액) | 결제금액 | 수수료 | 결제 후 잔액
+ * 여기서 "이용금액"이 원금(approvedAmount), "결제금액"은 이번 회차 청구액
+ * (billedAmount) 입니다. 이전 버전에선 AMOUNT_HEADERS 에 "결제금액"·"청구금액"
+ * 도 들어 있어 pickFirstValue 1차 exact 매칭에서 "결제금액"(=회차 청구) 이 먼저
+ * 잡혀 amount 가 27,472 같이 작은 값으로 저장되는 회귀가 있었습니다. 그 결과:
+ *   1) approvedAmount 가 회차 청구액으로 잘못 박힘
+ *   2) 5만원 임계(INSTALLMENT_MINIMUM_AMOUNT) 가 회차 청구액에 걸려, 원금이
+ *      충분히 큰(예: 137,360원) 정상 할부도 일시불로 폴백됨.
+ *
+ * 따라서 "결제금액"·"청구금액"·"월청구금액" 은 BILLING_AMOUNT_HEADERS 전용으로
+ * 분리하고, csvImport 의 effectiveAmount 폴백(amount ?? billedAmount) 으로
+ * "결제금액 만 있는" 카드사도 폴백 처리합니다.
+ */
 export const AMOUNT_HEADERS = [
   "승인금액",
   "국내이용금액",
   "해외이용금액",
-  // BC카드: 병합셀 2행 헤더 처리 후 서브헤더 "결제금액"이 실제 컬럼명으로 매핑됩니다.
-  "결제금액",
-  // 단일 헤더 행에서 "청구금액"이 직접 노출되는 카드사 포맷 폴백.
-  "청구금액",
   "이용금액",
   "금액",
   "합계",

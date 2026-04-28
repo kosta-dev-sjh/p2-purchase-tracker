@@ -42,15 +42,15 @@ const STEPS: TourStep[] = [
     selector: '[data-tour="home-kpi"]',
     title: "이번 달 한눈에 보기",
     body:
-      "총 지출·환급·건수·목표 사용률을 상단 한 줄로 확인할 수 있어요. 월을 바꾸면 같은 자리에서 수치만 교체됩니다.",
+      "총 지출·평균 주문금액·총 수입·환불·취소 금액을 상단 한 줄로 확인할 수 있어요. 월을 바꾸면 같은 자리에서 수치만 교체됩니다.",
   },
   {
     id: "manual-savebar",
     route: "/manual-entry",
     selector: '[data-tour="manual-savebar"]',
-    title: "영수증 없는 지출은 직접 입력",
+    title: "자동으로 잡히지 않는 지출은 직접 입력",
     body:
-      "오프라인 결제나 현금 지출처럼 자동으로 잡히지 않는 내역도, 수동 입력에서 한 건씩 가볍게 기록할 수 있어요.",
+      "오프라인 결제나 현금 지출처럼 주문 캡처·카드 내역으로 들어오지 않는 거래도, 수동 입력에서 한 건씩 가볍게 기록할 수 있어요.",
   },
   {
     id: "ocr-zone",
@@ -58,15 +58,15 @@ const STEPS: TourStep[] = [
     selector: '[data-tour="ocr-zone"]',
     title: "주문 캡처로 자동 등록",
     body:
-      "쇼핑몰 주문내역 스크린샷을 올리면 상품·가격·플랫폼을 자동으로 뽑아 거래로 만들어 드려요. 한 번에 여러 장도 가능해요.",
+      "쿠팡·네이버쇼핑 같은 쇼핑몰 주문내역 스크린샷을 올리면 상품·가격·플랫폼을 자동으로 뽑아 거래로 만들어 드려요. 한 번에 여러 장도 가능해요.",
   },
   {
     id: "csv-zone",
     route: "/csv-upload",
     selector: '[data-tour="csv-zone"]',
-    title: "카드 CSV 한 번에 가져오기",
+    title: "카드 내역 한 번에 가져오기",
     body:
-      "카드사에서 내려받은 CSV·엑셀 파일을 올리면 한 달치 결제가 바로 거래 테이블로 정리됩니다.",
+      "카드사에서 내려받은 이용내역 파일(CSV·엑셀)을 올리면 한 달치 결제가 바로 거래 테이블로 정리됩니다. 같은 거래는 자동으로 중복 감지해요.",
   },
   {
     id: "analysis-summary",
@@ -74,7 +74,7 @@ const STEPS: TourStep[] = [
     selector: '[data-tour="analysis-summary"]',
     title: "이번 달이 어땠는지 요약",
     body:
-      "어디에 얼마를 썼는지, 지난달과 무엇이 달라졌는지 한 문장으로 요약해 보여드려요. 아래 차트로 세부 흐름도 확인해 보세요.",
+      "어디에 얼마를 썼는지, 지난달과 무엇이 달라졌는지 한 줄 요약으로 보여드려요. 아래 차트로 플랫폼·카테고리별 세부 흐름도 확인해 보세요.",
   },
 ];
 
@@ -185,6 +185,10 @@ export const ProductTour: React.FC = () => {
   /**
    * 말풍선 실측 높이. 측정되기 전에는 TOOLTIP_HEIGHT_EST 폴백.
    * 모바일/줌 상태에서 본문이 늘어나는 경우에도 말풍선이 viewport 를 벗어나지 않도록 하기 위함.
+   *
+   * 폭은 JS 에서 직접 결정해 인라인 style 로 강제합니다(아래 effectiveTooltipWidth 참고).
+   * 측정 기반으로 두면 첫 프레임 timing 이나 HMR 환경에서 CSS 폭과 어긋나 우측이
+   * 잘리는 회귀가 있었습니다.
    */
   const tooltipRef = useRef<HTMLDivElement | null>(null);
   const [tooltipHeight, setTooltipHeight] = useState<number>(TOOLTIP_HEIGHT_EST);
@@ -300,7 +304,20 @@ export const ProductTour: React.FC = () => {
   const spotWidth = rect.width + SPOTLIGHT_PAD * 2;
   const spotHeight = rect.height + SPOTLIGHT_PAD * 2;
 
-  const tooltipWidth = Math.min(360, viewW - 32);
+  /**
+   * 말풍선 폭은 JS 가 직접 계산해 인라인 style 로 강제합니다. CSS 미디어쿼리와
+   * JS 클램프가 어긋나면(예: mobile 768px 분기) 우측이 viewport 를 벗어나는 회귀가
+   * 있어, 측정값 의존을 버리고 단일 진실원으로 통일했습니다.
+   *
+   * 분기 기준은 기존 CSS 와 동일:
+   *   - desktop: min(360, viewW - 32)
+   *   - mobile (≤768px): viewW - 24
+   * 16px 의 좌측 여백 + 16px 의 우측 여백을 보장하기 위해 위 식을 그대로 사용합니다.
+   */
+  const isMobileViewport = viewW <= 768;
+  const effectiveTooltipWidth = isMobileViewport
+    ? Math.max(240, viewW - 24)
+    : Math.min(360, Math.max(240, viewW - 32));
 
   // 아래 공간이 충분하면 말풍선을 아래에, 아니면 위에 배치합니다.
   // tooltipHeight 는 ResizeObserver 가 실측해 둔 값(없으면 fallback 추정치).
@@ -316,10 +333,14 @@ export const ProductTour: React.FC = () => {
     Math.min(tooltipTop, viewH - tooltipHeight - 16)
   );
 
-  let tooltipLeft = rect.left + rect.width / 2 - tooltipWidth / 2;
+  // 좁은 뷰포트(예: 580~640px)에서 mobile 폭(`100vw - 24`)이 데스크톱 분기 폭(360)
+  // 보다 커, JS 가정 폭으로 클램프하면 우측이 잘리는 회귀가 있었습니다.
+  // effectiveTooltipWidth 는 위에서 JS 가 직접 계산한 폭이며, Tooltip 인라인 style
+  // 의 width 도 같은 값을 사용해 CSS 와의 어긋남을 원천 차단합니다.
+  let tooltipLeft = rect.left + rect.width / 2 - effectiveTooltipWidth / 2;
   tooltipLeft = Math.max(
     16,
-    Math.min(tooltipLeft, viewW - tooltipWidth - 16)
+    Math.min(tooltipLeft, viewW - effectiveTooltipWidth - 16)
   );
 
   const isLast = index === STEPS.length - 1;
@@ -339,7 +360,10 @@ export const ProductTour: React.FC = () => {
         role="dialog"
         aria-modal="true"
         aria-label="기능 투어"
-        style={{ top: tooltipTop, left: tooltipLeft }}
+        // width 도 인라인으로 못박아 CSS(`min(360px, calc(100vw - 32px))` / mobile 분기)
+        // 와 JS 클램프가 어긋날 가능성을 제거합니다. 좁은 뷰포트(특히 mobile breakpoint
+        // 768px 부근)에서 우측 잘림이 재현되던 회귀를 방지하기 위함.
+        style={{ top: tooltipTop, left: tooltipLeft, width: effectiveTooltipWidth }}
       >
         <Header>
           <Badge>

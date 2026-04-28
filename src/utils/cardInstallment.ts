@@ -93,10 +93,29 @@ export function getCardInstallmentKind(
     kind = "unknown";
   }
 
-  // 5만원 미만은 할부 불가(한국 카드사 정책) → 일시불로 폴백.
+  /*
+   * 5만원 미만은 할부 불가(한국 카드사 정책) → 일시불로 폴백.
+   *
+   * 회귀 배경(2026-04-28): 임계 비교 대상이 항상 amount 였는데, billing 행에서는
+   * amount = 회차 청구액(예: 24,718) 이라 원금이 큰 정상 할부(74,150 / 3개월) 도
+   * 5만원 미만으로 잘못 보이고 일시불로 폴백되는 회귀가 있었습니다(ChungGu의 1/3 행들).
+   *
+   * 정책: 임계는 "원금" 기준이어야만 의미가 있습니다.
+   *   · approval 행: amount = 원금. 그대로 비교.
+   *   · billing 행: approvedAmount 가 있으면 그걸로 비교. 없으면 임계 폴백 자체를
+   *     건너뜀 — 회차당 작은 금액 만으로 일시불 폴백을 결정하면 정상 할부를 망가뜨림.
+   *     원금 정보 없는 install_billing 은 보수적으로 install 유지하고, 사용자가
+   *     거래 상세의 정정 토글로 직접 바꾸도록 둡니다.
+   */
+  const principalForThreshold =
+    kind === "installment_billing"
+      ? typeof cardImport.approvedAmount === "number"
+        ? cardImport.approvedAmount
+        : null
+      : amount;
   if (
-    typeof amount === "number" &&
-    Math.abs(amount) < INSTALLMENT_MINIMUM_AMOUNT &&
+    typeof principalForThreshold === "number" &&
+    Math.abs(principalForThreshold) < INSTALLMENT_MINIMUM_AMOUNT &&
     (kind === "installment_approval" || kind === "installment_billing")
   ) {
     return "lump_sum";
@@ -168,6 +187,32 @@ export function getInstallmentMonthlyEstimate(
   const months = cardImport.installmentMonths ?? 0;
   if (months <= 0) return null;
   return Math.round(Math.abs(totalAmount) / months);
+}
+
+/**
+ * 할부 청구(billing) 행에서 "원금 추정" 을 역산.
+ * 청구 행은 amount 가 이미 월 회차 청구액이라 원금 정보가 없는데, installmentCycleTotal
+ * 또는 installmentMonths 가 있으면 amount × N 으로 대략적인 원금을 보여줄 수 있습니다.
+ * 이자가 포함된 청구액의 단순 곱이라 실제 원금과 ±10% 정도 오차가 있을 수 있어요(이자 분).
+ *
+ * 거래 상세나 행 sub 텍스트에 "원금 추정 ≈ ₩X" 안내용. 정확한 원금은 approval 행이
+ * 같이 들어와 페어 매칭(Phase 4/5) 되었을 때만 알 수 있습니다.
+ */
+export function getInstallmentOriginalEstimate(
+  cardImport?: CardImport | null,
+  monthlyAmount?: number,
+): { total: number; months: number } | null {
+  if (!cardImport || typeof monthlyAmount !== "number") return null;
+  if (getCardInstallmentKind(cardImport, monthlyAmount) !== "installment_billing") {
+    return null;
+  }
+  const months =
+    cardImport.installmentCycleTotal ?? cardImport.installmentMonths ?? 0;
+  if (months <= 1) return null;
+  return {
+    total: Math.round(Math.abs(monthlyAmount) * months),
+    months,
+  };
 }
 
 /**

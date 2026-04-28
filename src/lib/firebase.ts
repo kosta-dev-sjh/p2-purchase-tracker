@@ -16,7 +16,10 @@ const firebaseConfig = {
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
-void setPersistence(auth, browserLocalPersistence);
+void setPersistence(auth, browserLocalPersistence).catch(() => {
+  // 일부 브라우저/개인정보 보호 설정에서는 저장소 접근이 막힐 수 있습니다.
+  // 세션 자체는 메모리 기반으로 계속 동작하도록 여기서는 조용히 흡수합니다.
+});
 
 export const db = getFirestore(app);
 export const functions = getFunctions(app, "asia-northeast3");

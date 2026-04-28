@@ -141,11 +141,27 @@ const RowActionButton = styled.button<{ $variant: "edit" | "delete" }>`
   }
 `;
 
-/**
- * 표준 카테고리 키인지 판별합니다. custom_ 접두사가 붙지 않은 값은 표준 키로 간주합니다.
+/*
+ * 카테고리별 거래 건수 집계 헬퍼(2026-04-28 동적화).
+ *
+ * 회귀 배경: 이전엔 표준 5개(living/fashion/digital/food/etc) 만 카운트하고 그 외 모든 키
+ * (신규 표준 utility/maintenance/education + 사용자 custom_*) 는 0 으로 박혀, 설정 화면에
+ * "0건" 으로만 표시되는 문제. 사용자 입장에서 "공과금 카테고리에 행을 자동 추정으로 넣어
+ * 줬다는데 왜 0 건이지?" 회귀.
+ *
+ * 정책: row.categories 에 들어 있는 모든 id 를 그대로 카운트. 카테고리 단일 진실원은
+ * categoriesStore 이고, count 는 거래 단위 사실이라 union 타입 좁히기 없이 모든 string
+ * 키를 받아들이는 게 안전.
  */
-function isTxCategoryKey(id: string): id is TxCategory {
-  return id === "living" || id === "fashion" || id === "digital" || id === "food" || id === "etc";
+function buildCategoryCounts(rows: { categories: TxCategory[] }[]): Record<string, number> {
+  const counter: Record<string, number> = {};
+  for (const row of rows) {
+    // 다중 카테고리 정책과 동일: 거래 하나가 카테고리 N개에 속하면 N개 모두에 1건씩.
+    for (const cat of row.categories) {
+      counter[cat] = (counter[cat] ?? 0) + 1;
+    }
+  }
+  return counter;
 }
 
 /**
@@ -190,25 +206,10 @@ export const CategoriesSection: React.FC = () => {
   } | null>(null);
 
   /**
-   * 표준 카테고리별 거래 건수 집계. 사용자 정의 카테고리는 아직 TxCategory union에 들어가지 않으므로
-   * 0건으로 표시됩니다(데모 범위).
+   * 모든 카테고리(표준 신규 3종·기존 5종·사용자 custom_*) 의 거래 건수 집계.
+   * id → count 동적 맵이라 새 카테고리가 추가되면 자동으로 카운트됩니다.
    */
-  const countByCategory = useMemo(() => {
-    const counter: Record<TxCategory, number> = {
-      living: 0,
-      fashion: 0,
-      digital: 0,
-      food: 0,
-      etc: 0,
-    };
-    for (const row of rows) {
-      // 다중 카테고리 정책과 동일하게, 거래 하나가 카테고리 N개에 속하면 N개 모두에 1건씩 집계합니다.
-      for (const cat of row.categories) {
-        counter[cat] += 1;
-      }
-    }
-    return counter;
-  }, [rows]);
+  const countByCategory = useMemo(() => buildCategoryCounts(rows), [rows]);
 
   const handleSubmit = (payload: CategoryAddPayload) => {
     if (modal.kind === "edit") {
@@ -227,7 +228,8 @@ export const CategoriesSection: React.FC = () => {
    * 실제 삭제는 모달의 confirmDelete에서 처리합니다.
    */
   const requestDelete = (id: string, name: string) => {
-    const count = isTxCategoryKey(id) ? countByCategory[id] ?? 0 : 0;
+    // 어떤 키든 동적 맵에서 카운트를 그대로 읽어 보여 줍니다(표준·custom 모두 동일 처리).
+    const count = countByCategory[id] ?? 0;
     setDeleteTarget({ id, name, count });
   };
 
@@ -248,25 +250,31 @@ export const CategoriesSection: React.FC = () => {
     <>
       <SettingsBlock
         title="카테고리"
-        subtitle="지출과 수입을 구분하는 카테고리 목록이에요. 색상은 리포트와 차트에 반영돼요. ‘기타’는 카테고리를 지정하지 않은 거래의 기본값이라 수정·삭제할 수 없어요."
+        subtitle="지출과 수입을 구분하는 카테고리 목록이에요. 색상은 리포트와 차트에 반영돼요. 기본 카테고리(기타·공과금·관리비·교육비)는 분석·인사이트 합산 키라 수정·삭제할 수 없어요."
       >
         <HeaderBar>
-          <HeaderNote>총 {categories.length}개 · 기타 제외 수정·삭제 가능</HeaderNote>
+          <HeaderNote>총 {categories.length}개 · 기본 카테고리 외 수정·삭제 가능</HeaderNote>
           <Button variant="secondary" size="sm" onClick={() => setModal({ kind: "add" })}>
             + 카테고리 추가
           </Button>
         </HeaderBar>
         <List>
           {categories.map((category) => {
-            const count = category.isStandard && isTxCategoryKey(category.id)
-              ? countByCategory[category.id]
-              : 0;
+            // 표준·custom 가리지 않고 동적 맵에서 카운트. 신규 표준(utility/maintenance/
+            // education) 과 사용자 custom_* 모두 거래내역에 부여된 만큼 정확히 노출.
+            const count = countByCategory[category.id] ?? 0;
             return (
               <Row
                 key={category.id}
                 $locked={category.isLocked}
                 aria-disabled={category.isLocked || undefined}
-                title={category.isLocked ? "기타는 미지정 거래의 기본값이라 편집할 수 없어요" : undefined}
+                title={
+                  category.isLocked
+                    ? category.id === "etc"
+                      ? "기타는 미지정 거래의 기본값이라 편집할 수 없어요"
+                      : "고정 카테고리(공과금·관리비·교육비)는 분석·인사이트 합산 키라 편집할 수 없어요"
+                    : undefined
+                }
               >
                 <Dot $color={category.color} $muted={category.isLocked} />
                 <NameCell>

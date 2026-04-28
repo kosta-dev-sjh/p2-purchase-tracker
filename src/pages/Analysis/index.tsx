@@ -11,6 +11,7 @@ import { SummaryBanner } from "./components/SummaryBanner";
 import { KpiStrip } from "./components/KpiStrip";
 import { PlatformBars } from "./components/PlatformBars";
 import { CategoryBars } from "./components/CategoryBars";
+import { EssentialStrip } from "./components/EssentialStrip";
 import { RepeatTop3 } from "./components/RepeatTop3";
 import { SubscriptionList } from "./components/SubscriptionList";
 import { MonthlyTrend } from "./components/MonthlyTrend";
@@ -126,6 +127,12 @@ export const AnalysisPage: React.FC = () => {
           />
         </div>
         <KpiStrip kpis={data.kpis} />
+        {/*
+          가계부 필수 항목 4종(2026-04-28): KPI 바로 아래에 둬서 "이번 달 고정 흐름이
+          얼마인지" 가 가장 먼저 보이게. 카테고리별 지출(아래 Row2 안 CategoryBars) 과
+          별도 섹션 — 거기엔 라이프스타일·필수 모두 섞여 있어 핵심이 흐려짐.
+        */}
+        <EssentialStrip buckets={data.essentials} month={month} />
         <Row2>
           <PlatformBars
             items={data.platform.items}
@@ -138,7 +145,29 @@ export const AnalysisPage: React.FC = () => {
         <MonthlyTrend points={data.trend.points} average={data.trend.average} />
         <Row3>
           <RepeatTop3 items={data.repeat} />
-          <SubscriptionList items={data.subscriptions} total={data.subscriptionTotal} />
+          {/*
+           * 분석 페이지의 정기결제 카드(2026-04-28): "반복결제" 페이지가 모든 분류(공과금·할부·
+           * 자주 구매 포함) 를 다 보여주는 우산 뷰라면, 여기는 "정기적으로 청구되는 것" 만 — 즉
+           * subscription(구독·사용자 마킹) + utility(공과금·통신·보험) 두 분류만 노출. 할부/자주
+           * 구매는 "정기 청구" 가 아니므로 제외.
+           */}
+          {(() => {
+            const recurringOnly = data.subscriptions.filter(
+              (it) => it.tagKind === "subscription" || it.tagKind === "utility",
+            );
+            const recurringTotal = recurringOnly.reduce((sum, it) => sum + it.amount, 0);
+            return (
+              <SubscriptionList
+                items={recurringOnly}
+                total={recurringTotal}
+                title="정기결제"
+                description="매월 정기적으로 청구되는 구독·공과금"
+                footerLabel="이번 달 정기결제 합계"
+                emptyTitle="아직 감지된 정기결제가 없어요."
+                emptyBody="구독·공과금·보험·통신비처럼 매월 같은 날 같은 금액으로 빠지는 결제가 쌓이면 여기 모여요."
+              />
+            );
+          })()}
           <WeeklyPattern
             days={data.weekly.days}
             note={data.weekly.note}

@@ -62,6 +62,18 @@ export const GlobalStyle = createGlobalStyle`
     }
   }
 
+  /*
+   * Recharts SVG 요소(슬라이스/막대/라인/도트) 가 클릭·탭 후 포커스를 받으면
+   * 브라우저 기본 사각형 outline 이 그려져 거슬림 — 도넛 슬라이스, 트렌드 차트의
+   * 라인 포인트, 막대 등 차트 전반에서 동일 회귀가 있어 한 곳에서 차단합니다.
+   * 차트 강조는 이미 fillOpacity / activeDot / Tooltip 으로 처리되므로 외곽 outline
+   * 은 불필요. .recharts-wrapper 안으로만 scoped 라 다른 SVG 영향 없음.
+   */
+  .recharts-wrapper :focus,
+  .recharts-wrapper :focus-visible {
+    outline: none;
+  }
+
   a {
     color: inherit;
   }

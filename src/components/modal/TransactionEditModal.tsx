@@ -237,7 +237,16 @@ function rowToMeta(row: TxRow): MetaFieldValues {
         : cardImport?.paymentMode === "lump_sum"
           ? "lump_sum"
           : "none",
-    installmentMonths: cardImport?.installmentMonths ? String(cardImport.installmentMonths) : "",
+    /*
+     * 할부개월 폴백 우선순위(2026-04-28): installmentMonths → installmentCycleTotal.
+     * 할부개월 헤더가 없는 카드사라도 회차 정보(예: 5/5) 만 있으면 총 회차 = 할부 개월수.
+     * 폼은 할부개월 한 칸만 노출하므로 둘을 같은 값으로 채워줍니다.
+     */
+    installmentMonths: cardImport?.installmentMonths
+      ? String(cardImport.installmentMonths)
+      : cardImport?.installmentCycleTotal
+        ? String(cardImport.installmentCycleTotal)
+        : "",
     // 회차 입력 surface 가 제거돼 폼이 더 이상 해당 키를 읽지 않습니다(2026-04-28).
     // cardImport 에 회차가 들어 있어도 편집 폼에는 노출되지 않고, 다른 필드 편집 시에도
     // patch 로 다시 쓰이지 않으므로 그대로 보존됩니다.
@@ -642,6 +651,7 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
             // 카드 CSV 로 들어온 거래(cardImport 존재) 만 결제 메타 위에 출처 안내 배너 표시.
             // 사용자가 카드사 원본 값과 달라진다는 점을 의식하고 손대도록 유도하는 용도.
             cardSourceNotice={Boolean(row.detail?.cardImport)}
+            txType={type}
           />
 
           <SectionLabel>상태 태그</SectionLabel>
@@ -649,24 +659,33 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
             <StatusTags value={status} type={type} onChange={setStatus} />
           </div>
 
-          <SectionHeader>
-            <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
-            <AddButton type="button" onClick={() => setProductModal({ type: "add" })}>
-              + 상품 추가
-            </AddButton>
-          </SectionHeader>
-          <SectionHint>
-            상품을 추가하거나 각 행의 '수정'을 눌러 개별 상품을 고칠 수 있어요.
-          </SectionHint>
-          <ProductRows
-            products={products}
-            // 편집 중인 거래의 플랫폼을 그대로 넘겨, 링크 미등록 상품을 그 플랫폼 검색창으로 보낼 수 있게 합니다.
-            platform={row.platform}
-            onEdit={(id) => setProductModal({ type: "edit", id })}
-            onRemove={(id) =>
-              setProducts((current) => current.filter((p) => p.id !== id))
-            }
-          />
+          {/*
+           * 상품 영역 노출(2026-04-28): 지출 또는 수입 환불/취소 일 때만. 일반 수입엔
+           * 상품 개념이 없어 UI 노이즈만 됨. 기존 거래의 items 가 있다면 데이터 자체는
+           * 보존(편집 모달에서 안 보일 뿐, 저장 시 보존되는지 확인 필요).
+           */}
+          {(type === "expense" || status === "refund" || status === "cancel") && (
+            <>
+              <SectionHeader>
+                <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
+                <AddButton type="button" onClick={() => setProductModal({ type: "add" })}>
+                  + 상품 추가
+                </AddButton>
+              </SectionHeader>
+              <SectionHint>
+                상품을 추가하거나 각 행의 '수정'을 눌러 개별 상품을 고칠 수 있어요.
+              </SectionHint>
+              <ProductRows
+                products={products}
+                // 편집 중인 거래의 플랫폼을 그대로 넘겨, 링크 미등록 상품을 그 플랫폼 검색창으로 보낼 수 있게 합니다.
+                platform={row.platform}
+                onEdit={(id) => setProductModal({ type: "edit", id })}
+                onRemove={(id) =>
+                  setProducts((current) => current.filter((p) => p.id !== id))
+                }
+              />
+            </>
+          )}
 
           {error && <ErrorLine role="alert">{error}</ErrorLine>}
 

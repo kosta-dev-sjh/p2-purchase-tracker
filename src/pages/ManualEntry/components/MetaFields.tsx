@@ -217,11 +217,23 @@ export const MetaFields: React.FC<{
    * 수동 입력 신규 작성 화면에서는 의미가 없어 false(기본).
    */
   cardSourceNotice?: boolean;
-}> = ({ value, onChange, fieldIdPrefix = "meta", cardSourceNotice = false }) => {
+  /**
+   * 거래 유형. 결제방식·결제예정일·할부 메타는 expense 일 때만 노출 (카드 결제 메타라
+   * income 에는 무의미함). 기본은 "expense" — 호환성 위해 명시 안 하면 기존 동작 유지.
+   */
+  txType?: "expense" | "income";
+}> = ({
+  value,
+  onChange,
+  fieldIdPrefix = "meta",
+  cardSourceNotice = false,
+  txType = "expense",
+}) => {
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
   const isInstallment = value.installmentKind === "installment";
   const hasBilledAmount = value.billedAmount.trim().length > 0;
+  const isExpense = txType === "expense";
 
   // 카테고리 목록은 스토어 전체 항목을 사용합니다.
   // 정렬 정책은 한 곳(constants/labels.sortCategoriesByStandard)에서 결정해 다른 페이지와 일관성을 맞춥니다.
@@ -248,9 +260,14 @@ export const MetaFields: React.FC<{
     <Grid>
       <Field>
         <FormField label="거래명" required>
+          {/* 거래명 placeholder 를 type 별로 다르게 — 사용자가 무엇을 적어야 할지 즉시 감 잡도록. */}
           <TextInput
             id={`${fieldIdPrefix}-title`}
-            placeholder="예: 쿠팡 주문, 네이버 환불"
+            placeholder={
+              isExpense
+                ? "예: 쿠팡 주문, 스타벅스 강남점"
+                : "예: 월급, 환불(쿠팡 반품), 이체 수령"
+            }
             value={value.title}
             onChange={(event) => patch({ title: event.target.value })}
             maxLength={MAX_TITLE_LENGTH}
@@ -307,7 +324,12 @@ export const MetaFields: React.FC<{
           />
         </FormField>
       </Field>
-      {cardSourceNotice && (
+      {/*
+       * 결제방식·결제예정일·할부개월·청구금액은 카드 결제 메타 — 지출(expense) 거래일 때만
+       * 노출(2026-04-28). 수입(income, 환불·취소 포함) 행은 카드 결제 메타가 없어 사용자에게
+       * 빈 셀이 보이면 혼란만 줘서 통째로 숨김.
+       */}
+      {cardSourceNotice && isExpense && (
         <Field $span={2}>
           <CardSourceNotice role="note">
             <span aria-hidden="true">💳</span>
@@ -319,34 +341,41 @@ export const MetaFields: React.FC<{
           </CardSourceNotice>
         </Field>
       )}
-      <Field>
-        <FormField label="결제방식" helpText="사용자 화면에서는 일시불과 할부만 구분해 보여줘요.">
-          <PlatformSelect
-            value={value.installmentKind}
-            onChange={(event) =>
-              patch({
-                installmentKind: event.target.value as MetaFieldValues["installmentKind"],
-              })
-            }
-            aria-label="결제방식"
+      {isExpense && (
+        <Field>
+          <FormField
+            label="결제방식"
+            helpText="카드 결제 메타. 모르면 그대로 두세요."
           >
-            <option value="none">선택 안 함</option>
-            <option value="lump_sum">일시불</option>
-            <option value="installment">할부</option>
-          </PlatformSelect>
-        </FormField>
-      </Field>
-      <Field>
-        <FormField label="결제예정일" helpText="선택 항목 · 카드대금 결제 예정일이 보이면 함께 기록해 둘 수 있어요.">
-          <DatePicker
-            id={`${fieldIdPrefix}-due-date`}
-            value={value.dueDate}
-            onChange={(next) => patch({ dueDate: next })}
-            aria-label="결제예정일"
-          />
-        </FormField>
-      </Field>
-      {isInstallment && (
+            <PlatformSelect
+              value={value.installmentKind}
+              onChange={(event) =>
+                patch({
+                  installmentKind: event.target.value as MetaFieldValues["installmentKind"],
+                })
+              }
+              aria-label="결제방식"
+            >
+              <option value="none">미입력 (기본)</option>
+              <option value="lump_sum">일시불</option>
+              <option value="installment">할부</option>
+            </PlatformSelect>
+          </FormField>
+        </Field>
+      )}
+      {isExpense && (
+        <Field>
+          <FormField label="결제예정일" helpText="선택 항목 · 카드대금 결제 예정일이 보이면 함께 기록해 둘 수 있어요.">
+            <DatePicker
+              id={`${fieldIdPrefix}-due-date`}
+              value={value.dueDate}
+              onChange={(next) => patch({ dueDate: next })}
+              aria-label="결제예정일"
+            />
+          </FormField>
+        </Field>
+      )}
+      {isExpense && isInstallment && (
         <Field>
           <FormField
             label="할부개월"
@@ -367,7 +396,7 @@ export const MetaFields: React.FC<{
        * 위함. 회차 정보가 필요한 사용자는 "이번 달 청구금액 + 할부개월 + 결제예정일" 조합으로
        * 충분히 진행 상황을 추적할 수 있습니다.
        */}
-      {isInstallment && (
+      {isExpense && isInstallment && (
         <Field>
           <FormField label="이번 달 청구금액" helpText="선택 항목 · 청구형 자료처럼 실제 반영 금액을 아는 경우에만 입력해요.">
             <AmountInput

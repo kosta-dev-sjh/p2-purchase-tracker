@@ -3,6 +3,7 @@
  * 위치: src\pages\Transactions\components\TransactionTable.tsx
  */
 import React, { memo, useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import styled, { css, keyframes } from "styled-components";
 import { Card } from "../../../components/primitives/Card";
 import { Tag } from "../../../components/primitives/Tag";
@@ -20,6 +21,10 @@ import {
   getCardInstallmentTagKind,
   getInstallmentMonthlyEstimate,
 } from "../../../utils/cardInstallment";
+import {
+  findApprovalLinkedToBilling,
+  findBillingsLinkedToApproval,
+} from "../../../utils/expenseAccounting";
 
 export type TxType = "expense" | "income";
 /**
@@ -131,22 +136,80 @@ export interface TxRow {
       sourceSheet?: string;
       rawRowFingerprint?: string;
       originalMerchant?: string;
+      /**
+       * AI 폴백 적용 표식. 카드사 헤더가 표준 양식과 달라 일시불/할부 컬럼을 자동
+       * 매핑하지 못한 시트에 한해, 시트당 1회 Gemini 에 행을 보내 결제 방식을
+       * 분류받습니다(2026-04-28 합의). 그 결과 paymentMode/installmentMonths 가
+       * 실제로 채워진 행에만 true. 헤더로 채운 행에는 절대 안 찍힙니다 — 화면에서
+       * "AI 가 손댄 것처럼 보여주는 거짓말" 금지(OCR 정책과 동일 원칙).
+       */
+      aiApplied?: boolean;
     };
   };
 }
 
+/*
+ * 컬럼 폭 정책 (2026-04-28 개정):
+ *   기존엔 고정 px 컬럼 + min-width 920/856px 두 단으로만 끊어, 데스크톱 → 태블릿
+ *   사이에선 점진적으로 줄지 않고 viewport 가 좁아지면 가로 스크롤만 생기는 회귀가
+ *   있었습니다. 다른 페이지(Home/Analysis 등)는 컨테이너 폭 변화에 따라 카드와
+ *   라벨이 부드럽게 함께 줄어드는데, 거래내역만 통일성이 깨져 사용자 지적.
+ *
+ *   해결: 모든 고정 컬럼을 clamp(min, vw, max) 로 바꿔 viewport 가 줄면 컬럼도
+ *   같이 줄도록 했습니다. min 값은 "텍스트가 한 줄로 들어가는 한계" 기준,
+ *   max 값은 기존 데스크톱 고정값. 거래명 컬럼만 minmax(140px, 1fr) 로 남은
+ *   공간을 흡수합니다. min-width 는 "정말 더 줄면 깨지기 시작하는 지점"
+ *   까지만 두고, 그 아래는 가로 스크롤로 폴백.
+ *
+ *   컬럼 순서: 유형 / 주문일 / 플랫폼 / 거래명 / 상품(+N개) / 카테고리 / 금액 / 상태·결제.
+ *   상품 컬럼은 detail.items 가 있을 때만 "+N개" 칩을 노출해 거래명을 어지럽히지 않으면서
+ *   "이 거래엔 상세 상품이 따로 있다"를 한눈에 알 수 있게 합니다.
+ */
+/*
+ * Container query wrapper(2026-04-28).
+ *
+ * 기존엔 viewport media query(768/1024px) 만으로 모바일/태블릿/데스크톱을 분기했는데,
+ * 사이드바 layout 의 main 영역 폭은 viewport 보다 약 240px 작아 — viewport 1000px 라도
+ * main 은 760px. 이 차이로 사용자 화면(viewport 870px → main ~630px) 에서 표가 화면
+ * 밖으로 잘리는 회귀가 반복됐습니다.
+ *
+ * container query 로 부모(Card → ContainerScope) 폭 기반으로 분기하면 사이드바 유무·
+ * 메뉴 접힘 상태와 무관하게 main 의 실제 폭만 보고 카드/표를 토글할 수 있습니다.
+ *  - 880px 미만: 가로 스크롤 없이 풀 8컬럼 표 → 모바일 카드(MobileList) 로 전환
+ *  - 880px 이상: 표 그대로 (clamp 컬럼이 부드럽게 줄어듦)
+ */
+const ContainerScope = styled.div`
+  container-type: inline-size;
+`;
+
 const Table = styled.div`
   display: grid;
-  /* 컬럼 순서: 유형 / 주문일 / 플랫폼 / 거래명 / 상품(+N개) / 카테고리 / 금액 / 상태·결제.
-     상품 컬럼은 detail.items 가 있을 때만 "+N개" 칩을 노출해 거래명을 어지럽히지 않으면서
-     "이 거래엔 상세 상품이 따로 있다"를 한눈에 알 수 있게 합니다. */
-  grid-template-columns: 76px 110px 108px 1fr 84px 132px 140px 124px;
+  grid-template-columns:
+    clamp(60px, 6.5vw, 76px)
+    clamp(88px, 9.5vw, 110px)
+    clamp(84px, 9vw, 108px)
+    minmax(140px, 1fr)
+    clamp(64px, 7vw, 84px)
+    clamp(104px, 11vw, 132px)
+    clamp(124px, 14vw, 168px)
+    /* 상태/결제 컬럼: "정기결제 + 일시불" 두 태그가 한 줄에 들어가도록 max 를 살짝 늘림.
+       그래도 못 들어가면 StatusCell 의 flex-wrap 이 두 줄로 자연스럽게 흘려보냄. */
+    clamp(108px, 13vw, 152px);
   font-size: 13px;
-  min-width: 920px;
+  min-width: 720px;
 
-  ${media.tablet} {
-    grid-template-columns: 76px 96px 100px 1fr 80px 124px 132px 116px;
-    min-width: 856px;
+  /* container query: 컨테이너가 좁아지면 컬럼 max 도 한 단 낮춰 부드럽게 줄어듦. */
+  @container (max-width: 1024px) {
+    grid-template-columns:
+      clamp(56px, 6.5vw, 70px)
+      clamp(82px, 9.5vw, 100px)
+      clamp(80px, 9vw, 100px)
+      minmax(132px, 1fr)
+      clamp(60px, 7vw, 80px)
+      clamp(96px, 11vw, 124px)
+      clamp(116px, 14vw, 152px)
+      clamp(104px, 13vw, 144px);
+    min-width: 700px;
   }
 `;
 
@@ -154,6 +217,14 @@ const TableScroll = styled.div`
   overflow-x: auto;
   overflow-y: hidden;
 
+  /*
+   * 880px 컨테이너 임계: 이 폭 미만이면 표 8컬럼이 모두 들어가도 답답하니 카드 view 로 전환.
+   * media.mobile(768px viewport) 분기는 backward compat 용으로 같이 두되, container query
+   * 가 우선이라 사이드바 layout 에서도 main 폭 기준으로 정확히 토글됩니다.
+   */
+  @container (max-width: 880px) {
+    display: none;
+  }
   ${media.mobile} {
     display: none;
   }
@@ -162,6 +233,11 @@ const TableScroll = styled.div`
 const MobileList = styled.div`
   display: none;
 
+  @container (max-width: 880px) {
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
   ${media.mobile} {
     display: grid;
     gap: 10px;
@@ -214,32 +290,38 @@ const MobileRow = styled.button<{ $active?: boolean; $highlight?: boolean }>`
   gap: 10px;
   width: 100%;
   padding: 14px;
-  border: 1px solid ${({ $active }) => ($active ? tokens.color.accentBorder : tokens.color.line2)};
+  /*
+   * active 일 때 인디고 border 로 바뀌던 효과 제거 (2026-04-28). 외곽 선이 강조될수록
+   * "선택" 보다 "오류 / 경고" 처럼 읽혀 시각적 거슬림이 컸음. 배경 톤(accentSubtle) 만
+   * 으로도 선택 상태는 충분히 전달됨.
+   */
+  border: 1px solid ${tokens.color.line2};
   border-radius: ${tokens.radius.card};
   background: ${({ $active }) => ($active ? tokens.color.accentSubtle : tokens.color.panel)};
   color: inherit;
   cursor: pointer;
   text-align: left;
   transition:
-    border-color ${tokens.motion.fast} ease,
     background ${tokens.motion.fast} ease,
     transform ${tokens.motion.fast} ease;
+
+  /* 글로벌 button focus-visible 링(shadow.focus) 제거 — 클릭 후 인디고 링이 남아 보였던 회귀. */
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    box-shadow: none;
+  }
 
   &:active {
     transform: scale(0.996);
   }
 
-  /* 외부 진입에서 강조해야 할 때만 잠깐 펄스. PC 표와 동일한 키프레임을 재사용. */
-  ${({ $highlight }) =>
-    $highlight &&
-    css`
-      animation: ${highlightPulse} 1.6s ease-out;
-
-      @media (prefers-reduced-motion: reduce) {
-        animation: none;
-        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
-      }
-    `}
+  /*
+   * 외부 진입(홈/분석 등) 의 강조는 더 이상 시각 펄스를 그리지 않습니다(2026-04-28).
+   * 그동안의 1px 인디고 inset 펄스가 사용자에게 "행이 재렌더링되는 듯" 보였음.
+   * 도착 표시는 selectedId 기반의 accentSubtle 배경 + scrollIntoView 만으로 충분.
+   * $highlight prop 은 scrollIntoView 트리거 용도로 컴포넌트 트리에 남겨둡니다.
+   */
 `;
 
 const MobileTop = styled.div`
@@ -294,7 +376,8 @@ const MobileCategories = styled.div`
 `;
 
 const HeaderCell = styled.div`
-  padding: 10px 14px;
+  /* clamp(min, vw, max) 패딩으로 viewport 와 함께 좌우 여백도 줄어들게. */
+  padding: 10px clamp(8px, 1.4vw, 14px);
   background: ${tokens.color.foot};
   border-bottom: 1px solid ${tokens.color.line2};
   color: ${tokens.color.ink4};
@@ -305,7 +388,7 @@ const HeaderCell = styled.div`
 
   /* Tag 내부 7px 패딩만큼 헤더 텍스트 시작점도 밀어 데이터와 정렬을 맞춥니다. */
   &.tag {
-    padding-left: 21px;
+    padding-left: clamp(15px, 2.1vw, 21px);
   }
 
   &.right {
@@ -321,7 +404,8 @@ const SortableHeader = styled.button`
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 10px 14px;
+  /* HeaderCell 과 동일한 clamp 패딩 — 정렬 가능 헤더만 자체 padding 갖고 있어 따로 맞춤. */
+  padding: 10px clamp(8px, 1.4vw, 14px);
   background: ${tokens.color.foot};
   border: none;
   border-bottom: 1px solid ${tokens.color.line2};
@@ -357,6 +441,21 @@ const SortIcon = styled.span<{ $dir: "desc" | "asc" }>`
 `;
 
 /**
+ * "이미 한 번 rowEnter 애니메이션된 row.id" 를 모듈 스코프로 누적. React 컴포넌트 인스턴스
+ * 외부에 있어 탭 전환·페이지 재진입으로 컴포넌트가 remount 돼도 살아 있습니다.
+ * (브라우저 페이지 reload 시엔 비워짐 — 그게 "처음 데이터 로드" 시점.)
+ *
+ * 사용 흐름(2026-04-28):
+ *   1) 페이지 첫 진입 — 빈 Set. initialIds 의 모든 행이 애니메이션됨.
+ *   2) effect 에서 그 id 들을 ANIMATED_IDS 에 누적.
+ *   3) 다른 탭으로 이동 → TransactionTable unmount.
+ *   4) 다시 거래내역 탭 진입 → remount. 새 useState 가 rows.map(...) 로 initialIds 만들지만,
+ *      그 직후 ANIMATED_IDS 에 있는 id 는 빼버려 애니메이션 대상이 0건이 됨.
+ *   5) 결과: 사용자에게는 행이 가만히 있는 것처럼 보임 (재렌더 페이드 회귀 차단).
+ */
+const ANIMATED_IDS = new Set<string>();
+
+/**
  * 첫 렌더에서 등장하는 행들에 위에서 살짝 내려앉는 효과를 주기 위한 키프레임입니다.
  * 방금 추가된 것처럼 보이도록 6px → 0px로 올라오며 opacity가 차오릅니다.
  */
@@ -371,17 +470,12 @@ const rowEnter = keyframes`
   }
 `;
 
-/**
- * 홈 "최근 거래"에서 특정 거래로 진입했을 때 그 행에만 잠깐 두를 펄스 링.
- * box-shadow inset 으로 그리기 때문에 $active 때의 background(accentSubtle) 이나
- * $hovered 때의 background(foot) 위에 겹쳐도 어긋나지 않습니다.
+/*
+ * highlightPulse 키프레임은 의도적으로 제거됐습니다(2026-04-28). 외부 진입 강조는 더
+ * 이상 시각 펄스를 그리지 않습니다 — 사용자 피드백에서 "행이 재렌더되는 것처럼 보인다"
+ * 는 회귀가 반복돼, 펄스 자체를 빼고 selectedId 의 accentSubtle 배경 + scrollIntoView
+ * 만으로 도착 행 식별을 처리합니다.
  */
-const highlightPulse = keyframes`
-  0% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
-  20% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
-  80% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
-  100% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
-`;
 
 const DataCell = styled.div<{
   $right?: boolean;
@@ -394,7 +488,8 @@ const DataCell = styled.div<{
 }>`
   display: flex;
   align-items: center;
-  padding: 12px 14px;
+  /* viewport 가 좁아지면 데이터 셀 좌우 패딩도 함께 줄여 텍스트 공간을 확보. */
+  padding: 12px clamp(8px, 1.4vw, 14px);
   border-bottom: 1px solid ${tokens.color.line2};
   color: ${tokens.color.ink1};
   transition: background ${tokens.motion.fast} ease;
@@ -430,18 +525,9 @@ const DataCell = styled.div<{
   /*
    * 강조(highlight) 가 켜진 동안만 펄스. enter 애니메이션과 같은 animation 슬롯을 쓰므로
    * 위 enter 규칙에서 $highlight 일 때는 enter 를 비활성화해 충돌을 피했습니다.
-   * 1.6s 펄스 후에는 부모(TransactionsPage) 가 highlightId 를 비워 자연스럽게 멈춥니다.
+   * 외부 진입 강조 시각 펄스 제거(2026-04-28). 사용자가 "행이 재렌더되는 듯" 보였음.
+   * scrollIntoView + accentSubtle 배경(선택 상태) 만으로 도착 행 식별 충분.
    */
-  ${({ $highlight }) =>
-    $highlight &&
-    css`
-      animation: ${highlightPulse} 1.6s ease-out;
-
-      @media (prefers-reduced-motion: reduce) {
-        animation: none;
-        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
-      }
-    `}
 `;
 
 /**
@@ -513,16 +599,101 @@ const AmountStack = styled.div`
   flex-direction: column;
   align-items: flex-end;
   gap: 2px;
-  line-height: 1.25;
+  line-height: 1.3;
+  /* 셀 안에서 충분한 폭을 확보. 셀 자체보다 살짝 좁게 두고, sub 라인이 길면 줄바꿈. */
+  min-width: 0;
+  width: 100%;
 `;
 
 const AmountSub = styled.span`
-  color: ${tokens.color.ink4};
-  font-family: ${tokens.font.mono};
+  /*
+   * 원금/할부개월 보조 라인. 추정 라벨은 메인 옆 AmountInlineHint 한 곳에만 노출.
+   * sub 에는 "원금 ₩X · N개월" 핵심 메타만 — 라벨 중복 회귀(2026-04-28) 차단.
+   */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 3px 5px;
+  width: 100%;
   font-size: 11px;
   font-weight: 500;
   font-variant-numeric: tabular-nums;
+  text-align: right;
   white-space: nowrap;
+  line-height: 1.4;
+
+  .principal {
+    /* 메인 빨강·검정 금액과 색 분리: accentHover 짙은 인디고로 "이건 보조 정보" 톤. */
+    color: ${tokens.color.accentHover};
+    font-weight: 700;
+  }
+
+  .months {
+    color: ${tokens.color.ink4};
+  }
+`;
+
+/**
+ * 메인 금액 옆 작은 "(월 추정)" 인라인 힌트. 인디고 톤으로 색 분리 — 빨간 메인 + sub 라인
+ * 사이의 시선 다리 역할. 사용자가 "이 빨간 숫자는 추정값" 임을 즉시 알아볼 수 있도록.
+ */
+const AmountInlineHint = styled.span`
+  margin-left: 4px;
+  color: ${tokens.color.accent};
+  font-family: ${tokens.font.sans};
+  font-size: 10.5px;
+  font-weight: 600;
+  white-space: nowrap;
+`;
+
+/**
+ * 대각선 화살표(↗) SVG. 청구 행 → 승인 행 점프 버튼 안에 들어갑니다.
+ * "이 거래는 다른 거래로 연결돼 있다" 를 시각적으로 한눈에 표시.
+ */
+const DiagonalArrow: React.FC = () => (
+  <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+    <path
+      d="M3.5 8.5L8.5 3.5M8.5 3.5H4.5M8.5 3.5V7.5"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    />
+  </svg>
+);
+
+/**
+ * 청구 행에서 원 승인 거래로 점프하는 대각선 화살표 버튼.
+ * 행 자체에서도 클릭 가능하도록 stopPropagation 으로 부모 onClick 을 막고,
+ * 자체 onClick 으로 navigate(=같은 가맹점 검색·하이라이트) 를 트리거합니다.
+ */
+const LinkedJumpButton = styled.button`
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-left: 6px;
+  padding: 0;
+  border: 1px solid ${tokens.color.line};
+  border-radius: 6px;
+  background: ${tokens.color.panel};
+  color: ${tokens.color.accentHover};
+  cursor: pointer;
+  transition:
+    background ${tokens.motion.fast} ease,
+    border-color ${tokens.motion.fast} ease;
+
+  &:hover {
+    background: ${tokens.color.accentSubtle};
+    border-color: ${tokens.color.accentBorder};
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: ${tokens.shadow.focus};
+  }
 `;
 
 /**
@@ -543,13 +714,21 @@ const ItemCountChip = styled.span`
   white-space: nowrap;
 `;
 
+/*
+ * 상태/결제 셀(2026-04-28 잘림 회귀 수정).
+ *
+ * 두 태그(상태 칩 + 결제방식 칩) 가 함께 들어가는데 좁은 viewport 에서 마지막 grid
+ * 컬럼 폭이 부족하면 두 번째 칩이 잘려 보였습니다(`overflow: hidden` 때문).
+ *  - flex-wrap: wrap 으로 좁아지면 두 줄로 자연스럽게 떨어지게.
+ *  - overflow 제거 — 칩 자체는 padding 작은 둥근 pill 이라 한 줄로 못 들어가면
+ *    그냥 줄바꿈해 표시되는 게 자르는 것보다 가독성 좋음.
+ *  - row-gap 4px 으로 두 줄일 때 행 사이 간격 살짝 띄움.
+ */
 const StatusCell = styled.div`
   display: flex;
   align-items: center;
-  gap: 6px;
-  flex-wrap: nowrap;
-  white-space: nowrap;
-  overflow: hidden;
+  flex-wrap: wrap;
+  gap: 4px 6px;
 `;
 
 const Footer = styled.div`
@@ -606,6 +785,12 @@ interface Props {
    * 부모가 갱신할 때마다 useEffect 가 다시 실행되어 scrollIntoView 가 발동합니다.
    */
   pulseToken?: number;
+  /**
+   * 청구 행이 같은 결제의 승인 행으로 점프하는 ↗ 화살표를 그릴 때 패턴 매칭에 쓸 전체 풀.
+   * 미지정이면 rows(필터된 슬라이스) 안에서만 매칭 시도. cross-month 매칭을 위해
+   * 보통 store 의 전체 rows 를 같이 넘깁니다.
+   */
+  allRows?: TxRow[];
 }
 
 export const TransactionTable = memo<Props>(({
@@ -619,7 +804,9 @@ export const TransactionTable = memo<Props>(({
   renderMobileDetail,
   highlightId,
   pulseToken,
+  allRows,
 }) => {
+  const navigate = useNavigate();
   const sentinelRef = useRef<HTMLDivElement>(null);
   /**
    * 강조 진입 시 scrollIntoView 대상 노드를 찾기 위한 행별 ref 맵.
@@ -659,11 +846,27 @@ export const TransactionTable = memo<Props>(({
   }, [onLoadMore]);
 
   /**
-   * 첫 마운트 시 노출된 행 ID들만 기록해 둡니다.
-   * 이후 인피니트 스크롤로 추가되는 행은 이 집합에 들어있지 않으므로 애니메이션을 받지 않고,
-   * 필터/월 변경으로 리셋된 경우에도 이전에 본 행은 다시 애니메이션하지 않습니다.
+   * 첫 마운트 시 노출된 행 ID 들만 기록해 둡니다.
+   * 인피니트 스크롤로 추가된 행은 이 집합에 없어 애니메이션 안 받고, 필터/월 변경 후
+   * 다시 등장한 행도 애니메이션 안 받습니다.
+   *
+   * 회귀 차단(2026-04-28): 다른 탭 갔다가 돌아오면 페이지가 remount → useState 초기화로
+   * 다시 모든 행이 "처음 본 행" 으로 잡혀 rowEnter 가 재발동, 윗줄만 다시 페이드 인 되어
+   * 사용자에게 "행이 잘렸다 다시 올라온다" 처럼 보였습니다. 모듈 스코프 ANIMATED_IDS 에
+   * 이미 한 번이라도 애니메이션된 row.id 를 누적해 두고, 후속 mount 에서는 거기 없는
+   * 행만 애니메이션. 새로 추가된 거래는 기존 정책대로 (initialIds 에 안 들어와) 애니메이션
+   * 안 받음 — 결과적으로 첫 데이터 로드 외에는 행이 가만히 있습니다.
    */
-  const [initialIds] = useState(() => new Set(rows.map((row) => row.id)));
+  const [initialIds] = useState(() => {
+    const ids = new Set(rows.map((row) => row.id));
+    // 이미 한 번이라도 애니메이션된 행은 제외 (탭 복귀 시 재발동 방지).
+    for (const id of ANIMATED_IDS) ids.delete(id);
+    return ids;
+  });
+  // 마운트 후 이번 묶음을 "이미 애니메이션된" 로 기록. 모듈 변수라 페이지 reload 전엔 유지됨.
+  useEffect(() => {
+    for (const id of initialIds) ANIMATED_IDS.add(id);
+  }, [initialIds]);
 
   useEffect(() => {
     if (!hasMore) return;
@@ -685,6 +888,7 @@ export const TransactionTable = memo<Props>(({
 
   return (
     <Card padding={0}>
+      <ContainerScope>
       <TableScroll>
         <Table>
           <HeaderCell className="tag">유형</HeaderCell>
@@ -736,6 +940,48 @@ export const TransactionTable = memo<Props>(({
               row.detail?.cardImport,
               row.amount,
             );
+            // 승인 행에 연결된 빌링 행이 있으면 그 평균을 "실제 월 청구액(이자 포함)" 으로
+            // 사용. 없으면 monthlyEstimate(원금 ÷ 개월수, 이자 미포함) 추정.
+            const linkedBillings = monthlyEstimate
+              ? findBillingsLinkedToApproval(row, allRows ?? rows)
+              : [];
+            const billingAvg =
+              linkedBillings.length > 0
+                ? Math.round(
+                    linkedBillings.reduce((s, b) => s + Math.abs(b.amount), 0) /
+                      linkedBillings.length,
+                  )
+                : null;
+            const monthlyDisplay = billingAvg ?? monthlyEstimate;
+            // "추정" 라벨은 빌링 매칭 없을 때만 노출. 매칭되면 실측이라 라벨 안 붙음.
+            const monthlyIsEstimated = monthlyEstimate !== null && billingAvg === null;
+            // 청구 행이면 같은 결제의 승인 행 id 를 미리 찾아둠. 있으면 ↗ 화살표 노출.
+            // 매칭 풀은 allRows(전체) 우선, 없으면 현재 슬라이스 사용.
+            const linkedApprovalId =
+              installmentTagKind === "installment"
+                ? findApprovalLinkedToBilling(row, allRows ?? rows)?.id ?? null
+                : null;
+            /*
+             * 청구 행의 원금 메타 — sub 라인에 "원금 ₩X · 5회차" 같이 표시하기 위함.
+             * 1차: cardImport.approvedAmount (CSV 의 "이용금액" 같은 원본 총액)
+             * 2차: 청구액(amount) × 총 회차 = 원금 추정 (이자 미포함)
+             */
+            const billingCi = row.detail?.cardImport;
+            const isBilling =
+              installmentTagKind === "installment" && monthlyEstimate === null;
+            const billingCycleTotal =
+              billingCi?.installmentCycleTotal ?? billingCi?.installmentMonths ?? 0;
+            const billingCycleCurrent = billingCi?.installmentCurrentCycle ?? null;
+            const billingOriginal = isBilling
+              ? billingCi?.approvedAmount ??
+                (billingCycleTotal > 1
+                  ? Math.round(Math.abs(row.amount) * billingCycleTotal)
+                  : null)
+              : null;
+            // approvedAmount 는 CSV 가 직접 줬으면 정확값(추정 X), 아니면 우리가 곱해 만든 추정값.
+            const billingOriginalIsEstimated = isBilling
+              ? billingCi?.approvedAmount === undefined
+              : false;
             /**
              * 첫 렌더에서 잡힌 행 중 현재 위치에 있는 경우에만 stagger 인덱스를 내려보냅니다.
              * 인피니트 스크롤로 추가된 행이나 필터 변경 후 새로 등장한 행은 undefined가 되어
@@ -793,15 +1039,89 @@ export const TransactionTable = memo<Props>(({
                   </CategoryCell>
                 </DataCell>
                 <DataCell {...common} $right>
-                  <AmountStack>
+                  {/*
+                   * 표시 정책(2026-04-28 swap + 추정 라벨 조건부):
+                   *   - 할부 승인 행: 메인 = monthlyDisplay (실측 빌링 매칭되면 평균, 아니면
+                   *     원금/개월수 추정). 추정일 때만 "(월 추정)" 라벨 노출.
+                   *   - 일반(청구/일시불/non-card) 은 amount 그대로 한 줄.
+                   */}
+                  {monthlyDisplay ? (
+                    <AmountStack>
+                      <Amount $positive={row.amount > 0}>
+                        {row.amount > 0 ? "+" : "-"}
+                        {formatKRW(monthlyDisplay)}
+                        {monthlyIsEstimated ? (
+                          <AmountInlineHint>(월 추정)</AmountInlineHint>
+                        ) : null}
+                      </Amount>
+                      <AmountSub>
+                        <span className="principal">
+                          원금 {formatKRW(Math.abs(row.amount))}
+                        </span>
+                        <span className="months">
+                          · 할부 {row.detail?.cardImport?.installmentMonths}개월
+                        </span>
+                      </AmountSub>
+                    </AmountStack>
+                  ) : isBilling && billingOriginal ? (
+                    <AmountStack>
+                      <Amount $positive={row.amount > 0}>
+                        {row.amount > 0 ? "+" : "-"}
+                        {formatKRW(Math.abs(row.amount))}
+                        {linkedApprovalId ? (
+                          <LinkedJumpButton
+                            type="button"
+                            aria-label="원 승인 거래로 이동"
+                            title="원 승인 거래로 이동"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate("/transactions", {
+                                state: { scrollToTransactionId: linkedApprovalId },
+                              });
+                            }}
+                          >
+                            <DiagonalArrow />
+                          </LinkedJumpButton>
+                        ) : null}
+                      </Amount>
+                      <AmountSub>
+                        <span className="principal">
+                          원금 {formatKRW(billingOriginal)}
+                          {billingOriginalIsEstimated ? (
+                            <AmountInlineHint>(추정)</AmountInlineHint>
+                          ) : null}
+                        </span>
+                        {billingCycleTotal > 0 ? (
+                          <span className="months">
+                            ·{" "}
+                            {billingCycleCurrent
+                              ? `${billingCycleCurrent}/${billingCycleTotal}회차`
+                              : `${billingCycleTotal}회차`}
+                          </span>
+                        ) : null}
+                      </AmountSub>
+                    </AmountStack>
+                  ) : (
                     <Amount $positive={row.amount > 0}>
                       {row.amount > 0 ? "+" : "-"}
                       {formatKRW(Math.abs(row.amount))}
+                      {linkedApprovalId ? (
+                        <LinkedJumpButton
+                          type="button"
+                          aria-label="원 승인 거래로 이동"
+                          title="원 승인 거래로 이동"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate("/transactions", {
+                              state: { scrollToTransactionId: linkedApprovalId },
+                            });
+                          }}
+                        >
+                          <DiagonalArrow />
+                        </LinkedJumpButton>
+                      ) : null}
                     </Amount>
-                    {monthlyEstimate ? (
-                      <AmountSub>월 추정 {formatKRW(monthlyEstimate)}</AmountSub>
-                    ) : null}
-                  </AmountStack>
+                  )}
                 </DataCell>
                 <DataCell {...common}>
                   <StatusCell>
@@ -833,6 +1153,38 @@ export const TransactionTable = memo<Props>(({
             row.detail?.cardImport,
             row.amount,
           );
+          const linkedBillings = monthlyEstimate
+            ? findBillingsLinkedToApproval(row, allRows ?? rows)
+            : [];
+          const billingAvg =
+            linkedBillings.length > 0
+              ? Math.round(
+                  linkedBillings.reduce((s, b) => s + Math.abs(b.amount), 0) /
+                    linkedBillings.length,
+                )
+              : null;
+          const monthlyDisplay = billingAvg ?? monthlyEstimate;
+          const monthlyIsEstimated = monthlyEstimate !== null && billingAvg === null;
+          const linkedApprovalId =
+            installmentTagKind === "installment"
+              ? findApprovalLinkedToBilling(row, allRows ?? rows)?.id ?? null
+              : null;
+          // 청구 행의 원금 메타(데스크톱과 동일 로직).
+          const billingCi = row.detail?.cardImport;
+          const isBilling =
+            installmentTagKind === "installment" && monthlyEstimate === null;
+          const billingCycleTotal =
+            billingCi?.installmentCycleTotal ?? billingCi?.installmentMonths ?? 0;
+          const billingCycleCurrent = billingCi?.installmentCurrentCycle ?? null;
+          const billingOriginal = isBilling
+            ? billingCi?.approvedAmount ??
+              (billingCycleTotal > 1
+                ? Math.round(Math.abs(row.amount) * billingCycleTotal)
+                : null)
+            : null;
+          const billingOriginalIsEstimated = isBilling
+            ? billingCi?.approvedAmount === undefined
+            : false;
           const setMobileRowRef = (el: HTMLButtonElement | null) => {
             if (el) mobileRowRefs.current.set(row.id, el);
             else mobileRowRefs.current.delete(row.id);
@@ -855,15 +1207,83 @@ export const TransactionTable = memo<Props>(({
                     <div className="title">{row.title}</div>
                     <div className="meta">{row.date}</div>
                   </MobileTitle>
-                  <AmountStack>
+                  {monthlyDisplay ? (
+                    <AmountStack>
+                      <MobileAmount $positive={row.amount > 0}>
+                        {row.amount > 0 ? "+" : "-"}
+                        {formatKRW(monthlyDisplay)}
+                        {monthlyIsEstimated ? (
+                          <AmountInlineHint>(월 추정)</AmountInlineHint>
+                        ) : null}
+                      </MobileAmount>
+                      <AmountSub>
+                        <span className="principal">
+                          원금 {formatKRW(Math.abs(row.amount))}
+                        </span>
+                        <span className="months">
+                          · 할부 {row.detail?.cardImport?.installmentMonths}개월
+                        </span>
+                      </AmountSub>
+                    </AmountStack>
+                  ) : isBilling && billingOriginal ? (
+                    <AmountStack>
+                      <MobileAmount $positive={row.amount > 0}>
+                        {row.amount > 0 ? "+" : "-"}
+                        {formatKRW(Math.abs(row.amount))}
+                        {linkedApprovalId ? (
+                          <LinkedJumpButton
+                            type="button"
+                            aria-label="원 승인 거래로 이동"
+                            title="원 승인 거래로 이동"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate("/transactions", {
+                                state: { scrollToTransactionId: linkedApprovalId },
+                              });
+                            }}
+                          >
+                            <DiagonalArrow />
+                          </LinkedJumpButton>
+                        ) : null}
+                      </MobileAmount>
+                      <AmountSub>
+                        <span className="principal">
+                          원금 {formatKRW(billingOriginal)}
+                          {billingOriginalIsEstimated ? (
+                            <AmountInlineHint>(추정)</AmountInlineHint>
+                          ) : null}
+                        </span>
+                        {billingCycleTotal > 0 ? (
+                          <span className="months">
+                            ·{" "}
+                            {billingCycleCurrent
+                              ? `${billingCycleCurrent}/${billingCycleTotal}회차`
+                              : `${billingCycleTotal}회차`}
+                          </span>
+                        ) : null}
+                      </AmountSub>
+                    </AmountStack>
+                  ) : (
                     <MobileAmount $positive={row.amount > 0}>
                       {row.amount > 0 ? "+" : "-"}
                       {formatKRW(Math.abs(row.amount))}
+                      {linkedApprovalId ? (
+                        <LinkedJumpButton
+                          type="button"
+                          aria-label="원 승인 거래로 이동"
+                          title="원 승인 거래로 이동"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigate("/transactions", {
+                              state: { scrollToTransactionId: linkedApprovalId },
+                            });
+                          }}
+                        >
+                          <DiagonalArrow />
+                        </LinkedJumpButton>
+                      ) : null}
                     </MobileAmount>
-                    {monthlyEstimate ? (
-                      <AmountSub>월 추정 {formatKRW(monthlyEstimate)}</AmountSub>
-                    ) : null}
-                  </AmountStack>
+                  )}
                 </MobileTop>
                 <MobileTags>
                   <Tag kind={row.type === "expense" ? "expense" : "income"}>
@@ -922,6 +1342,7 @@ export const TransactionTable = memo<Props>(({
       ) : (
         <Footer>모든 거래를 확인했어요 · 총 {totalCount}건</Footer>
       )}
+      </ContainerScope>
     </Card>
   );
 });

@@ -468,8 +468,16 @@ export const ManualEntryPage: React.FC = () => {
    * 폼 값과 상품 목록은 즉시 리셋해 (1) 토스트 노출 700ms 동안 본인이 방금 저장한 거래가
    * candidateMatches에 자기 자신으로 잡혀 SuggestionCard가 떠버리는 회귀를 막고, (2) 사용자가
    * 우연히 같은 페이지로 다시 돌아왔을 때 이전 입력값이 그대로 남아 있는 혼란도 같이 해소합니다.
+   *
+   * scrollToTransactionId 가 같이 들어오면 거래내역 페이지가 그 행을 선택 상태(DetailPanel
+   * 펼침) 로 만들어 사용자가 방금 저장한 거래의 상세까지 곧바로 확인할 수 있게 합니다
+   * (2026-04-28 사용자 피드백 — "수동 입력 후 그 항목의 거래상세까지 띄워야 깔끔").
    */
-  const navigateAfterSave = (toState: { targetDate?: string } | undefined) => {
+  const navigateAfterSave = (
+    toState:
+      | { targetDate?: string; scrollToTransactionId?: string }
+      | undefined,
+  ) => {
     setMeta(EMPTY_META);
     setProducts([]);
     setStatus(defaultStatusForType(type));
@@ -483,7 +491,7 @@ export const ManualEntryPage: React.FC = () => {
     if (dupDismissed) {
       // 수동 입력은 사용자가 카테고리를 직접 고른 결과라 자동추정을 태우지 않는다.
       transactionsStore.addFromManual(row);
-      navigateAfterSave({ targetDate: row.date });
+      navigateAfterSave({ targetDate: row.date, scrollToTransactionId: row.id });
       return;
     }
 
@@ -500,10 +508,17 @@ export const ManualEntryPage: React.FC = () => {
     // 무언가 저장됐으면 거래내역으로 바로 이동합니다.
     if (resolved.toSave.length > 0 || resolved.toMerge.length > 0) {
       // 저장된 행의 날짜(또는 기존 거래에 병합된 경우 그 날짜)로 이동합니다.
+      const savedRow = resolved.toSave[0];
+      const mergedExistingId = resolved.toMerge[0]?.existingId;
       const savedDate =
-        resolved.toSave[0]?.date ??
-        allRows.find((r) => r.id === resolved.toMerge[0]?.existingId)?.date;
-      navigateAfterSave(savedDate ? { targetDate: savedDate } : undefined);
+        savedRow?.date ??
+        allRows.find((r) => r.id === mergedExistingId)?.date;
+      // 신규 저장이면 그 행, merge 면 기존 행 id 로 상세 펼침.
+      const targetId = savedRow?.id ?? mergedExistingId;
+      navigateAfterSave({
+        ...(savedDate ? { targetDate: savedDate } : {}),
+        ...(targetId ? { scrollToTransactionId: targetId } : {}),
+      });
       return;
     }
 
@@ -603,6 +618,7 @@ export const ManualEntryPage: React.FC = () => {
               setMeta(next);
               if (error) setError(null);
             }}
+            txType={type}
           />
 
           {/* ── 실시간 중복 제안 카드 ── */}
@@ -649,29 +665,39 @@ export const ManualEntryPage: React.FC = () => {
             <StatusTags value={status} type={type} onChange={setStatus} />
           </div>
 
-          <SectionHeader>
-            <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
-            <AddButton type="button" onClick={() => setModal({ type: "add" })}>
-              + 상품 추가
-            </AddButton>
-          </SectionHeader>
-          {/* 거래 하나 안에 여러 상품이 들어갈 수 있다는 점을 여기서 보여줍니다. */}
-          <SectionHint>
-            상품을 추가하면 거래에 포함된 구매 항목을 함께 기록할 수 있어요.
-            수정이 필요하면 행의 '수정'을 눌러보세요.
-          </SectionHint>
-          <ProductRows
-            products={products}
-            // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
-            // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
-            platform={mapPlatform(meta.platform)}
-            onEdit={(id) => setModal({ type: "edit", id })}
-            onRemove={(id) =>
-              setProducts((current) =>
-                current.filter((product) => product.id !== id)
-              )
-            }
-          />
+          {/*
+           * 상품 등록 영역 노출 정책(2026-04-28):
+           *   - 지출(expense): 항상 노출 — 쿠팡 주문 같은 다항목 결제에 상품 등록이 자연스러움.
+           *   - 수입(income): status 가 환불·취소일 때만 노출 — 반품된 상품 목록을 적는 케이스가
+           *     실재함. 일반 수입(월급·이체 수령) 에는 상품 개념 자체가 없어 UI 노이즈만 됨.
+           */}
+          {(type === "expense" || status === "refund" || status === "cancel") && (
+            <>
+              <SectionHeader>
+                <SectionLabel style={{ margin: 0 }}>등록된 상품</SectionLabel>
+                <AddButton type="button" onClick={() => setModal({ type: "add" })}>
+                  + 상품 추가
+                </AddButton>
+              </SectionHeader>
+              {/* 거래 하나 안에 여러 상품이 들어갈 수 있다는 점을 여기서 보여줍니다. */}
+              <SectionHint>
+                상품을 추가하면 거래에 포함된 구매 항목을 함께 기록할 수 있어요.
+                수정이 필요하면 행의 '수정'을 눌러보세요.
+              </SectionHint>
+              <ProductRows
+                products={products}
+                // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
+                // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
+                platform={mapPlatform(meta.platform)}
+                onEdit={(id) => setModal({ type: "edit", id })}
+                onRemove={(id) =>
+                  setProducts((current) =>
+                    current.filter((product) => product.id !== id)
+                  )
+                }
+              />
+            </>
+          )}
 
           {error && <ErrorLine role="alert">{error}</ErrorLine>}
           {success && <SuccessLine role="status">{success}</SuccessLine>}

@@ -3,6 +3,7 @@
  * 위치: src\pages\Transactions\components\DetailPanel.tsx
  */
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Card, CardBd, CardHd } from "../../../components/primitives/Card";
 import { Tag } from "../../../components/primitives/Tag";
@@ -10,6 +11,8 @@ import { Button } from "../../../components/primitives/Button";
 import { tokens } from "../../../styles/tokens";
 import { formatKRW } from "../../../utils/format";
 import type { TxRow } from "./TransactionTable";
+import { useTransactionsStore } from "../../../stores/transactionsStore";
+import { findApprovalLinkedToBilling } from "../../../utils/expenseAccounting";
 import {
   PLATFORM_LABELS,
   SOURCE_LABELS,
@@ -384,6 +387,10 @@ const DetailPanelInner = ({
   // 카테고리 색상과 이름은 설정 화면에서 변경할 수 있으므로 스토어에서 구독해 실시간으로 반영합니다.
   const categoryColorMap = useCategoryColorMap();
   const storeCategories = useCategoriesStore();
+  const allRows = useTransactionsStore();
+  const navigate = useNavigate();
+  // 청구 행이면 같은 결제의 승인 행을 패턴 매칭으로 찾아 "원 승인 거래로 이동 ↗" 버튼 표시.
+  const linkedApprovalId = findApprovalLinkedToBilling(row, allRows)?.id ?? null;
   const getCategoryName = (id: string): string =>
     storeCategories.find((c) => c.id === id)?.name ?? id;
   // 메모는 빈 문자열/공백만 있는 경우 섹션을 숨겨, 불필요한 빈 박스가 패널을 지저분하게 만들지 않게 합니다.
@@ -425,10 +432,52 @@ const DetailPanelInner = ({
         <Title>{row.title}</Title>
         <DateAmount>
           <span className="date">{row.date}</span>
-          <span className="amount" style={{ color: row.amount > 0 ? tokens.color.pos : tokens.color.ink1 }}>
-            {row.amount > 0 ? "+" : "-"}
-            {formatKRW(Math.abs(row.amount))}
-          </span>
+          {/*
+           * 메인 금액 표시 정책(2026-04-28 swap):
+           *   - 할부 승인: 메인 = 월 분할 추정, 작은 라벨로 (월 추정) + 아래 원금/개월수.
+           *     KPI 합산에 들어간 값과 시각적으로 일치.
+           *   - 일반/일시불/할부 청구: amount 그대로.
+           */}
+          {monthlyEstimate ? (
+            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+              <span
+                className="amount"
+                style={{ color: row.amount > 0 ? tokens.color.pos : tokens.color.ink1 }}
+              >
+                {row.amount > 0 ? "+" : "-"}
+                {formatKRW(monthlyEstimate)}
+                <span
+                  style={{
+                    marginLeft: 6,
+                    color: tokens.color.ink4,
+                    fontFamily: tokens.font.sans,
+                    fontSize: 11,
+                    fontWeight: 500,
+                  }}
+                >
+                  (월 추정)
+                </span>
+              </span>
+              <span
+                style={{
+                  color: tokens.color.ink4,
+                  fontFamily: tokens.font.mono,
+                  fontSize: 11.5,
+                  fontWeight: 500,
+                }}
+              >
+                원금 {formatKRW(Math.abs(row.amount))} · 할부 {cardImport?.installmentMonths}개월
+              </span>
+            </span>
+          ) : (
+            <span
+              className="amount"
+              style={{ color: row.amount > 0 ? tokens.color.pos : tokens.color.ink1 }}
+            >
+              {row.amount > 0 ? "+" : "-"}
+              {formatKRW(Math.abs(row.amount))}
+            </span>
+          )}
         </DateAmount>
 
         {/*
@@ -578,9 +627,11 @@ const DetailPanelInner = ({
                 {installmentKind === "installment_approval" ||
                 installmentKind === "installment_billing"
                   ? "할부"
-                  : installmentKind === "lump_sum"
-                    ? "일시불"
-                    : "미기록"}
+                  : "일시불"}
+                {/*
+                 * unknown 인 경우도 일시불로 노출(2026-04-28). 카드사 데이터에서 결제방식이
+                 * 명시 안 됐으면 일시불이라 봐도 무방 — "미기록" 라벨이 사용자 혼란만 줬음.
+                 */}
               </div>
               {isInstallment && cardImport.installmentMonths ? (
                 <>
@@ -632,6 +683,46 @@ const DetailPanelInner = ({
                 <span className="badge">추정</span>
                 <span>{installmentInferred}</span>
               </InstallmentInferred>
+            ) : null}
+            {/*
+             * 청구 행이면 원 승인 거래로 점프하는 버튼. 사용자가 "이 회차가 어디서 시작했지?"
+             * 클릭으로 한 번에 그 거래로 이동.
+             */}
+            {linkedApprovalId ? (
+              <button
+                type="button"
+                onClick={() =>
+                  navigate("/transactions", {
+                    state: { scrollToTransactionId: linkedApprovalId },
+                  })
+                }
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 6,
+                  marginTop: 8,
+                  padding: "6px 10px",
+                  border: `1px solid ${tokens.color.line}`,
+                  borderRadius: tokens.radius.control,
+                  background: tokens.color.panel,
+                  color: tokens.color.accentHover,
+                  cursor: "pointer",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                원 승인 거래 보기
+                <svg width="11" height="11" viewBox="0 0 12 12" aria-hidden="true">
+                  <path
+                    d="M3.5 8.5L8.5 3.5M8.5 3.5H4.5M8.5 3.5V7.5"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.6"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              </button>
             ) : null}
           </Section>
         )}

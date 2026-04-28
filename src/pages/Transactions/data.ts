@@ -31,22 +31,51 @@ const sumSpend = sumActualMonthlyExpense;
 export const buildTransactionSummary = (
   rows: TxRow[],
   prevRows?: TxRow[],
+  /**
+   * 페어 매칭에 쓸 전체 row 풀(cross-month 패턴 매칭). 미지정이면 rows 만 사용.
+   * 보통 호출부에서 store 의 전체 rows 를 같이 넘깁니다.
+   */
+  allRows?: TxRow[],
 ): SummaryData => {
   const total = rows.length;
   const spendRows = rows.filter((row) => row.type === "expense");
   const incomeRows = rows.filter((row) => row.type === "income");
   // 음수 부호로 들어오는 expense 도 effectiveMonthlyAmount 가 Math.abs 로 흡수합니다.
-  // approval+billing 페어 dedup 으로 같은 결제 이중 카운트 방지.
-  const skip = findApprovalsCoveredByBilling(rows);
+  // approval+billing 페어 dedup 으로 같은 결제 이중 카운트 방지(cross-month 매칭 포함).
+  const skip = findApprovalsCoveredByBilling(rows, allRows);
   const totalSpend = spendRows
     .filter((row) => row.status !== "cancel" && !skip.has(row.id))
     .reduce((sum, row) => sum + effectiveMonthlyAmount(row), 0);
-  const incomeAndRefund = incomeRows.reduce((sum, row) => sum + Math.max(row.amount, 0), 0);
-  const refundCount = rows.filter((row) => row.status === "refund").length;
+  /*
+   * 카드 정책(2026-04-28 Home 과 통일):
+   *   - "수입·환불" 라벨로 따로 분리하지 않고, "환불·취소" 한 카드로 합쳐 노출.
+   *   - 환불 + 취소 모두 "이미 쓴 돈을 되돌려 받음" 성격이라 한 묶음.
+   *   - 진짜 수입(income & status not refund/cancel) 은 sub 라인이나 countLabel 로만 노출.
+   *   - 순지출 계산은 memory 정책 그대로 — 지출 - (수입 + 환불), 취소 제외.
+   */
+  const pureIncomeRows = incomeRows.filter(
+    (row) => row.status !== "refund" && row.status !== "cancel",
+  );
+  const pureIncome = pureIncomeRows.reduce(
+    (sum, row) => sum + Math.max(row.amount, 0),
+    0,
+  );
+  const refundRows = rows.filter((row) => row.status === "refund");
+  const refundCount = refundRows.length;
+  const refundAmount = refundRows.reduce((sum, row) => sum + Math.abs(row.amount), 0);
+  const cancelRows = rows.filter((row) => row.status === "cancel");
+  const cancelCount = cancelRows.length;
+  const cancelAmount = cancelRows.reduce(
+    (sum, row) => sum + Math.abs(row.amount),
+    0,
+  );
+  const refundCancelAmount = refundAmount + cancelAmount;
+  // 순지출 계산용 — memory 정책: 순수입 = 수입 + 환불(취소 제외).
+  const incomeAndRefund = pureIncome + refundAmount;
 
   let spendDelta: SummaryData["spendDelta"];
   if (prevRows && prevRows.length > 0) {
-    const prevSpend = sumSpend(prevRows);
+    const prevSpend = sumSpend(prevRows, allRows);
     if (prevSpend > 0) {
       const ratio = (totalSpend - prevSpend) / prevSpend;
       const percent = Math.round(ratio * 100);
@@ -63,7 +92,12 @@ export const buildTransactionSummary = (
     incomeCount: incomeRows.length,
     totalSpend,
     incomeAndRefund,
+    pureIncome,
+    pureIncomeCount: pureIncomeRows.length,
     refundCount,
+    cancelCount,
+    cancelAmount,
+    refundCancelAmount,
     netSpend: totalSpend - incomeAndRefund,
     countLabel: `총 ${total}건 · 지출 ${spendRows.length}건 · 수입 ${incomeRows.length}건`,
     spendDelta,

@@ -7,11 +7,65 @@ import styled from "styled-components";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
-import { TextInput } from "../../../components/form/TextInput";
+import { PasswordTextInput, TextInput } from "../../../components/form/TextInput";
 import { tokens } from "../../../styles/tokens";
+import { normalizeAuthError } from "../../../lib/authError";
 import { PasswordStrength } from "./PasswordStrength";
 import { registerAccount, signInWithGoogle } from "../../../lib/firebaseSync";
 import { ONBOARDING_SEEN_KEY } from "../../../constants/onboarding";
+
+interface RegisterFieldErrors {
+  name?: string;
+  email?: string;
+  password?: string;
+  form?: string;
+  agree?: string;
+}
+
+function getRegisterNameError(name: string): string | undefined {
+  const trimmedName = name.trim();
+  if (!trimmedName) return "이름을 입력해 주세요.";
+  if (/\s/.test(trimmedName)) return "이름에 공백을 포함할 수 없어요.";
+  if (trimmedName.length < 2) return "이름은 2자 이상 입력해 주세요.";
+  return undefined;
+}
+
+function getRegisterEmailError(email: string): string | undefined {
+  const trimmedEmail = email.trim();
+  if (!trimmedEmail) return "이메일을 입력해 주세요.";
+  if (/\s/.test(email)) return "이메일에 공백을 포함할 수 없어요.";
+  if (!/.+@.+\..+/.test(trimmedEmail)) return "이메일 형식이 맞지 않습니다.";
+  return undefined;
+}
+
+function getRegisterPasswordError(password: string): string | undefined {
+  if (!password) return "비밀번호를 입력해 주세요.";
+  if (/\s/.test(password)) return "비밀번호에 공백을 포함할 수 없어요.";
+  if (password.length < 8) return "비밀번호는 8자 이상이어야 해요.";
+  if (!/\d/.test(password)) return "비밀번호에 숫자를 포함해 주세요.";
+  return undefined;
+}
+
+function validateRegisterFields(
+  name: string,
+  email: string,
+  password: string,
+  agreed: boolean,
+): RegisterFieldErrors {
+  const errors: RegisterFieldErrors = {};
+  const nameError = getRegisterNameError(name);
+  const emailError = getRegisterEmailError(email);
+  const passwordError = getRegisterPasswordError(password);
+
+  if (!agreed) {
+    errors.agree = "이용약관과 개인정보 처리방침에 동의하셔야 회원가입이 가능합니다.";
+  }
+  if (nameError) errors.name = nameError;
+  if (emailError) errors.email = emailError;
+  if (passwordError) errors.password = passwordError;
+
+  return errors;
+}
 
 const Agree = styled.label`
   display: flex;
@@ -39,8 +93,10 @@ const Agree = styled.label`
   }
 `;
 
-const PasswordInput = styled(TextInput)`
-  letter-spacing: 0.08em;
+const PasswordInput = styled(PasswordTextInput)`
+  input {
+    letter-spacing: 0.08em;
+  }
 `;
 
 const Divider = styled.div`
@@ -75,55 +131,20 @@ export const RegisterForm: React.FC = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [agreed, setAgreed] = useState(false);
-  const [agreeError, setAgreeError] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<RegisterFieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
 
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
-        setError(null);
-        if (!agreed) {
-          setAgreeError(true);
+        const nextErrors = validateRegisterFields(name, email, password, agreed);
+        if (Object.keys(nextErrors).length > 0) {
+          setErrors(nextErrors);
           return;
         }
-        if (!name) {
-          setError("이름을 입력해 주세요.");
-          return;
-        }
-        if (/\s/.test(name)) {
-          setError("이름에 공백을 포함할 수 없어요.");
-          return;
-        }
-        if (name.length < 2) {
-          setError("이름은 2자 이상 입력해 주세요.");
-          return;
-        }
-        if (!email.trim()) {
-          setError("이메일을 입력해 주세요.");
-          return;
-        }
-        if (/\s/.test(email)) {
-          setError("이메일에 공백을 포함할 수 없어요.");
-          return;
-        }
-        if (!password) {
-          setError("비밀번호를 입력해 주세요.");
-          return;
-        }
-        if (/\s/.test(password)) {
-          setError("비밀번호에 공백을 포함할 수 없어요.");
-          return;
-        }
-        if (password.length < 8) {
-          setError("비밀번호는 8자 이상이어야 해요.");
-          return;
-        }
-        if (!/\d/.test(password)) {
-          setError("비밀번호에 숫자를 포함해 주세요.");
-          return;
-        }
+
+        setErrors({});
         setSubmitting(true);
         try {
           try {
@@ -138,38 +159,78 @@ export const RegisterForm: React.FC = () => {
           });
           navigate("/", { state: { showTutorial: true } });
         } catch (err) {
-          const message = err instanceof Error ? err.message : "회원가입에 실패했어요.";
-          setError(message);
+          const normalized = normalizeAuthError(err, "email-register");
+          if (
+            normalized.code === "auth/email-already-in-use" ||
+            normalized.code === "auth/invalid-email" ||
+            normalized.code === "auth/missing-email"
+          ) {
+            setErrors({ email: normalized.message });
+          } else if (
+            normalized.code === "auth/weak-password" ||
+            normalized.code === "auth/missing-password"
+          ) {
+            setErrors({ password: normalized.message });
+          } else {
+            setErrors({ form: normalized.message });
+          }
         } finally {
           setSubmitting(false);
         }
       }}
     >
       <div style={{ display: "grid", gap: 14 }}>
-        <FormField label="이름">
+        <FormField label="이름" errorText={errors.name}>
           <TextInput
             placeholder="홍길동"
             autoComplete="name"
             value={name}
-            onChange={(event) => setName(event.target.value)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                name: getRegisterNameError(nextValue),
+                form: undefined,
+              }));
+              setName(nextValue);
+            }}
           />
         </FormField>
-        <FormField label="이메일">
+        <FormField label="이메일" errorText={errors.email}>
           <TextInput
             type="email"
             placeholder="you@example.com"
             autoComplete="email"
             value={email}
-            onChange={(event) => setEmail(event.target.value)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                email: getRegisterEmailError(nextValue),
+                form: undefined,
+              }));
+              setEmail(nextValue);
+            }}
           />
         </FormField>
-        <FormField label="비밀번호" helpText="8자 이상, 숫자를 포함해 주세요.">
+        <FormField
+          label="비밀번호"
+          helpText="8자 이상, 숫자를 포함해 주세요."
+          errorText={errors.password}
+        >
           <PasswordInput
-            type="password"
             placeholder="8자 이상, 숫자 포함"
             autoComplete="new-password"
             value={password}
-            onChange={(event) => setPassword(event.target.value)}
+            onChange={(event) => {
+              const nextValue = event.target.value;
+              setErrors((current) => ({
+                ...current,
+                password: getRegisterPasswordError(nextValue),
+                form: undefined,
+              }));
+              setPassword(nextValue);
+            }}
           />
           <PasswordStrength value={password} />
         </FormField>
@@ -180,7 +241,9 @@ export const RegisterForm: React.FC = () => {
           checked={agreed}
           onChange={(e) => {
             setAgreed(e.target.checked);
-            if (e.target.checked) setAgreeError(false);
+            if (e.target.checked) {
+              setErrors((current) => ({ ...current, agree: undefined }));
+            }
           }}
         />
         <span>
@@ -188,14 +251,14 @@ export const RegisterForm: React.FC = () => {
           <Link to="/privacy">개인정보 처리방침</Link>에 동의합니다. (필수)
         </span>
       </Agree>
-      {agreeError && (
+      {errors.agree && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
-          이용약관과 개인정보 처리방침에 동의하셔야 회원가입이 가능합니다.
+          {errors.agree}
         </div>
       )}
-      {error && (
+      {errors.form && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
-          {error}
+          {errors.form}
         </div>
       )}
       <Button variant="primary" size="lg" block type="submit" disabled={submitting}>
@@ -210,7 +273,7 @@ export const RegisterForm: React.FC = () => {
         icon={<GoogleMark />}
         disabled={submitting}
         onClick={async () => {
-          setError(null);
+          setErrors({});
           setSubmitting(true);
           try {
             try {
@@ -221,8 +284,9 @@ export const RegisterForm: React.FC = () => {
             await signInWithGoogle();
             navigate("/", { state: { showTutorial: true } });
           } catch (err) {
-            const message = err instanceof Error ? err.message : "Google 회원가입에 실패했어요.";
-            setError(message);
+            const normalized = normalizeAuthError(err, "google-login");
+            if (normalized.silent) return;
+            setErrors({ form: normalized.message });
           } finally {
             setSubmitting(false);
           }

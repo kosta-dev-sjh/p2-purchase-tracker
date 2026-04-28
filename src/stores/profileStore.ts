@@ -5,6 +5,7 @@
  */
 import { create } from "zustand";
 import { auth } from "../lib/firebase";
+import { trackBackgroundSync } from "../lib/firebaseBackgroundSync";
 import { saveUserProfile } from "../lib/firebaseRepository";
 
 export interface UserProfile {
@@ -69,7 +70,7 @@ const useProfileStoreBase = create<ProfileState>((set, get) => ({
       // saveUserProfile 은 nickname 을 무시하도록 막혀 있습니다(정책: 닉네임은 callable 만).
       // 이 store 의 save 가 nickname 만 단독으로 호출되는 경우 Firestore 가 갱신되지 않아도
       // 의도된 동작입니다. 닉네임 변경은 changeNicknameWithCooldown(firebaseSync) 를 통해서만.
-      void saveUserProfile(uid, partial);
+      trackBackgroundSync(saveUserProfile(uid, partial));
     }
     return next;
   },
@@ -78,7 +79,7 @@ const useProfileStoreBase = create<ProfileState>((set, get) => ({
     set({ profile: DEFAULT_PROFILE });
     const uid = auth.currentUser?.uid;
     if (uid) {
-      void saveUserProfile(uid, DEFAULT_PROFILE);
+      trackBackgroundSync(saveUserProfile(uid, DEFAULT_PROFILE));
     }
     return DEFAULT_PROFILE;
   },

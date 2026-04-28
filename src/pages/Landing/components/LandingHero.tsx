@@ -5,7 +5,7 @@
  * 시각 프리뷰는 Home 화면(`src/pages/Home/components/KpiStrip.tsx`,
  * `PlatformDonut.tsx`) 의 실제 카드를 보고 같은 라벨/포맷/색을 그대로 사용합니다.
  *  - 플랫폼: 쿠팡(warn=#B45309) / 네이버쇼핑(cat2=#0E9488) / 미지정(#9CA3AF) — 실제 사용 3종
- *  - KPI 라벨: "총 지출 / 평균 주문금액 / 총 수입·환불" — KpiStrip 의 키와 일치
+ *  - KPI 라벨: "총 지출 / 평균 주문금액 / 수입" — KpiStrip 의 키와 일치 (2026-04-28 카드 라벨 정리 반영)
  *  - 통화: formatKRW("₩1,234,567") — 앱 전체 포맷
  *  - 도넛 카드 카피 ("플랫폼별 소비 비중", "이번 달 기준", 중앙 "이번 달 총소비") 도 PlatformDonut 그대로
  *  - AI 인사이트 배지의 그라디언트(#f8fafc → #f1f5f9) · ✨ 이모지 도 InsightCards.AiSummaryBlock 와 일치
@@ -500,7 +500,7 @@ export const LandingHero = () => {
             한 달의 흐름을 한 화면에 보여드려요.
           </Lead>
           <CtaRow>
-            <PrimaryCta to="/register">무료로 시작하기 →</PrimaryCta>
+            <PrimaryCta to="/register">시작하기 →</PrimaryCta>
             <GhostCta to="/login">로그인</GhostCta>
           </CtaRow>
           <TrustRow>
@@ -558,10 +558,10 @@ export const LandingHero = () => {
               <KpiCell>
                 <KpiLabelRow>
                   <KpiDot $color={tokens.color.pos} />
-                  <span>총 수입 · 환불</span>
+                  <span>수입</span>
                 </KpiLabelRow>
                 <KpiValue $color={tokens.color.pos}>+{formatKRW(incomeRefund)}</KpiValue>
-                <KpiSub>환불 2건 포함</KpiSub>
+                <KpiSub>수입 1건</KpiSub>
               </KpiCell>
             </KpiGrid>
 

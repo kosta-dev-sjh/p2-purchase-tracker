@@ -109,6 +109,48 @@ export interface FallbackOcrProductsResult {
   changedIds: Set<string>;
 }
 
+/**
+ * 카드 CSV/XLSX 임포트의 AI 폴백 — 행 단위 결제 방식(일시불/할부) 분류.
+ *
+ * 호출 정책(2026-04-28 합의):
+ * - "헤더 매칭 0건" 시트에 한해서만 발동(클라이언트 gate 가 결정).
+ * - 시트당 1회 호출 — 한 호출에 모든 행을 같이 보내 비용/rate limit 통제.
+ * - 실패하면 빈 배열 반환 → 호출부가 1차 파서 결과(기본 lump_sum) 그대로 사용.
+ * - paymentMode 는 lump_sum / installment 두 값으로만 좁혀 unknown 미발생.
+ */
+export interface ClassifyCardRowSnippet {
+  /** 클라이언트가 결과를 row 에 다시 매핑하기 위한 키. __sheetName/__rowIndex 조합 권장. */
+  id: string;
+  date?: string;
+  merchant?: string;
+  amount?: string;
+  /** 그 외 카드사가 보낸 컬럼들(요약). AI 가 단서로 활용. */
+  extras?: Record<string, string>;
+}
+
+export interface ClassifyCardRowOutput {
+  id: string;
+  paymentMode: "lump_sum" | "installment";
+  installmentMonths?: number;
+}
+
+export async function classifyCardRows(
+  rows: ClassifyCardRowSnippet[],
+): Promise<ClassifyCardRowOutput[]> {
+  if (rows.length === 0) return [];
+  try {
+    const result = await geminiProxy({
+      action: "classifyCardRows",
+      payload: { rows },
+    });
+    const data = result.data as { rows?: ClassifyCardRowOutput[] };
+    return Array.isArray(data.rows) ? data.rows : [];
+  } catch {
+    // AI 실패 시 빈 배열 — 호출부는 1차 파서 결과(lump_sum 기본값)를 그대로 둡니다.
+    return [];
+  }
+}
+
 export async function fallbackOcrProducts(
   input: FallbackOcrProductsInput,
 ): Promise<FallbackOcrProductsResult | null> {
