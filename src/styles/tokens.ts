@@ -29,6 +29,12 @@ export const tokens = {
     negSubtle: "#FEF2F2",
     negBorder: "#FECACA",
     warnBg: "#FEF3C7",
+    // 데이터 마커(예: MonthPicker 의 "거래가 있는 달") 전용 톤.
+    // warn 과 같은 앰버 계열이지만, "경고"가 아니라 "여기 데이터 있음"이라는 다른 의미라
+    // 별도 슬롯으로 분리합니다. 인디고 accent(선택 상태)와 명확히 구분되는 따뜻한 톤.
+    markerFg: "#92400E", // amber-800: 글자/숫자 가독성 확보
+    markerBorder: "#FCD34D", // amber-300: 너무 튀지 않게 한 단계 옅은 테두리
+    markerBg: "#FFFBEB", // amber-50: 셀 배경. 선택(accentSubtle)과 충분히 구분됨
     cat1: "#4F46E5",
     cat2: "#0E9488",
     cat3: "#B45309",
@@ -49,6 +55,8 @@ export const tokens = {
       income: { bg: "#ECFDF5", fg: "#067A55" },
       purchase: { bg: "#F2F4F8", fg: "#5B6474" },
       sub: { bg: "#EEF0FF", fg: "#4338CA" },
+      installment: { bg: "#EEF0FF", fg: "#4338CA" },
+      billing: { bg: "#FFF7ED", fg: "#C2410C" },
       cancel: { bg: "#FEF2F2", fg: "#B42318" },
       refund: { bg: "#EFF6FF", fg: "#1D4ED8" },
       // "기타" 상태는 purchase와 유사한 회색 계열로 두되, 살짝 더 옅게 해 의미 있는 상태들과 시각 가중치를 낮춥니다.

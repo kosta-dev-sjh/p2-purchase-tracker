@@ -1,12 +1,20 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.geminiProxy = void 0;
+exports.geminiProxy = exports.purgeExpiredDeletedAccounts = exports.restorePendingDeletion = exports.deleteAccount = void 0;
 const generative_ai_1 = require("@google/generative-ai");
 const app_1 = require("firebase-admin/app");
+const auth_1 = require("firebase-admin/auth");
+const firestore_1 = require("firebase-admin/firestore");
 const https_1 = require("firebase-functions/v2/https");
+const scheduler_1 = require("firebase-functions/v2/scheduler");
 const params_1 = require("firebase-functions/params");
+const node_crypto_1 = require("node:crypto");
 (0, app_1.initializeApp)();
 const geminiApiKey = (0, params_1.defineSecret)("GEMINI_API_KEY");
+const adminDb = (0, firestore_1.getFirestore)();
+const RECENT_AUTH_MAX_AGE_SECONDS = 10 * 60;
+const ACCOUNT_DELETION_GRACE_DAYS = 7;
+const ACCOUNT_DELETION_GRACE_MS = ACCOUNT_DELETION_GRACE_DAYS * 24 * 60 * 60 * 1000;
 const FAST_GENERATION_CONFIG = {
     temperature: 0,
     topP: 0.1,
@@ -25,6 +33,127 @@ function getGenAI() {
     }
     return new generative_ai_1.GoogleGenerativeAI(apiKey);
 }
+function sha256Hex(value) {
+    return (0, node_crypto_1.createHash)("sha256").update(value).digest("hex");
+}
+function maskEmail(email) {
+    const [localPart, domain] = email.split("@");
+    if (!localPart || !domain)
+        return "";
+    const safeLocal = localPart.length <= 2 ? `${localPart[0] ?? "*"}*` : `${localPart.slice(0, 2)}***`;
+    return `${safeLocal}@${domain}`;
+}
+function requireRecentAuth(authTime) {
+    const seconds = typeof authTime === "number" ? authTime : Number(authTime);
+    if (!Number.isFinite(seconds) || seconds <= 0) {
+        throw new https_1.HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+    }
+    const age = Math.floor(Date.now() / 1000) - seconds;
+    if (age > RECENT_AUTH_MAX_AGE_SECONDS) {
+        throw new https_1.HttpsError("failed-precondition", "최근 로그인 확인이 필요합니다.");
+    }
+    return seconds;
+}
+async function countCollectionDocsDeep(collectionRef) {
+    const snap = await collectionRef.get();
+    let total = snap.size;
+    for (const docSnap of snap.docs) {
+        const nestedCollections = await docSnap.ref.listCollections();
+        for (const nestedCollection of nestedCollections) {
+            total += await countCollectionDocsDeep(nestedCollection);
+        }
+    }
+    return total;
+}
+async function deleteCollectionDeep(collectionRef) {
+    const snap = await collectionRef.get();
+    for (const docSnap of snap.docs) {
+        const nestedCollections = await docSnap.ref.listCollections();
+        for (const nestedCollection of nestedCollections) {
+            await deleteCollectionDeep(nestedCollection);
+        }
+        await docSnap.ref.delete();
+    }
+}
+async function collectDeletionSummary(userRef) {
+    const [userSnap, topLevelCollections] = await Promise.all([userRef.get(), userRef.listCollections()]);
+    const topLevelCounts = {};
+    let totalDocsDeleted = 0;
+    for (const collectionRef of topLevelCollections) {
+        const count = await countCollectionDocsDeep(collectionRef);
+        topLevelCounts[collectionRef.id] = count;
+        totalDocsDeleted += count;
+    }
+    return {
+        userDocExisted: userSnap.exists,
+        topLevelCounts,
+        totalDocsDeleted,
+    };
+}
+async function deleteUserDataTree(userRef) {
+    const topLevelCollections = await userRef.listCollections();
+    for (const collectionRef of topLevelCollections) {
+        await deleteCollectionDeep(collectionRef);
+    }
+    await userRef.delete();
+}
+function toDateOrNull(value) {
+    if (value instanceof firestore_1.Timestamp)
+        return value.toDate();
+    if (value instanceof Date)
+        return value;
+    return null;
+}
+function lifecycleLogCollection() {
+    return adminDb.collection("accountLifecycleLogs");
+}
+async function loadUserRecordOrNull(uid) {
+    try {
+        return await (0, auth_1.getAuth)().getUser(uid);
+    }
+    catch (error) {
+        if (error.code === "auth/user-not-found") {
+            return null;
+        }
+        throw error;
+    }
+}
+function buildIdentityPayload(uid, userRecord) {
+    const normalizedEmail = (userRecord?.email ?? "").trim().toLowerCase();
+    return {
+        uid,
+        providerIds: userRecord?.providerData.map((item) => item.providerId).filter(Boolean) ?? [],
+        emailMasked: normalizedEmail ? maskEmail(normalizedEmail) : null,
+        emailHash: normalizedEmail ? sha256Hex(normalizedEmail) : null,
+    };
+}
+async function writeLifecycleLog(uid, userRecord, payload) {
+    const ref = lifecycleLogCollection().doc();
+    await ref.set({
+        ...buildIdentityPayload(uid, userRecord),
+        ...payload,
+    });
+    return ref;
+}
+async function purgeUserAccount(uid, options) {
+    const userRef = adminDb.collection("users").doc(uid);
+    const summary = await collectDeletionSummary(userRef);
+    await deleteUserDataTree(userRef);
+    if (options.userRecord) {
+        await (0, auth_1.getAuth)().deleteUser(uid);
+    }
+    const logRef = await writeLifecycleLog(uid, options.userRecord, {
+        eventType: "deletion_purged",
+        status: "completed",
+        reason: options.reason,
+        purgeSource: options.purgeSource,
+        reauthProvider: options.reauthProvider ?? null,
+        authTime: options.authTime ?? null,
+        dataSummary: summary,
+        purgedAt: firestore_1.FieldValue.serverTimestamp(),
+    });
+    return { logId: logRef.id, dataSummary: summary };
+}
 function createModel() {
     return getGenAI().getGenerativeModel({
         model: "gemini-2.5-flash",
@@ -40,7 +169,7 @@ function parsePipeLine(line) {
     const parts = trimmed.split("|").map((p) => p.trim());
     if (parts.length < 4)
         return null;
-    const [date, merchant, amount, category] = parts;
+    const [date, merchant, amount, category, paymentMode, installmentMonths, installmentCycle, billedAmount,] = parts;
     if (/[가-힣]/.test(date) && /[가-힣]/.test(amount))
         return null;
     if (date === "이용일" && merchant === "가맹점명")
@@ -52,6 +181,10 @@ function parsePipeLine(line) {
         가맹점명: merchant,
         이용금액: amount,
         카테고리: category || "",
+        ...(paymentMode ? { 이용구분: paymentMode } : {}),
+        ...(installmentMonths ? { 할부개월: installmentMonths } : {}),
+        ...(installmentCycle ? { 할부회차: installmentCycle } : {}),
+        ...(billedAmount ? { 결제금액: billedAmount } : {}),
     };
 }
 function compressInputText(text, maxChars = 60_000) {
@@ -67,11 +200,37 @@ function compressInputText(text, maxChars = 60_000) {
     const tail = maxChars - head;
     return cleaned.slice(0, head) + "\n...[생략]...\n" + cleaned.slice(cleaned.length - tail);
 }
+function normalizeInsightText(text) {
+    const singleLine = text
+        .replace(/\r?\n+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+    if (!singleLine)
+        return "";
+    const sentenceMatches = singleLine.match(/[^.!?]+[.!?]?/g) ?? [singleLine];
+    const firstTwoSentences = sentenceMatches
+        .map((sentence) => sentence.trim())
+        .filter(Boolean)
+        .slice(0, 2)
+        .join(" ");
+    const clipped = firstTwoSentences || singleLine;
+    return clipped.length <= 120 ? clipped : clipped.slice(0, 120).trimEnd() + "...";
+}
 async function runGenerateInsight(rulesText) {
     const model = createModel();
-    const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:\n\n${rulesText}\n\n위 내용을 바탕으로 사용자에게 도움이 되는 1~2문장의 친근하고 짧은 소비 인사이트를 만들어주세요.`;
+    const prompt = `다음은 이번 달 사용자의 소비 패턴을 규칙 기반으로 요약한 데이터입니다:
+
+${rulesText}
+
+아래 규칙을 반드시 지켜 사용자에게 보여줄 소비 인사이트를 작성하세요.
+- 한국어로만 작성합니다.
+- 정확히 1~2문장만 작성합니다.
+- 문장은 짧고 친근하게 씁니다.
+- 불릿, 번호, 제목, 줄바꿈, 따옴표를 쓰지 않습니다.
+- 120자 안팎으로 끝냅니다.
+- 입력에 없는 수치나 사실은 만들지 않습니다.`;
     const result = await model.generateContent(prompt);
-    return { text: (await result.response.text()).trim() };
+    return { text: normalizeInsightText(await result.response.text()) };
 }
 async function runFallbackOcr(text) {
     const model = createModel();
@@ -90,13 +249,20 @@ async function runFallbackCsv(text) {
     const prompt = `너는 한국 카드사/쇼핑몰 명세서에서 거래 행만 뽑아내는 추출기다.
 다음 규칙을 엄격히 지켜라:
 - 출력은 오직 파이프(|) 구분 라인이다. JSON/코드펜스/설명/머리말/꼬리말 금지.
-- 각 라인 형식: \`이용일|가맹점명|이용금액|카테고리\`
+- 각 라인 형식: \`이용일|가맹점명|이용금액|카테고리|이용구분|할부개월|할부회차|결제금액\`
 - 이용일은 \`YYYY.MM.DD\` 형식(하이픈/슬래시 금지).
 - 이용금액은 쉼표 없이 정수 숫자만(예: 4500). 환불/취소면 금액 앞에 '-'를 붙이지 말고 양수로 적되, 카테고리 뒤에는 쓰지 마라.
 - 가맹점명 안에 '|' 문자가 있으면 공백으로 치환하라.
 - '총 합계', '소계', '누계' 같은 요약 행은 절대 출력하지 마라.
 - 가맹점명이 비거나 알 수 없으면 '알 수 없음'으로 적는다.
 - 카테고리는 가능하면 한 단어(예: 카페, 식당, 교통, 쇼핑, 구독, 기타). 모르면 '기타'.
+- 이용구분은 가능하면 \`일시불\`, \`할부\`, \`취소\`, \`환불\` 중 하나를 적고, 없으면 빈칸으로 둔다.
+- 할부개월은 총 할부 개월 수만 숫자로 적는다(예: \`3\`). 없으면 빈칸.
+- 할부회차는 월 청구형 데이터일 때만 \`현재/전체\` 형식으로 적는다(예: \`2/5\`). 없으면 빈칸.
+- 결제금액은 월 청구형 파일에서 보이는 실제 이번 달 청구금액이 있으면 숫자로 적고, 없으면 빈칸.
+- 승인형 상세 파일이면 이용금액에는 원 승인금액을 적고, 결제금액은 비워 둔다.
+- 청구형/회차형 파일이면 이용금액에는 원 승인금액이 보일 때만 적고, 이번 달 청구액은 결제금액에 적는다.
+- 같은 카드사의 요약 시트와 상세 시트가 함께 있을 수 있다. 상세 거래행만 뽑고 요약/집계 시트는 무시한다.
 - 헤더 라인을 출력하지 마라. 첫 라인부터 바로 데이터다.
 
 데이터:
@@ -139,6 +305,10 @@ ${compressed}`;
                             가맹점명: String(record.가맹점명 ?? "").trim(),
                             이용금액: String(record.이용금액 ?? "").trim(),
                             카테고리: String(record.카테고리 ?? "").trim(),
+                            이용구분: String(record.이용구분 ?? "").trim(),
+                            할부개월: String(record.할부개월 ?? "").trim(),
+                            할부회차: String(record.할부회차 ?? "").trim(),
+                            결제금액: String(record.결제금액 ?? "").trim(),
                         });
                     }
                 }
@@ -159,24 +329,52 @@ async function runFallbackOcrProducts(input) {
     const productsBlock = input.allProducts
         .map((p, i) => {
         const flag = badIdSet.has(p.id) ? " (의심)" : "";
-        return `${i + 1}. id=${p.id}${flag} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}`;
+        const currentDate = p.date;
+        const dateHint = currentDate ? ` · 현재날짜=${currentDate}` : " · 현재날짜=(없음)";
+        return `${i + 1}. id=${p.id}${flag} · 현재이름="${p.name ?? ""}" · 현재가격=${p.price ?? 0}${dateHint}`;
     })
         .join("\n");
     const platformKor = PLATFORM_LABELS[input.platform] ?? "쇼핑몰";
-    const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격을 이미지와 rawText 로 검증·보정하는 추출기다.
-입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격) 이 들어온다.
+    const prompt = `너는 ${platformKor} 주문내역 캡쳐에서 상품 카드의 이름·가격·날짜를 이미지와 rawText 로 검증·보정하는 추출기다.
+입력에는 (1) OCR 로 뽑힌 rawText, (2) 이 이미지의 **전체 카드 목록**(id · 현재 이름 · 현재 가격 · 현재 날짜) 이 들어온다.
 "(의심)" 이 붙은 카드는 Tesseract 파서가 복구 못 한 카드라 특히 신경 써서 이미지에서 다시 읽어내라.
 그렇지 않은 카드도 이미지를 확인해 **분명한 오류**가 있으면 고치되, 맞으면 현재 값을 **그대로** 반환하라.
 
 규칙을 엄격히 지킨다:
 - 출력은 오직 파이프(|) 구분 라인. JSON / 코드펜스 / 머리말 / 꼬리말 금지.
-- 각 라인 형식: \`id|name|price|quantity\`
+- 각 라인 형식: \`id|name|price|quantity|date\`
 - id 는 입력과 글자 단위로 정확히 같게 복사한다(재생성 금지).
 - name 은 ${platformKor} 에서 검색 가능한 자연스러운 상품명. 브랜드+품목이 드러나게.
-- **변경은 필요할 때만**: 현재 이름이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
-  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임 등)" 에만.
+- **변경은 필요할 때만**: 현재 값이 이미지와 일치하면 그대로 두라. 애매하면 그대로 두라.
+  오버라이드는 "확실히 틀린 경우(OCR 환각, 버튼 잔류, 가격 0 인데 이미지엔 숫자 보임, 날짜 비었는데 이미지엔 보임 등)" 에만.
+
+이름 정리 규칙:
+- 한글 1글자 + 공백 으로 시작하는 OCR 잔류 prefix 는 제거 (예: "개 체크미..." → "체크미...", "을 띠테르..." → "띠테르...", "에 강블리..." → "강블리...", "를 독거미..." → "독거미...", "이 헬스프랜드..." → "헬스프랜드...", "까 비닐봉투..." → "비닐봉투...").
+- UI 라벨이 이름에 섞이면 제거: "판매자정보/문의", "상세보기", "장바구니 담기", "바로 구매하기", "한달리뷰쓰기", "다시 담기", "한달사용리뷰", "정기구독", "추가상품", "내일배송", "오늘배송", "리뷰 작성".
+- 한글 사이 영문 잔류는 의미 있는 모델명만 남기고 OCR 노이즈는 제거 (예: "리아나 카본히터 2 BH 전기히터" 의 "BH" 같이 의미 없는 약자가 끼면 빼거나 정확한 토큰으로 복원).
+- 띄어쓰기가 과하게 붙어 있으면 한국 쇼핑몰 검색어처럼 자연스럽게 복원한다.
+
+가격·수량:
 - price 는 쉼표·원 기호 없는 정수(예: 11900). 정말 판독 불가면 0.
+  - "원" 이 OCR 에서 "8" 또는 "0" 으로 깨질 수 있음 — 마지막 자리가 부자연스러우면 (예: "5,008" 같은 4자리 마지막 그룹) 원래 가격을 추정해 보정.
 - quantity 는 정수, 찾을 수 없으면 1.
+
+날짜 (가장 중요):
+- ISO 형식 \`YYYY-MM-DD\`. 이미지의 "주문/결제" 라벨 옆 날짜를 읽는다.
+- ${platformKor} 에서 흔한 형식 (그리고 OCR 깨짐 변형):
+  · \`2025.7.3. 19:04 주문\` / \`2025.7.3 19:04 결제\` (full year)
+  · \`4. 7. 11:29 결제\` / \`1.26. 15:09 주문\` (short)
+  · \`4900원 210 1202긍제\` (압축 — \`긍제\`는 \`결제\` OCR 변형, \`210\`은 \`2.10\`, \`1202\`는 12:02)
+  · \`13,9008 3 24 1526 글제\` (\`글제\`=\`결제\` 변형, \`3 24\`=3.24, \`1526\`=15:26)
+  · \`17.000원 2 6 045 27\` (\`2 6\`=2.6, \`045 27\`=04:54:27 — 결제 키워드 자체 증발)
+- 결제·주문 OCR 변형: \`결제\`→\`결재/즐제/글제/긍제/금지/결자\`, \`주문\`→\`주묘/수문/우문/주둔/주몬\`.
+- 4자리 시각(HHMM) 앞 토큰이 날짜다. 예: \`47 1129\` 에서 \`47\` 이 4.7, \`1129\` 가 11:29.
+- 단축 형식(연도 누락) 이면 현재 연도를 가정하되, 추출 월이 현재 월보다 크면 작년으로.
+- 정말 안 보이면 빈 문자열(\`\`).
+- **같은 결제 묶음**(같은 fold 그룹 / "추가상품" / "총 N건 주문 접기") 의 다른 카드와 날짜가 다르면 일관성을 맞춰라 — 같은 결제는 무조건 같은 날짜.
+- "추가상품" 카드는 위에 있는 본 상품과 같은 결제이므로 같은 날짜.
+
+기타:
 - 입력된 카드 수만큼 정확히 그만큼의 라인을 출력한다. 새 카드 추가·빠뜨리기 금지.
 - 설명 문장 추가 금지. 첫 라인부터 데이터다.
 
@@ -206,7 +404,7 @@ ${productsBlock}`;
         const cols = line.split("|").map((c) => c.trim());
         if (cols.length < 3)
             continue;
-        const [id, name, priceStr, qtyStr] = cols;
+        const [id, name, priceStr, qtyStr, dateStr] = cols;
         if (!inputIds.has(id))
             continue;
         const price = parseInt(priceStr.replace(/[^0-9-]/g, ""), 10);
@@ -216,11 +414,14 @@ ${productsBlock}`;
         if (!orig)
             continue;
         const quantity = qtyStr ? parseInt(qtyStr.replace(/[^0-9]/g, ""), 10) : undefined;
+        // date — ISO YYYY-MM-DD. 빈 문자열이면 미상으로 간주. 형식 검증 후 통과한 것만 보존.
+        const date = dateStr && /^\d{4}-\d{2}-\d{2}$/.test(dateStr) ? dateStr : undefined;
         recovered.set(id, {
             id,
             name: name || orig.name || "",
             price: Math.max(0, price),
             ...(quantity && quantity > 0 ? { quantity } : {}),
+            ...(date ? { date } : {}),
         });
     }
     if (recovered.size === 0) {
@@ -231,15 +432,157 @@ ${productsBlock}`;
         const r = recovered.get(p.id);
         if (!r)
             return p;
+        const pDate = p.date;
+        const rDate = r.date;
         const changed = (p.name ?? "").trim() !== r.name.trim() ||
             (p.price ?? 0) !== r.price ||
-            (p.quantity ?? 1) !== (r.quantity ?? 1);
+            (p.quantity ?? 1) !== (r.quantity ?? 1) ||
+            (pDate ?? "") !== (rDate ?? "");
         if (changed)
             changedIds.add(p.id);
         return r;
     });
     return { products, changedIds: [...changedIds] };
 }
+exports.deleteAccount = (0, https_1.onCall)({
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+}, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "로그인된 사용자만 계정을 삭제할 수 있습니다.");
+    }
+    const authTimeSeconds = requireRecentAuth(request.auth.token.auth_time);
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const userRecord = await (0, auth_1.getAuth)().getUser(uid);
+    const data = (request.data ?? {});
+    const reason = typeof data.reason === "string" && data.reason.trim() ? data.reason.trim() : "self-service";
+    const reauthProvider = typeof data.reauthProvider === "string" && data.reauthProvider.trim()
+        ? data.reauthProvider.trim()
+        : null;
+    const purgeAt = new Date(Date.now() + ACCOUNT_DELETION_GRACE_MS);
+    try {
+        await userRef.set({
+            accountStatus: "pending_deletion",
+            deletionRequestedAt: firestore_1.FieldValue.serverTimestamp(),
+            purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+            restoredAt: firestore_1.FieldValue.delete(),
+            updatedAt: firestore_1.FieldValue.serverTimestamp(),
+        }, { merge: true });
+        const logRef = await writeLifecycleLog(uid, userRecord, {
+            eventType: "deletion_requested",
+            status: "scheduled",
+            reason,
+            reauthProvider,
+            authTime: new Date(authTimeSeconds * 1000).toISOString(),
+            requestedAt: firestore_1.FieldValue.serverTimestamp(),
+            purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+            graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+        });
+        return {
+            ok: true,
+            logId: logRef.id,
+            status: "scheduled",
+            purgeAt: purgeAt.toISOString(),
+            graceDays: ACCOUNT_DELETION_GRACE_DAYS,
+        };
+    }
+    catch (error) {
+        await writeLifecycleLog(uid, userRecord, {
+            eventType: "deletion_request_failed",
+            status: "failed",
+            reason,
+            reauthProvider,
+            authTime: new Date(authTimeSeconds * 1000).toISOString(),
+            failedAt: firestore_1.FieldValue.serverTimestamp(),
+            errorCode: error instanceof https_1.HttpsError ? error.code : error instanceof Error ? error.name : "unknown",
+            errorMessage: error instanceof Error ? error.message : "unknown error",
+        });
+        if (error instanceof https_1.HttpsError) {
+            throw error;
+        }
+        throw new https_1.HttpsError("internal", "계정 삭제 예약 중 오류가 발생했습니다.");
+    }
+});
+exports.restorePendingDeletion = (0, https_1.onCall)({
+    region: "asia-northeast3",
+    timeoutSeconds: 120,
+    memory: "1GiB",
+    invoker: "public",
+    cors: true,
+}, async (request) => {
+    if (!request.auth) {
+        throw new https_1.HttpsError("unauthenticated", "로그인된 사용자만 계정 상태를 확인할 수 있습니다.");
+    }
+    const uid = request.auth.uid;
+    const userRef = adminDb.collection("users").doc(uid);
+    const [userSnap, userRecord] = await Promise.all([userRef.get(), loadUserRecordOrNull(uid)]);
+    if (!userSnap.exists) {
+        return { status: "noop" };
+    }
+    const data = userSnap.data() ?? {};
+    const accountStatus = typeof data.accountStatus === "string" ? data.accountStatus : "active";
+    const purgeAt = toDateOrNull(data.purgeAt);
+    if (accountStatus !== "pending_deletion" || !purgeAt) {
+        return { status: "noop" };
+    }
+    if (purgeAt.getTime() <= Date.now()) {
+        const result = await purgeUserAccount(uid, {
+            userRecord,
+            reason: "deletion-window-expired",
+            purgeSource: "restore-check",
+        });
+        return {
+            status: "purged",
+            logId: result.logId,
+            purgeAt: purgeAt.toISOString(),
+        };
+    }
+    await userRef.set({
+        accountStatus: "active",
+        deletionRequestedAt: firestore_1.FieldValue.delete(),
+        purgeAt: firestore_1.FieldValue.delete(),
+        restoredAt: firestore_1.FieldValue.serverTimestamp(),
+        updatedAt: firestore_1.FieldValue.serverTimestamp(),
+    }, { merge: true });
+    const restoredAt = new Date();
+    const logRef = await writeLifecycleLog(uid, userRecord, {
+        eventType: "deletion_restored",
+        status: "completed",
+        restoredAt: firestore_1.FieldValue.serverTimestamp(),
+        purgeAt: firestore_1.Timestamp.fromDate(purgeAt),
+        restoreSource: "login",
+    });
+    return {
+        status: "restored",
+        logId: logRef.id,
+        purgeAt: purgeAt.toISOString(),
+        restoredAt: restoredAt.toISOString(),
+    };
+});
+exports.purgeExpiredDeletedAccounts = (0, scheduler_1.onSchedule)({
+    region: "asia-northeast3",
+    schedule: "every 60 minutes",
+    timeZone: "Asia/Seoul",
+    timeoutSeconds: 540,
+    memory: "1GiB",
+}, async () => {
+    const snap = await adminDb.collection("users").where("purgeAt", "<=", new Date()).get();
+    for (const userSnap of snap.docs) {
+        const data = userSnap.data();
+        if (data.accountStatus !== "pending_deletion")
+            continue;
+        const userRecord = await loadUserRecordOrNull(userSnap.id);
+        await purgeUserAccount(userSnap.id, {
+            userRecord,
+            reason: "deletion-window-expired",
+            purgeSource: "scheduler",
+        });
+    }
+});
 exports.geminiProxy = (0, https_1.onCall)({
     region: "asia-northeast3",
     timeoutSeconds: 120,

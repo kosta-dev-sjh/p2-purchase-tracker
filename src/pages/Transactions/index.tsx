@@ -12,14 +12,16 @@ import { MonthPicker } from "../../components/primitives/MonthPicker";
 import { tokens } from "../../styles/tokens";
 import { media } from "../../tokens/breakpoints";
 import { SummaryStrip } from "./components/SummaryStrip";
-import { FilterBar } from "./components/FilterBar";
+import { FilterBar, type InstallmentFilter } from "./components/FilterBar";
 import { TransactionTable } from "./components/TransactionTable";
 import { DetailPanel } from "./components/DetailPanel";
-import { buildTransactionSummary, getPrevMonthKey } from "./data";
+import { buildTransactionSummary } from "./data";
 import {
+  computeMaxMonthKey,
   computeMinYear,
   getCurrentMonthKey,
   getMonthOption,
+  getPrevMonthKey,
 } from "../../constants/months";
 import {
   transactionsStore,
@@ -33,6 +35,7 @@ import type {
   TxRow,
   TxPlatform,
 } from "./components/TransactionTable";
+import { getCardInstallmentKind } from "../../utils/cardInstallment";
 
 const Body = styled.div<{ $hasPanel: boolean }>`
   display: grid;
@@ -171,6 +174,7 @@ export const TransactionsPage: React.FC = () => {
   const [platform, setPlatform] = useState<"all" | TxPlatform>("all");
   const [category, setCategory] = useState<"all" | string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "purchase" | "cancel" | "refund" | "sub" | "etc">("all");
+  const [installmentFilter, setInstallmentFilter] = useState<InstallmentFilter>("all");
   // 거래 내역은 기본적으로 최신이 위로 오게 두고, 사용자가 원하면 오름차순으로 뒤집을 수 있습니다.
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
 
@@ -190,16 +194,26 @@ export const TransactionsPage: React.FC = () => {
     () => computeMinYear(allRows.map((row) => row.date)),
     [allRows]
   );
+  // 미래 거래(과거 데이터 정합 케이스)가 있으면 그 월까지 자동 노출. 새 거래는 거래일자 maxDate로 차단.
+  const pickerMaxMonth = useMemo(
+    () => computeMaxMonthKey(allRows.map((row) => row.date)),
+    [allRows]
+  );
+  const markedMonthKeys = useMemo(
+    () => Array.from(new Set(allRows.map((row) => toMonthKey(row.date)).filter(Boolean))),
+    [allRows]
+  );
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
   );
 
   const filteredRows = useMemo(() => {
-    // 검색어, 플랫폼, 카테고리 조건을 한 번에 적용해 실제 표에 보여줄 후보 목록을 만듭니다.
     const query = search.trim().toLowerCase();
+    // 검색이 들어오면 현재 월에 갇히지 않고 전체 거래 기간에서 찾습니다.
+    const candidateRows = query ? allRows : monthRows;
 
-    const matched = monthRows.filter((row) => {
+    const matched = candidateRows.filter((row) => {
       if (typeFilter !== "all" && row.type !== typeFilter) {
         return false;
       }
@@ -214,6 +228,19 @@ export const TransactionsPage: React.FC = () => {
       }
 
       if (statusFilter !== "all" && row.status !== statusFilter) {
+        return false;
+      }
+
+      const cardImport = row.detail?.cardImport;
+      const installmentKind = getCardInstallmentKind(cardImport);
+      if (installmentFilter === "lump_sum" && installmentKind !== "lump_sum") {
+        return false;
+      }
+      if (
+        installmentFilter === "installment" &&
+        installmentKind !== "installment_approval" &&
+        installmentKind !== "installment_billing"
+      ) {
         return false;
       }
 
@@ -239,12 +266,19 @@ export const TransactionsPage: React.FC = () => {
       return sortOrder === "desc" ? -diff : diff;
     });
     return sorted;
-  }, [category, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  }, [allRows, category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
 
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
   const [visibleCount, setVisibleCount] = useState(INITIAL_VISIBLE);
-  const [selectedId, setSelectedId] = useState<string | null>(monthRows[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  /**
+   * 홈 "최근 거래" 등 다른 화면에서 특정 거래로 진입했을 때 그 행을 부드럽게 스크롤하고
+   * 잠깐 강조하기 위한 상태. highlightId 는 강조 대상 행의 id, pulseToken 은 같은 id 가
+   * 연달아 들어와도 펄스를 다시 트리거하기 위한 단조 증가 카운터.
+   */
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [pulseToken, setPulseToken] = useState(0);
 
   const resetVisibleCount = useCallback(() => {
     setVisibleCount(INITIAL_VISIBLE);
@@ -288,6 +322,11 @@ export const TransactionsPage: React.FC = () => {
     },
     [resetVisibleCount]
   );
+
+  const handleInstallmentChange = useCallback((nextInstallment: InstallmentFilter) => {
+    setInstallmentFilter(nextInstallment);
+    resetVisibleCount();
+  }, [resetVisibleCount]);
 
   const visibleRows = useMemo(
     () => filteredRows.slice(0, visibleCount),
@@ -395,6 +434,67 @@ export const TransactionsPage: React.FC = () => {
   }, []);
 
   /**
+   * 홈 "최근 거래"·소비분석 등에서 location.state.scrollToTransactionId 로 진입한 경우의 처리.
+   * 편집 모달은 띄우지 않고, 대상 거래가 표에 보이도록 다음을 강제합니다:
+   *   1) 검색·유형·플랫폼·카테고리·상태·할부 필터 모두 초기화 (필터로 가려져 있으면 안 보이니까)
+   *   2) 거래 일자에 맞춰 month 동기화 + visibleCount 리셋
+   *   3) selectedId = 대상 id (오른쪽 상세 패널 열기, 모바일은 아코디언 열기)
+   *   4) highlightId / pulseToken 갱신 → TransactionTable 이 ref 로 scrollIntoView + 펄스
+   * 처리 후 navigate replace 로 state 를 비워 새로고침·뒤로가기 시 다시 트리거되지 않게 합니다.
+   */
+  useEffect(() => {
+    const state = location.state as { scrollToTransactionId?: string } | null;
+    const targetId = state?.scrollToTransactionId;
+    if (!targetId) return;
+    const target = allRows.find((row) => row.id === targetId);
+    if (!target) {
+      navigate(location.pathname, { replace: true, state: null });
+      return;
+    }
+
+    setSearch("");
+    setTypeFilter("all");
+    setPlatform("all");
+    setCategory("all");
+    setStatusFilter("all");
+    setInstallmentFilter("all");
+
+    const key = toMonthKey(target.date);
+    if (key) {
+      setMonth(key);
+    }
+    setVisibleCount(INITIAL_VISIBLE);
+    setSelectedId(targetId);
+    setHighlightId(targetId);
+    setPulseToken((current) => current + 1);
+
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.state, location.pathname, allRows, navigate]);
+
+  /**
+   * 강조 대상 행이 visibleCount 밖에 있으면 충분히 보이도록 자동 확장.
+   * filteredRows 가 필터/월 변경 후 갱신되면 한 번만 점프합니다.
+   */
+  useEffect(() => {
+    if (!highlightId) return;
+    const idx = filteredRows.findIndex((row) => row.id === highlightId);
+    if (idx === -1) return;
+    if (idx >= visibleCount) {
+      setVisibleCount(Math.min(filteredRows.length, idx + 5));
+    }
+  }, [highlightId, filteredRows, visibleCount]);
+
+  /**
+   * 펄스 애니메이션 길이(약 1.6s)와 동일한 시간 뒤에 highlightId 를 비웁니다.
+   * 강조 효과는 일회성이라 selectedId(상세 선택) 와 분리해 운영합니다.
+   */
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = window.setTimeout(() => setHighlightId(null), 1800);
+    return () => window.clearTimeout(timer);
+  }, [highlightId, pulseToken]);
+
+  /**
    * 수동 입력 페이지에서 "이 거래 수정하기"로 넘어올 때 location.state.editTransactionId 에
    * 대상 거래 id 가 담겨 옵니다. 이 경우 해당 거래를 스토어에서 찾아 편집 모달을 자동으로 엽니다.
    * 한 번 처리한 뒤에는 state 를 비워 같은 거래를 다시 새로 고침·뒤로가기 해도 모달이 불쑥
@@ -405,10 +505,13 @@ export const TransactionsPage: React.FC = () => {
     const targetId = state?.editTransactionId;
 
     // OCR/CSV 저장 후 넘어올 때 해당 날짜의 월로 자동 전환합니다.
+    // 외부 라우팅 state(targetDate) 에 따라 페이지 내부 month/visibleCount 를 동기화하는
+    // 정당한 effect 케이스 (한 번만 실행되고 navigate 로 state 를 비웁니다).
     const targetDate = state?.targetDate;
     if (!targetId && targetDate) {
       const key = toMonthKey(targetDate);
       if (key) {
+        // eslint-disable-next-line react-hooks/set-state-in-effect
         setMonth(key);
         resetVisibleCount();
       }
@@ -479,11 +582,13 @@ export const TransactionsPage: React.FC = () => {
           value={month}
           onChange={handleMonthChange}
           minYear={pickerMinYear}
+          maxMonthKey={pickerMaxMonth}
+          markedMonthKeys={markedMonthKeys}
         />
       }
     >
       <Grid>
-        <SummaryStrip summary={summary} />
+        <SummaryStrip summary={summary} filteredCount={filteredRows.length} />
         <Body $hasPanel={isOpen}>
           <Left>
             {/* 왼쪽 영역은 필터와 표, 오른쪽 영역은 상세 패널로 역할을 분리합니다.
@@ -495,6 +600,7 @@ export const TransactionsPage: React.FC = () => {
               platform={platform}
               category={category}
               statusFilter={statusFilter}
+              installmentFilter={installmentFilter}
               sortOrder={sortOrder}
               onToggleSort={handleToggleSort}
               onSearchChange={handleSearchChange}
@@ -502,6 +608,7 @@ export const TransactionsPage: React.FC = () => {
               onPlatformChange={handlePlatformChange}
               onCategoryChange={handleCategoryChange}
               onStatusChange={handleStatusChange}
+              onInstallmentChange={handleInstallmentChange}
             />
             <TransactionTable
               rows={visibleRows}
@@ -512,6 +619,8 @@ export const TransactionsPage: React.FC = () => {
               sortOrder={sortOrder}
               onToggleSort={handleToggleSort}
               renderMobileDetail={renderMobileDetail}
+              highlightId={highlightId}
+              pulseToken={pulseToken}
             />
           </Left>
           <PanelSlot>
@@ -574,14 +683,14 @@ export const TransactionsPage: React.FC = () => {
         <Modal
           isOpen
           onClose={() => setSourceImageUrl(null)}
-          title="OCR 분석한 이미지"
+          title="분석에 사용된 원본 캡처"
         >
           {/* 이미지 URL이 비어 있는 경우(mock/구데이터)엔 플레이스홀더로 떨어뜨려,
             "버튼은 보이는데 눌러도 아무것도 안 뜬다"는 상태를 피합니다. */}
           {sourceImageUrl ? (
             <img
               src={sourceImageUrl}
-              alt="OCR 분석에 사용된 원본 캡쳐"
+              alt="주문 캡처 분석에 사용된 원본 이미지"
               style={{
                 display: "block",
                 width: "100%",

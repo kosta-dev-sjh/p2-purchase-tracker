@@ -17,6 +17,8 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
+import { resolveProductLink } from "../../../utils/productSearchUrl";
 
 const HeaderRow = styled.div`
   display: flex;
@@ -116,35 +118,38 @@ const ItemRow = styled.div`
 `;
 
 /**
- * 상품에 link가 걸려있을 때만 노출되는 외부링크 아이콘 버튼입니다.
- * 새 탭으로 열어 탐색 흐름을 끊지 않고, 호버 시 accent 색으로 전환되어 클릭 가능성을 보여줍니다.
+ * 상품 행 우측의 외부링크 아이콘 버튼.
+ *
+ * 두 가지 상태를 지원합니다.
+ * - $fallback=false: 사용자가 등록한 진짜 상품 링크가 걸려 있는 경우. accent 색으로 강조.
+ * - $fallback=true: 링크 미등록이라 플랫폼 검색창으로 폴백된 경우. 톤다운 + 점선 테두리로
+ *   "이건 등록된 링크가 아니라 검색 보조" 라는 점을 시각적으로 구분합니다.
+ *   클릭 시 상품명으로 그 거래의 플랫폼(쿠팡/네이버) 검색 결과 페이지가 열립니다.
  */
-const ItemLink = styled.a`
+const ItemLink = styled.a<{ $fallback?: boolean }>`
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
-  border: 1px solid ${tokens.color.line};
+  width: 28px;
+  height: 28px;
+  border: 1px ${({ $fallback }) => ($fallback ? "dashed" : "solid")}
+    ${({ $fallback }) =>
+      $fallback ? tokens.color.line : tokens.color.accentBorder};
   border-radius: ${tokens.radius.control};
-  color: ${tokens.color.ink3};
-  background: ${tokens.color.panel};
+  color: ${({ $fallback }) =>
+    $fallback ? tokens.color.ink4 : tokens.color.accentHover};
+  background: ${({ $fallback }) =>
+    $fallback ? tokens.color.panel : tokens.color.accentSubtle};
   transition:
     color ${tokens.motion.fast} ease,
     border-color ${tokens.motion.fast} ease,
     background ${tokens.motion.fast} ease;
 
   &:hover {
-    color: ${tokens.color.accentHover};
-    border-color: ${tokens.color.accentBorder};
-    background: ${tokens.color.accentSubtle};
+    color: ${tokens.color.accentActive};
+    border-color: ${tokens.color.accent};
+    background: #e5e8ff;
   }
-`;
-
-const ItemLinkPlaceholder = styled.span`
-  display: inline-block;
-  width: 24px;
-  height: 24px;
 `;
 
 /**
@@ -169,6 +174,72 @@ const PartialNotice = styled.div`
 
   strong {
     color: ${tokens.color.ink2};
+    font-weight: 700;
+  }
+`;
+
+/**
+ * 접힌 주문(folded) 안내 — DetailPanel 버전. OcrEdit 의 FoldedBanner 와 동일한 정보를
+ * 거래 상세에서도 일관되게 보여주기 위해 같은 시각 톤(tint + ink3 dashed)으로 통일했습니다.
+ * 구현은 화면이 다르므로 컴포넌트는 분리되어 있지만, 사용자 입장에서 "어디서 보든 같은
+ * 모양으로 같은 의미" 를 받게 만드는 것이 목적입니다(strategy doc §12-5).
+ */
+const FoldedNotice = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong {
+    color: ${tokens.color.ink2};
+    font-weight: 700;
+  }
+`;
+
+/**
+ * "상품합계 / 차감액 / 최종 거래금액" 분해 표시 영역.
+ *
+ * 정책: docs/Naver_OCR_Parsing_Strategy.md §12-3 — 차감액을 별도 슬롯으로 보존해야 사용자가
+ * "왜 상품합계와 결제 금액이 다른지" 를 사후에 다시 확인할 수 있습니다. 단순 amount 한 줄로는
+ * 그 정보가 사라집니다.
+ *
+ * 차감액이 0/없으면 이 영역 자체가 렌더되지 않습니다(노이즈 방지).
+ */
+const AmountBreakdown = styled.div`
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding: 8px 10px;
+  border: 1px solid ${tokens.color.line2};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.bg};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.45;
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.minus {
+    color: ${tokens.color.neg};
+  }
+
+  .row.total {
+    margin-top: 4px;
+    padding-top: 6px;
+    border-top: 1px dashed ${tokens.color.line2};
+    color: ${tokens.color.ink1};
     font-weight: 700;
   }
 `;
@@ -224,6 +295,23 @@ const MemoBody = styled.p`
   word-break: break-word;
 `;
 
+const InfoGrid = styled.div`
+  display: grid;
+  grid-template-columns: 110px minmax(0, 1fr);
+  gap: 8px 12px;
+
+  .key {
+    color: ${tokens.color.ink4};
+    font-size: 12px;
+  }
+
+  .value {
+    color: ${tokens.color.ink2};
+    font-size: 13px;
+    font-weight: 600;
+  }
+`;
+
 const Actions = styled.div`
   display: grid;
   gap: 8px;
@@ -266,6 +354,12 @@ const DetailPanelInner = ({
   const memoText = row.memo?.trim() ?? "";
   const hasMemo = memoText.length > 0;
   const hasCategories = row.categories.length > 0;
+  const cardImport = row.detail?.cardImport;
+  const installmentKind = getCardInstallmentKind(cardImport);
+  const installmentLabel = getCardInstallmentLabel(cardImport);
+  const isInstallment =
+    installmentKind === "installment_billing" ||
+    installmentKind === "installment_approval";
 
   return (
     <Card padding={0}>
@@ -281,6 +375,11 @@ const DetailPanelInner = ({
         <Tags>
           <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
           <Tag kind={row.type === "expense" ? "expense" : "income"}>{TYPE_LABELS[row.type]}</Tag>
+          {isInstallment ? (
+            <Tag kind="installment">{installmentLabel ?? "할부"}</Tag>
+          ) : installmentKind === "lump_sum" ? (
+            <Tag kind="purchase">일시불</Tag>
+          ) : null}
         </Tags>
         <Title>{row.title}</Title>
         <DateAmount>
@@ -290,6 +389,57 @@ const DetailPanelInner = ({
             {formatKRW(Math.abs(row.amount))}
           </span>
         </DateAmount>
+
+        {/*
+         * 차감액이 있는 거래는 "상품합계 / 차감액 / 최종 거래금액" 3 줄로 분해해 보여줍니다.
+         * 상품합계는 amount + discount 로 역산 — 저장 시점에 amount 가 이미 차감 후 값으로
+         * 들어와 있기 때문(OcrEdit/buildCandidateFromOrder 의 deriveOrderTotal 결과를 그대로 사용).
+         * folded 거래는 base 가 sectionTotal 이지만, 거래 상세에서는 사용자에게 보여줄 단일
+         * 라벨이 필요하므로 일반 주문은 "상품 합계", folded 는 "결제 섹션 합계" 로 분기합니다.
+         */}
+        {(() => {
+          const discount = row.detail?.discountAmount ?? 0;
+          if (!(discount > 0)) return null;
+          const finalAmount = Math.abs(row.amount);
+          const baseAmount = finalAmount + discount;
+          const baseLabel = row.detail?.folded ? "결제 섹션 합계" : "상품 합계";
+          return (
+            <AmountBreakdown aria-label="거래금액 분해">
+              <div className="row">
+                <span>{baseLabel}</span>
+                <span>{formatKRW(baseAmount)}</span>
+              </div>
+              <div className="row minus">
+                <span>주문단위 차감액</span>
+                <span>-{formatKRW(discount)}</span>
+              </div>
+              <div className="row total">
+                <span>최종 거래금액</span>
+                <span>{formatKRW(finalAmount)}</span>
+              </div>
+            </AmountBreakdown>
+          );
+        })()}
+
+        {row.detail?.folded && (
+          /*
+           * 거래 상세에서 "이 거래는 접힌 주문에서 저장됐다" 는 사실을 한 번 더 알리는 안내.
+           * 상품 목록이 있어도 일부만 보일 수 있고, hiddenItemCount 가 있으면 함께 명시합니다.
+           */
+          <FoldedNotice role="status" aria-live="polite">
+            <span aria-hidden="true">🔒</span>
+            <span>
+              <strong>접힌 주문 · 상세 미확인</strong>
+              {typeof row.detail.hiddenItemCount === "number" &&
+                row.detail.hiddenItemCount > 0 &&
+                ` · 외 ${row.detail.hiddenItemCount}건 숨김`}
+              <div style={{ marginTop: 4 }}>
+                네이버에서 펼쳐지지 않은 주문이라 상품 상세가 일부만 저장됐을 수 있어요.
+                결제 섹션 합계는 별도로 보존돼 있고, 차감액은 거래금액에 이미 반영돼 있습니다.
+              </div>
+            </span>
+          </FoldedNotice>
+        )}
 
         {hasCategories && (
           <Section>
@@ -319,21 +469,41 @@ const DetailPanelInner = ({
                 </span>
               </PartialNotice>
             )}
-            {row.detail.items.map((item, index) => (
-              <ItemRow key={`${item.name}-${index}`}>
-                <span className="name">{item.name}</span>
-                <span className="price">{formatKRW(item.price)}</span>
-                {item.link ? (
+            {row.detail.items.map((item, index) => {
+              // 사용자가 링크를 직접 달지 않은 상품은 거래 플랫폼(쿠팡/네이버) 검색창으로 폴백.
+              // 미지정 플랫폼이면 네이버쇼핑으로 보내 줍니다(productSearchUrl 정책).
+              const { href, isFallback } = resolveProductLink(item.link, row.platform, item.name);
+              const platformLabel = PLATFORM_LABELS[row.platform];
+              return (
+                <ItemRow key={`${item.name}-${index}`}>
+                  <span className="name">{item.name}</span>
+                  <span className="price">{formatKRW(item.price)}</span>
                   <ItemLink
-                    href={item.link}
+                    href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    title="상품 링크 열기"
-                    aria-label={`${item.name} 상품 링크 새 탭으로 열기`}
+                    $fallback={isFallback}
+                    title={
+                      isFallback
+                        ? `${platformLabel}에서 "${item.name}" 검색`
+                        : "등록된 상품 링크 열기"
+                    }
+                    aria-label={
+                      isFallback
+                        ? `${item.name} 을(를) ${platformLabel} 에서 검색합니다. 새 탭으로 열림`
+                        : `${item.name} 상품 링크 새 탭으로 열기`
+                    }
                   >
+                    {/*
+                     * 외부 링크(↗) 박스 아이콘. fallback / 정식링크 모두 같은 모양을 쓰고,
+                     * 의미 차이는 ItemLink 의 테두리(dashed↔solid)·배경·색으로 구분합니다.
+                     * 이전에 fallback 은 돋보기 아이콘이었지만, "상품 바로가기" 라는 의미가
+                     * 사용자에겐 검색이 아니라 "그 상품 페이지로 이동" 으로 읽히도록
+                     * 박스 모양 외부링크 버튼으로 통일했습니다.
+                     */}
                     <svg
-                      width="12"
-                      height="12"
+                      width="14"
+                      height="14"
                       viewBox="0 0 16 16"
                       fill="none"
                       stroke="currentColor"
@@ -347,11 +517,9 @@ const DetailPanelInner = ({
                       <path d="M12.5 9.5v3a1 1 0 0 1-1 1h-8a1 1 0 0 1-1-1v-8a1 1 0 0 1 1-1h3" />
                     </svg>
                   </ItemLink>
-                ) : (
-                  <ItemLinkPlaceholder aria-hidden="true" />
-                )}
-              </ItemRow>
-            ))}
+                </ItemRow>
+              );
+            })}
           </Section>
         ) : null}
 
@@ -359,6 +527,58 @@ const DetailPanelInner = ({
           <div className="label">거래 상태</div>
           <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
         </Section>
+
+        {cardImport && (
+          <Section>
+            <div className="label">결제 정보</div>
+            <InfoGrid>
+              <div className="key">결제방식</div>
+              <div className="value">
+                {isInstallment
+                  ? "할부"
+                  : installmentKind === "lump_sum"
+                      ? "일시불"
+                      : "미기록"}
+              </div>
+              {isInstallment && cardImport.installmentMonths ? (
+                <>
+                  <div className="key">총 할부기간</div>
+                  <div className="value">{cardImport.installmentMonths}개월</div>
+                </>
+              ) : null}
+              {/*
+               * "현재 회차 X/Y" 행은 의도적으로 표시하지 않습니다(2026-04-28).
+               * 입력 경로(수동입력 / CSV) 마다 회차 캡처율이 들쭉날쭉해 같은 데이터셋에서
+               * 어떤 거래는 회차가 보이고 어떤 건 안 보이는 일관성 문제가 있었습니다.
+               * 회차 자체는 cardImport 에 남아 있을 수 있어 호환성은 유지됩니다.
+               */}
+              {cardImport.approvedAmount ? (
+                <>
+                  <div className="key">{isInstallment ? "원 결제금액" : "결제금액"}</div>
+                  <div className="value">{formatKRW(cardImport.approvedAmount)}</div>
+                </>
+              ) : null}
+              {cardImport.billedAmount ? (
+                <>
+                  <div className="key">이번 달 반영금액</div>
+                  <div className="value">{formatKRW(cardImport.billedAmount)}</div>
+                </>
+              ) : null}
+              {cardImport.remainingBalance ? (
+                <>
+                  <div className="key">남은 잔액</div>
+                  <div className="value">{formatKRW(cardImport.remainingBalance)}</div>
+                </>
+              ) : null}
+              {cardImport.dueDate ? (
+                <>
+                  <div className="key">결제예정일</div>
+                  <div className="value">{cardImport.dueDate}</div>
+                </>
+              ) : null}
+            </InfoGrid>
+          </Section>
+        )}
 
         {hasMemo && (
           <Section>
@@ -368,12 +588,36 @@ const DetailPanelInner = ({
           </Section>
         )}
 
-        {row.detail?.source && (
-          <Section>
-            <div className="label">입력 방식</div>
-            <Tag kind="purchase">{SOURCE_LABELS[row.detail.source]}</Tag>
-          </Section>
-        )}
+        {(() => {
+          /*
+           * 입력 방식 표시 라벨 결정.
+           *
+           * 신규 데이터(2026-04-28 이후): csvImport 가 detail.source = "CARD" 로 저장.
+           * 레거시 데이터: 카드 CSV 로 들어온 거래도 detail.source = "MANUAL" 로 잘못 찍혀
+           *   있어서 row.source === "csv" 폴백으로 보정합니다(레거시 호환).
+           * 그 외는 detail.source 가 그대로 표시 키입니다(OCR / MANUAL).
+           *
+           * 주의: "분석한 캡처 보기" 버튼 게이트(아래) 는 그대로 detail.source === "OCR" 만
+           * 봅니다 — 표시 라벨과 OCR 전용 기능을 분리해야 카드내역 거래에 캡처 버튼이 새지 않음.
+           */
+          const sourceKey: keyof typeof SOURCE_LABELS | null =
+            row.detail?.source === "OCR"
+              ? "OCR"
+              : row.detail?.source === "CARD"
+                ? "CARD"
+                : row.source === "csv"
+                  ? "CARD"
+                  : row.detail?.source === "MANUAL"
+                    ? "MANUAL"
+                    : null;
+          if (!sourceKey) return null;
+          return (
+            <Section>
+              <div className="label">입력 방식</div>
+              <Tag kind="purchase">{SOURCE_LABELS[sourceKey]}</Tag>
+            </Section>
+          );
+        })()}
 
         <Actions>
           <Button variant="primary" size="lg" block onClick={onEdit}>
@@ -389,7 +633,7 @@ const DetailPanelInner = ({
           // 편집 페이지 재방문은 불필요한 왕복이 됩니다. 대신 "분석에 사용된 원본 이미지만 보여 주기"로
           // 역할을 좁혀, 필요한 사용자는 캡쳐 원본을 한 번 더 확인할 수 있게 합니다.
           <LinkButton type="button" onClick={onOpenSource}>
-            OCR 분석한 이미지 보기
+            분석한 캡처 보기
           </LinkButton>
         )}
       </CardBd>

@@ -70,6 +70,25 @@ export function computeMinYear(dates: ReadonlyArray<string>): number {
 }
 
 /**
+ * 셀렉터에 노출할 가장 최신 월 키. 평소에는 오늘 기준 현재 월이지만,
+ * 데이터에 미래 거래가 섞여 있다면(예: 거래일자 검증 이전 시기 데이터) 그 미래 월까지
+ * 노출해 사용자가 자기 데이터에 접근할 수 없는 "데이터 노출 사각지대"를 막습니다.
+ *
+ * 거래일자 검증(MetaFields의 maxDate)이 도입된 이후로는 새 거래는 미래로 못 들어오지만,
+ * 이미 저장된 데이터를 안전하게 보여주기 위한 폴백입니다.
+ */
+export function computeMaxMonthKey(dates: ReadonlyArray<string>): string {
+  const todayKey = getCurrentMonthKey();
+  let latest = todayKey;
+  for (const d of dates) {
+    const k = dateStringToMonthKey(d);
+    if (!k) continue;
+    if (k > latest) latest = k;
+  }
+  return latest;
+}
+
+/**
  * "YYYY-MM" 키 → 화면 표시용 MonthOption.
  * 키가 비정상이면 오늘 기준 키로 폴백해 화면이 깨지지 않도록 합니다.
  * stamp 는 항상 오늘 날짜로 고정 — 화면 옆 작은 글씨가 "이 페이지를 본 시점"을

@@ -339,7 +339,7 @@ export const CategoryAddModal = ({
         {!nameLocked && (
           <FormField
             label="자동 분류 연결"
-            helpText="이 카테고리와 연결된 가맹점 규칙에 맞는 결제는 CSV/OCR로 불러올 때 자동으로 이 카테고리로 분류돼요. 수동 입력이나 거래 수정에는 영향을 주지 않아요."
+            helpText="이 카테고리와 연결된 가맹점 규칙에 맞는 결제는 카드 내역 가져오기·주문 캡처로 불러올 때 자동으로 이 카테고리로 분류돼요. 수동 입력이나 거래 수정에는 영향을 주지 않아요."
           >
             {suggestedConceptId && !conceptIds.includes(suggestedConceptId) && (
               <SuggestionCard>

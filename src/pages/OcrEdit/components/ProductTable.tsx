@@ -10,6 +10,7 @@ import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
 import type { OcrProduct, Status } from "../data";
 import { classifyOcrCardQuality } from "../../../utils/ocrQuality";
+import { sanitizeHref } from "../../../utils/safeUrl";
 
 /** "1000000" → "1,000,000" */
 function formatWithCommas(digits: string): string {
@@ -124,9 +125,9 @@ const ZeroPriceHint = styled.span<{ $acknowledged?: boolean }>`
  * 배지의 시각 톤을 해치지 않기 위해 배경 없는 텍스트 버튼으로 둡니다.
  */
 /**
- * 2026-04-25 UX 재정리: 카드별 "AI 보정됨" 배지는 제거. 사용자에겐 결과 품질만 관심이고,
- * 개발자 디버깅은 EditForm ImageSummary 의 단일 "🛠 DEBUG: AI 인식됨" chip 하나로 충분.
- * 여기 ProductTable row 에는 **기능 경고** 성격의 BadHint 와 ZeroPriceHint 만 유지합니다.
+ * 2026-04-25 UX 재정리: 카드별 "AI 보정됨" 배지는 제거. 사용자에겐 결과 품질만 관심이라
+ * AI 흔적은 시각적으로 노출하지 않습니다. 여기 ProductTable row 에는 **기능 경고** 성격의
+ * BadHint 와 ZeroPriceHint 만 유지합니다.
  */
 const BadHint = styled.span`
   display: inline-flex;
@@ -367,8 +368,8 @@ export const ProductTable: React.FC<{
           priceOcrFailed: row.priceOcrFailed,
           aiApplied: row.aiApplied,
         });
-        // bad hint 는 사용자 확인용으로 계속 노출. AI 보정 흔적 배지는 여기선 보여주지 않고
-        // EditForm 단의 단일 debug chip 에서만 집계해서 표시합니다(2026-04-25 UX 정리).
+        // bad hint 는 사용자 확인용으로 계속 노출. AI 보정 흔적 배지는 여기선 보여주지
+        // 않습니다(2026-04-25 UX 정리).
         const showBadHint = !row.aiApplied && quality.tier === "bad";
         return (
         <Row key={row.id}>
@@ -448,25 +449,32 @@ export const ProductTable: React.FC<{
               onChange={(e) => patch(row.id, { link: e.target.value })}
             />
           </div>
-          {/* 링크가 있으면 새 탭으로 열기 아이콘을 표시합니다 */}
-          <div style={{ display: "grid", placeItems: "center" }}>
-            {row.link ? (
-              <LinkButton
-                href={row.link}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="새 탭으로 열기"
-              >
-                <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M6 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
-                  <path d="M9 2h5v5" />
-                  <path d="M14 2 8 8" />
-                </svg>
-              </LinkButton>
-            ) : (
-              <span />
-            )}
-          </div>
+          {/* 링크가 있으면 새 탭으로 열기 아이콘을 표시합니다.
+              row.link 는 사용자/OCR 입력이라 sanitizeHref 로 검증 — 위험 스킴이면 버튼 자체를 숨겨
+              `<a href="javascript:...">` 가 새지 않게 합니다. */}
+          {(() => {
+            const safeLink = sanitizeHref(row.link);
+            return (
+              <div style={{ display: "grid", placeItems: "center" }}>
+                {safeLink ? (
+                  <LinkButton
+                    href={safeLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="새 탭으로 열기"
+                  >
+                    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                      <path d="M6 3H3a1 1 0 0 0-1 1v9a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-3" />
+                      <path d="M9 2h5v5" />
+                      <path d="M14 2 8 8" />
+                    </svg>
+                  </LinkButton>
+                ) : (
+                  <span />
+                )}
+              </div>
+            );
+          })()}
           <div style={{ display: "grid", placeItems: "center" }}>
             <RemoveButton type="button" onClick={() => handleRemove(row.id)}>
               ×

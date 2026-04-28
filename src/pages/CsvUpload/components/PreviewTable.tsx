@@ -11,6 +11,7 @@ import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { TxRow } from "../../Transactions/components/TransactionTable";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
 
 const Table = styled.div`
   display: grid;
@@ -19,6 +20,33 @@ const Table = styled.div`
 
   ${media.tablet} {
     grid-template-columns: 96px 96px 1fr 132px;
+  }
+`;
+
+/**
+ * 거래명 셀 내부에서 제목 텍스트와 할부 태그를 함께 보여주기 위한 래퍼.
+ * 제목이 길어지면 ellipsis 로 줄이되, 태그는 항상 우선 노출되도록 우측에 고정 배치합니다.
+ * Transactions 테이블의 할부 태그와 시각 가중치를 맞춥니다.
+ */
+const TitleCellInner = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+
+  .title-text {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .tags {
+    display: flex;
+    flex-shrink: 0;
+    gap: 4px;
   }
 `;
 
@@ -76,6 +104,20 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
         // 데이터가 불완전해도 화면이 크래시되지 않도록 보장합니다.
         const platformKey = row.platform || "unspecified";
         const platformLabel = PLATFORM_LABELS[platformKey] || "미지정";
+        const cardImport = row.detail?.cardImport;
+
+        // 미리보기에서도 사용자에게는 내부 승인/청구 구분을 노출하지 않고,
+        // 메인 거래표와 동일하게 "일시불 / 할부" 수준으로만 보여줍니다.
+        const installmentTag: { kind: "installment"; label: string } | null = (() => {
+          const label = getCardInstallmentLabel(cardImport);
+          const kind = getCardInstallmentKind(cardImport);
+          if (!label) return null;
+          if (kind === "installment_billing" || kind === "installment_approval") {
+            return { kind: "installment", label };
+          }
+          return null;
+        })();
+
         const displayTitle = (row.title || "알 수 없음").trim();
         const displayDate = row.date || "0000.00.00";
         const absAmount = Math.abs(row.amount || 0);
@@ -86,8 +128,15 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
             <DataCell>
               <Tag kind={platformKey}>{platformLabel}</Tag>
             </DataCell>
-            <DataCell style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {displayTitle}
+            <DataCell>
+              <TitleCellInner>
+                <span className="title-text">{displayTitle}</span>
+                {installmentTag && (
+                  <span className="tags">
+                    <Tag kind={installmentTag.kind}>{installmentTag.label}</Tag>
+                  </span>
+                )}
+              </TitleCellInner>
             </DataCell>
             <DataCell $right>
               <Amount>

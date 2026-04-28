@@ -32,6 +32,11 @@ import { checkProductTotal } from "../../utils/productTotalCheck";
 import { formatKRW } from "../../utils/format";
 import type { TxRow } from "./../Transactions/components/TransactionTable";
 import { mapCategories, mapPlatform } from "../../utils/manualMapping";
+import {
+  MAX_AMOUNT_VALUE,
+  MAX_MEMO_LENGTH,
+  MAX_TITLE_LENGTH,
+} from "../../constants/inputLimits";
 
 const Lead = styled.p`
   margin: 0 0 16px;
@@ -71,6 +76,21 @@ const ErrorLine = styled.div`
   color: ${tokens.color.neg};
   font-size: 12px;
   font-weight: 500;
+`;
+
+/**
+ * 저장 성공 시 잠깐 보이는 인라인 토스트. 페이지가 곧 거래내역으로 이동하지만,
+ * 사용자에게 "정말 저장됐다"는 확정 피드백을 주기 위해 0.6초 정도 노출 후 이동합니다.
+ */
+const SuccessLine = styled.div`
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid ${tokens.color.pos};
+  border-radius: ${tokens.radius.control};
+  background: rgba(34, 197, 94, 0.08);
+  color: ${tokens.color.pos};
+  font-size: 12px;
+  font-weight: 600;
 `;
 
 const SectionHeader = styled.div`
@@ -192,6 +212,10 @@ const EMPTY_META: MetaFieldValues = {
   // 사용자가 다른 카테고리를 고르면 그대로 덮어 써집니다.
   categories: ["etc"],
   memo: "",
+  installmentKind: "none",
+  installmentMonths: "",
+  billedAmount: "",
+  dueDate: "",
 };
 
 type RequiredMetaField = "title" | "amount" | "date";
@@ -206,6 +230,11 @@ export const ManualEntryPage: React.FC = () => {
   const [products, setProducts] = useState<ManualProduct[]>([]);
   const [modal, setModal] = useState<ModalMode | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * 저장 직후 거래내역으로 이동하기 전에 잠시 노출되는 성공 메시지.
+   * 사용자가 "저장됐는지 확신할 수 없다"는 피드백을 막기 위해 도입했습니다.
+   */
+  const [success, setSuccess] = useState<string | null>(null);
 
   const focusMetaField = (field: RequiredMetaField) => {
     const target = document.getElementById(`manual-${field}`);
@@ -241,7 +270,10 @@ export const ManualEntryPage: React.FC = () => {
   const duplicateKey = `${meta.date}|${meta.amount.replace(/[^0-9]/g, "")}`;
   const dupDismissed = dismissedDuplicateKey === duplicateKey;
 
-  const showSuggestion = candidateMatches.length > 0 && !dupDismissed;
+  // 저장이 시작된 직후(success 상태)에는 폼 값이 그대로 남아 있고, 이미 store에 들어간 새 거래가
+  // candidateMatches에 자기 자신으로 잡혀 "동일 항목이 있어요" 카드가 잠깐 뜨는 회귀가 있었어요.
+  // 페이지 이동(setTimeout 700ms) 직전이라 사용자에게 혼란만 주므로 success 동안은 카드를 숨깁니다.
+  const showSuggestion = candidateMatches.length > 0 && !dupDismissed && !success;
 
   /** autoResolve 후 건너뜀 항목이 있을 때만 표시하는 결과 모달. */
   const [saveResult, setSaveResult] = useState<{
@@ -288,26 +320,99 @@ export const ManualEntryPage: React.FC = () => {
    * 현재 폼 상태로부터 TxRow를 빌드합니다. 필수값이 비어 있으면 null을 반환하고,
    * onError 콜백으로 어떤 항목이 비었는지 보고합니다.
    * handleSave와 handleMergeWith 양쪽에서 같은 규칙을 공유하기 위해 분리했습니다.
+   *
+   * 검증 정책: 누락된 필드를 한 번에 모두 모아 보여줍니다. 이전에는 첫 누락 필드에서 즉시 return이라
+   * 사용자가 "거래명 채움 → 저장 → 다음 에러 발견 → 채움 → 저장…" 사이클을 반복했어요. 첫 시도에서
+   * 누락된 모든 필드를 한 줄에 보여주면 한 번에 채우고 끝낼 수 있습니다.
    */
   const buildRowFromForm = (onError: (message: string) => void): TxRow | null => {
     const amountNumber = Number(meta.amount.replace(/[^0-9]/g, ""));
+    const installmentMonths = Number(meta.installmentMonths.replace(/[^0-9]/g, ""));
+    const billedAmountNumber = Number(meta.billedAmount.replace(/[^0-9]/g, ""));
+
+    // 누락된 필드를 모두 모아 한 번에 노출. 첫 누락 필드에는 포커스도 같이 줘 사용자가 곧바로 입력을
+    // 시작할 수 있게 합니다.
+    const missing: string[] = [];
+    let firstMissingField: RequiredMetaField | null = null;
     if (!meta.title.trim()) {
-      onError("거래명을 입력해 주세요.");
+      missing.push("거래명");
+      if (!firstMissingField) firstMissingField = "title";
+    }
+    if (!amountNumber || Number.isNaN(amountNumber)) {
+      missing.push("금액(숫자)");
+      if (!firstMissingField) firstMissingField = "amount";
+    }
+    if (!meta.date.trim()) {
+      missing.push("거래일자");
+      if (!firstMissingField) firstMissingField = "date";
+    }
+    if (
+      meta.installmentKind === "installment" &&
+      (!installmentMonths || Number.isNaN(installmentMonths))
+    ) {
+      missing.push("할부개월");
+    }
+    if (missing.length > 0) {
+      onError(`다음 항목을 입력해 주세요 — ${missing.join(", ")}`);
+      if (firstMissingField) focusMetaField(firstMissingField);
+      return null;
+    }
+    // 길이/금액 한도 검증. maxLength 로 1차 차단되지만 paste/IME 우회 가능성에 대비한 보강.
+    if (meta.title.trim().length > MAX_TITLE_LENGTH) {
+      onError(`거래명은 ${MAX_TITLE_LENGTH}자 이내로 입력해 주세요.`);
       focusMetaField("title");
       return null;
     }
-    if (!amountNumber || Number.isNaN(amountNumber)) {
-      onError("금액을 숫자로 입력해 주세요.");
-      focusMetaField("amount");
+    if (meta.memo.trim().length > MAX_MEMO_LENGTH) {
+      onError(`메모는 ${MAX_MEMO_LENGTH}자 이내로 입력해 주세요.`);
       return null;
     }
-    if (!meta.date.trim()) {
-      onError("거래일자를 선택해 주세요.");
-      focusMetaField("date");
+    if (Math.abs(amountNumber) > MAX_AMOUNT_VALUE) {
+      onError("금액이 너무 커요. 한도를 확인해 주세요.");
+      focusMetaField("amount");
       return null;
     }
     const signedAmount =
       type === "expense" ? -Math.abs(amountNumber) : Math.abs(amountNumber);
+    const paymentMode =
+      meta.installmentKind === "lump_sum"
+        ? "lump_sum"
+        : meta.installmentKind === "installment"
+          ? "installment"
+          : "unknown";
+    // 회차 입력 surface 제거(2026-04-28) 후 recordKind 분기는 청구금액 유무만 본다.
+    // 청구금액이 있으면 "이번 달 청구 단위 행"(billing), 없으면 "승인 단위 행"(approval) 로 둡니다.
+    const recordKind = billedAmountNumber > 0 ? "billing" : "approval";
+    const baseDetail =
+      products.length > 0
+        ? {
+            items: products.map((product) => ({
+              name: product.name,
+              price: product.price,
+              link: product.link,
+            })),
+            source: "MANUAL" as const,
+          }
+        : undefined;
+    const cardImport: NonNullable<NonNullable<TxRow["detail"]>["cardImport"]> | undefined =
+      meta.installmentKind !== "none" || meta.dueDate.trim()
+        ? {
+            recordKind,
+            paymentMode,
+            ...(installmentMonths > 0 ? { installmentMonths } : {}),
+            // 회차(installmentCurrentCycle/Total) 는 입력 surface 에서 제거됐기 때문에
+            // 신규 수동입력 거래에서는 채우지 않습니다(2026-04-28).
+            ...(billedAmountNumber > 0
+              ? { billedAmount: billedAmountNumber }
+              : {}),
+            ...(recordKind !== "billing"
+              ? { approvedAmount: amountNumber }
+              : amountNumber > 0
+                ? { approvedAmount: amountNumber }
+                : {}),
+            ...(meta.dueDate.trim() ? { dueDate: meta.dueDate.trim() } : {}),
+          }
+        : undefined;
     return {
       id: `m_${Date.now()}`,
       type,
@@ -323,14 +428,10 @@ export const ManualEntryPage: React.FC = () => {
       source: "manual",
       memo: meta.memo.trim() || undefined,
       detail:
-        products.length > 0
+        baseDetail || cardImport
           ? {
-              items: products.map((product) => ({
-                name: product.name,
-                price: product.price,
-                link: product.link,
-              })),
-              source: "MANUAL",
+              ...(baseDetail ?? { items: [], source: "MANUAL" as const }),
+              ...(cardImport ? { cardImport } : {}),
             }
           : undefined,
     };
@@ -360,11 +461,29 @@ export const ManualEntryPage: React.FC = () => {
    * (dupDismissed === true) 중복 감지를 우회하고 곧바로 새 거래로 저장합니다. 이렇게 해야
    * 사용자가 의도한 "두 개의 독립된 거래"가 기존 거래 하위 항목으로 빨려들어가지 않습니다.
    */
+  /**
+   * 저장 성공 후 거래내역으로 점프하기 전 잠시 성공 토스트를 보여주는 헬퍼.
+   * 사용자가 "정말 저장됐다"는 확정 피드백을 인식할 수 있게 0.7초 노출 후 이동합니다.
+   *
+   * 폼 값과 상품 목록은 즉시 리셋해 (1) 토스트 노출 700ms 동안 본인이 방금 저장한 거래가
+   * candidateMatches에 자기 자신으로 잡혀 SuggestionCard가 떠버리는 회귀를 막고, (2) 사용자가
+   * 우연히 같은 페이지로 다시 돌아왔을 때 이전 입력값이 그대로 남아 있는 혼란도 같이 해소합니다.
+   */
+  const navigateAfterSave = (toState: { targetDate?: string } | undefined) => {
+    setMeta(EMPTY_META);
+    setProducts([]);
+    setStatus(defaultStatusForType(type));
+    setSuccess("거래가 저장되었어요.");
+    window.setTimeout(() => {
+      navigate("/transactions", { state: toState });
+    }, 700);
+  };
+
   const performSave = (row: TxRow) => {
     if (dupDismissed) {
       // 수동 입력은 사용자가 카테고리를 직접 고른 결과라 자동추정을 태우지 않는다.
       transactionsStore.addFromManual(row);
-      navigate("/transactions", { state: { targetDate: row.date } });
+      navigateAfterSave({ targetDate: row.date });
       return;
     }
 
@@ -384,9 +503,7 @@ export const ManualEntryPage: React.FC = () => {
       const savedDate =
         resolved.toSave[0]?.date ??
         allRows.find((r) => r.id === resolved.toMerge[0]?.existingId)?.date;
-      navigate("/transactions", {
-        state: savedDate ? { targetDate: savedDate } : undefined,
-      });
+      navigateAfterSave(savedDate ? { targetDate: savedDate } : undefined);
       return;
     }
 
@@ -545,6 +662,9 @@ export const ManualEntryPage: React.FC = () => {
           </SectionHint>
           <ProductRows
             products={products}
+            // 사용자가 위 폼에서 고른 플랫폼을 그대로 넘겨, 링크 미등록 상품의 검색 폴백이
+            // 같은 플랫폼(쿠팡/네이버) 검색창으로 열리게 합니다.
+            platform={mapPlatform(meta.platform)}
             onEdit={(id) => setModal({ type: "edit", id })}
             onRemove={(id) =>
               setProducts((current) =>
@@ -554,19 +674,22 @@ export const ManualEntryPage: React.FC = () => {
           />
 
           {error && <ErrorLine role="alert">{error}</ErrorLine>}
+          {success && <SuccessLine role="status">{success}</SuccessLine>}
 
           <SaveBar data-tour="manual-savebar">
             <Button
               variant="primary"
               size="lg"
               block
+              disabled={Boolean(success)}
               onClick={() => {
                 setSaveResult(null);
                 setError(null);
+                setSuccess(null);
                 handleSave();
               }}
             >
-              거래 저장하기
+              {success ? "이동 중…" : "거래 저장하기"}
             </Button>
           </SaveBar>
 

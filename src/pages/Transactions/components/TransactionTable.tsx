@@ -15,6 +15,7 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
+import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
 
 export type TxType = "expense" | "income";
 /**
@@ -68,7 +69,12 @@ export interface TxRow {
   memo?: string;
   detail?: {
     items: { name: string; price: number; link?: string }[];
-    source?: "OCR" | "MANUAL";
+    /**
+     * 거래 상세의 출처 식별자. "OCR" 은 캡처 분석으로 들어온 거래로, 이 값일 때만 DetailPanel 의
+     * "분석한 캡처 보기" 버튼이 노출됩니다. "CARD" 는 카드 CSV/XLSX 업로드, "MANUAL" 은 수동 입력.
+     * 표시용 라벨은 SOURCE_LABELS 에서 변환합니다.
+     */
+    source?: "OCR" | "MANUAL" | "CARD";
     /**
      * OCR 경로로 저장된 거래일 때, 분석에 사용된 원본 캡쳐의 URL(또는 data URL).
      * 거래내역 상세에서 "OCR 분석한 이미지 보기" 모달이 이 값을 읽어 원본을 그대로 띄웁니다.
@@ -81,19 +87,62 @@ export interface TxRow {
      * DetailPanel은 이 값을 읽어 "상품 내역이 일부만 입력되어 있어요" 힌트를 띄웁니다.
      */
     itemsCoverage?: "full" | "partial";
+    /**
+     * 사용자가 OCR 수정 화면에서 입력한 주문단위 차감액(쿠폰·포인트·카드 할인 등).
+     * 상품 합계와 실제 결제액의 차이를 보정하는 단일 슬롯이며, 자동 상품별 배분 없이
+     * order 레벨에서만 저장합니다(정책 docs/Naver_OCR_Parsing_Strategy.md §12-3).
+     * 거래 상세에서는 "상품합계 / 차감액 / 최종 거래금액" 세 줄로 분리해 보여줍니다.
+     */
+    discountAmount?: number;
+    /**
+     * 네이버 접힌 주문에서 저장된 거래임을 표시하는 메타. true 면 DetailPanel 에 "접힌 주문 ·
+     * 상세 미확인 · 외 n건 숨김" 안내가 추가로 노출됩니다.
+     */
+    folded?: boolean;
+    /** "포함 총 n건" 에서 추출한 실제 상품 개수 힌트. folded 일 때만 채워집니다. */
+    itemCountHint?: number;
+    /** "외 n건 숨김" 에 사용되는 숨겨진 상품 수. folded 가 아니거나 신호가 없으면 비어 있음. */
+    hiddenItemCount?: number;
+    /**
+     * OCR 이 읽은 결제 섹션 합계("총 n원"). folded 주문에서는 amount 계산 기준이 되고,
+     * 펼친 주문에서도 정합성 점검 용도로 함께 보존합니다.
+     */
+    sectionTotal?: number;
+    /**
+     * 카드 CSV/XLSX import 원본 메타. 승인 원거래와 월 청구행(할부 회차)을 구분해
+     * OCR 상품 매칭과 월별 카드값 추적이 서로 꼬이지 않도록 보존합니다.
+     */
+    cardImport?: {
+      recordKind: "approval" | "billing";
+      paymentMode: "lump_sum" | "installment" | "unknown";
+      installmentMonths?: number;
+      installmentCurrentCycle?: number;
+      installmentCycleTotal?: number;
+      approvedAmount?: number;
+      billedAmount?: number;
+      remainingBalance?: number;
+      approvalNumber?: string;
+      cardLabel?: string;
+      dueDate?: string;
+      sourceSheet?: string;
+      rawRowFingerprint?: string;
+      originalMerchant?: string;
+    };
   };
 }
 
 const Table = styled.div`
   display: grid;
-  /* 7번째 컬럼(카테고리 색)은 거래명과 금액 사이에 좁게 끼워 넣어서, 색 박스 + hover 툴팁만 담당합니다. */
-  grid-template-columns: 76px 110px 108px 1fr 52px 140px 96px;
+  /* 컬럼 순서: 유형 / 주문일 / 플랫폼 / 거래명 / 상품(+N개) / 카테고리 / 금액 / 상태·결제.
+     상품 컬럼은 detail.items 가 있을 때만 "+N개" 칩을 노출해 거래명을 어지럽히지 않으면서
+     "이 거래엔 상세 상품이 따로 있다"를 한눈에 알 수 있게 합니다. */
+  grid-template-columns: 76px 110px 108px 1fr 84px 132px 140px 124px;
   font-size: 13px;
-  min-width: 730px;
+  min-width: 920px;
 
   ${media.tablet} {
-    grid-template-columns: 76px 96px 100px 1fr 44px 132px 96px;
-    min-width: 680px;
+    grid-template-columns: 76px 96px 100px 1fr 80px 124px 132px 116px;
+    min-width: 856px;
   }
 `;
 
@@ -156,7 +205,7 @@ const MobileDetailSlot = styled.div`
   }
 `;
 
-const MobileRow = styled.button<{ $active?: boolean }>`
+const MobileRow = styled.button<{ $active?: boolean; $highlight?: boolean }>`
   display: grid;
   gap: 10px;
   width: 100%;
@@ -175,6 +224,18 @@ const MobileRow = styled.button<{ $active?: boolean }>`
   &:active {
     transform: scale(0.996);
   }
+
+  /* 외부 진입에서 강조해야 할 때만 잠깐 펄스. PC 표와 동일한 키프레임을 재사용. */
+  ${({ $highlight }) =>
+    $highlight &&
+    css`
+      animation: ${highlightPulse} 1.6s ease-out;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
+      }
+    `}
 `;
 
 const MobileTop = styled.div`
@@ -306,12 +367,26 @@ const rowEnter = keyframes`
   }
 `;
 
+/**
+ * 홈 "최근 거래"에서 특정 거래로 진입했을 때 그 행에만 잠깐 두를 펄스 링.
+ * box-shadow inset 으로 그리기 때문에 $active 때의 background(accentSubtle) 이나
+ * $hovered 때의 background(foot) 위에 겹쳐도 어긋나지 않습니다.
+ */
+const highlightPulse = keyframes`
+  0% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
+  20% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
+  80% { box-shadow: inset 0 0 0 2px ${tokens.color.accent}; }
+  100% { box-shadow: inset 0 0 0 0 rgba(79, 70, 229, 0); }
+`;
+
 const DataCell = styled.div<{
   $right?: boolean;
   $active?: boolean;
   $hovered?: boolean;
   /** 행의 인덱스. undefined이거나 BATCH_SIZE 이상이면 애니메이션을 적용하지 않습니다. */
   $enterIndex?: number;
+  /** 외부 진입(홈 최근거래 클릭 등)으로 잠시 강조해야 할 때 true. */
+  $highlight?: boolean;
 }>`
   display: flex;
   align-items: center;
@@ -335,7 +410,8 @@ const DataCell = styled.div<{
           `
         : ""}
   /* $enterIndex가 들어온 행(첫 배치)만 지연 시간을 누적해 순차 등장하게 합니다. */
-  ${({ $enterIndex }) =>
+  ${({ $enterIndex, $highlight }) =>
+    !$highlight &&
     typeof $enterIndex === "number" &&
     $enterIndex >= 0 &&
     css`
@@ -346,38 +422,66 @@ const DataCell = styled.div<{
         animation: none;
       }
     `}
+
+  /*
+   * 강조(highlight) 가 켜진 동안만 펄스. enter 애니메이션과 같은 animation 슬롯을 쓰므로
+   * 위 enter 규칙에서 $highlight 일 때는 enter 를 비활성화해 충돌을 피했습니다.
+   * 1.6s 펄스 후에는 부모(TransactionsPage) 가 highlightId 를 비워 자연스럽게 멈춥니다.
+   */
+  ${({ $highlight }) =>
+    $highlight &&
+    css`
+      animation: ${highlightPulse} 1.6s ease-out;
+
+      @media (prefers-reduced-motion: reduce) {
+        animation: none;
+        box-shadow: inset 0 0 0 2px ${tokens.color.accent};
+      }
+    `}
 `;
 
 /**
- * 카테고리 색상 셀의 hover 범위. 한 거래가 여러 카테고리에 속할 수 있어
- * 정사각형들을 수평으로 나란히 배치합니다(최대 MAX_CATEGORIES_PER_TX개).
- * 부모 DataCell 폭을 가득 채워 정사각형 묶음이 컬럼 정중앙에 오게 합니다.
+ * 한 거래의 카테고리(최대 MAX_CATEGORIES_PER_TX=3개)를 모두 줄 단위로 보여주는 컨테이너.
+ * 이전엔 1순위만 라벨 + "+N" 카운트로 압축했지만, 사용자가 모든 카테고리를 한눈에 확인하길
+ * 원해서 세로 스택으로 풀어 줬습니다. 라벨이 길면 ellipsis 로 잘리지만 title 속성으로 풀텍스트
+ * 확인이 가능합니다.
  */
 const CategoryCell = styled.div`
   display: flex;
-  align-items: center;
-  justify-content: center;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 4px;
   width: 100%;
+  min-width: 0;
 `;
 
-/**
- * 정사각형 + 툴팁을 묶는 wrapper. 각 정사각형마다 자기 카테고리 툴팁이 떠야 해서
- * 툴팁 기준점이 정사각형 단위로 잡혀야 합니다.
- */
-const SquareWrap = styled.span`
-  position: relative;
+const CategoryItem = styled.span`
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  gap: 6px;
+  max-width: 100%;
+  min-width: 0;
+`;
+
+const CategoryLabel = styled.span`
+  color: ${tokens.color.ink2};
+  font-size: 11.5px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 `;
 
 /**
  * 카테고리 색을 보여주는 정사각형. 각 행에서 "이 거래가 어느 카테고리인지"를
  * 최소 시각 노이즈로 전달하는 역할이라 테두리 없이 배경색만 씁니다.
- * 다중 카테고리일 때 좁은 폭에 여러 개를 욱여넣어야 해서 11px로 약간 줄였습니다.
+ * PC 표에서는 옆에 텍스트 라벨이 함께 나오므로 툴팁이 더 이상 필요하지 않습니다(접근성용 aria-label만 유지).
+ * 모바일 카드에서는 라벨 없이 정사각형만 노출되지만, ColorSquare 의 aria-label 로 충분히 식별됩니다.
  */
 const ColorSquare = styled.span<{ $color: string }>`
+  flex: 0 0 auto;
   width: 11px;
   height: 11px;
   border-radius: 3px;
@@ -386,45 +490,39 @@ const ColorSquare = styled.span<{ $color: string }>`
   box-shadow: inset 0 0 0 1px rgba(16, 24, 40, 0.08);
 `;
 
-/**
- * 카테고리 이름을 카테고리 색으로 보여주는 툴팁.
- * 평소엔 hidden, 부모(SquareWrap) hover 시에만 opacity/translate로 부드럽게 등장합니다.
- * 색상 가독성을 위해 흰 배경/그림자를 깔고 글씨만 해당 카테고리 색으로 강조합니다.
- */
-const CategoryTooltip = styled.span<{ $color: string }>`
-  position: absolute;
-  bottom: calc(100% + 6px);
-  left: 50%;
-  transform: translate(-50%, 4px);
-  padding: 4px 8px;
-  border: 1px solid ${tokens.color.line};
-  border-radius: ${tokens.radius.control};
-  background: ${tokens.color.panel};
-  box-shadow: ${tokens.shadow.cardHover};
-  color: ${({ $color }) => $color};
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-  white-space: nowrap;
-  opacity: 0;
-  pointer-events: none;
-  transition:
-    opacity ${tokens.motion.fast} ease,
-    transform ${tokens.motion.fast} ease;
-  z-index: 2;
-
-  ${SquareWrap}:hover & {
-    opacity: 1;
-    transform: translate(-50%, 0);
-  }
-`;
-
 const Amount = styled.span<{ $positive?: boolean }>`
   color: ${({ $positive }) => ($positive ? tokens.color.pos : tokens.color.neg)};
   font-family: ${tokens.font.mono};
   font-size: 13px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
+`;
+
+/**
+ * "+N개" 형태로 거래에 묶인 상품 수를 표시하는 칩.
+ * 상품이 0개인 거래(단일 결제·청구건 등)는 셀을 비워 두어 시각 노이즈를 줄입니다.
+ */
+const ItemCountChip = styled.span`
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: ${tokens.color.posBg};
+  color: ${tokens.color.pos};
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+  white-space: nowrap;
+`;
+
+const StatusCell = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
 `;
 
 const Footer = styled.div`
@@ -471,6 +569,16 @@ interface Props {
    * 모바일 아코디언 경로에서만 주입되며, 사용자가 같은 행을 다시 탭하면 onSelect("") 로 닫힙니다.
    */
   renderMobileDetail?: (row: TxRow) => React.ReactNode;
+  /**
+   * 외부 진입(홈 최근거래 클릭 등)으로 잠깐 강조할 행 id. 이 값이 들어오면
+   * 해당 행을 부드럽게 화면 중앙으로 스크롤하고 펄스 링을 한 번 그립니다.
+   */
+  highlightId?: string | null;
+  /**
+   * 같은 highlightId 가 연달아 들어와도 펄스를 다시 트리거하기 위한 카운터.
+   * 부모가 갱신할 때마다 useEffect 가 다시 실행되어 scrollIntoView 가 발동합니다.
+   */
+  pulseToken?: number;
 }
 
 export const TransactionTable = memo<Props>(({
@@ -482,8 +590,35 @@ export const TransactionTable = memo<Props>(({
   sortOrder,
   onToggleSort,
   renderMobileDetail,
+  highlightId,
+  pulseToken,
 }) => {
   const sentinelRef = useRef<HTMLDivElement>(null);
+  /**
+   * 강조 진입 시 scrollIntoView 대상 노드를 찾기 위한 행별 ref 맵.
+   * PC 표(TableScroll 안의 DataCell)와 모바일 카드(MobileRow) 는 둘 다 항상 마운트되고
+   * media query 로 한쪽만 보이게 하기 때문에, 같은 키 공간을 공유하면 안 됩니다.
+   * 두 맵을 따로 두고 스크롤 시 "현재 보이는 쪽" 의 노드를 우선 사용합니다(offsetParent 로 판단).
+   */
+  const desktopRowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const mobileRowRefs = useRef<Map<string, HTMLButtonElement>>(new Map());
+
+  useEffect(() => {
+    if (!highlightId) return;
+    // 표가 visibleCount 변경에 따라 막 늘어난 경우를 대비해 다음 페인트 후 스크롤.
+    const raf = requestAnimationFrame(() => {
+      const desktopEl = desktopRowRefs.current.get(highlightId);
+      const mobileEl = mobileRowRefs.current.get(highlightId);
+      // offsetParent === null 이면 display:none 또는 그런 조상 안에 있어 화면에 안 보입니다.
+      const visible = (el?: HTMLElement | null): el is HTMLElement => !!el && el.offsetParent !== null;
+      const target = visible(desktopEl) ? desktopEl : visible(mobileEl) ? mobileEl : (desktopEl ?? mobileEl);
+      if (target && typeof target.scrollIntoView === "function") {
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+      }
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [highlightId, pulseToken]);
+
   const [hoveredId, setHoveredId] = useState<string>("");
   // 카테고리 색상과 이름은 설정 화면에서 변경할 수 있으므로, 스토어를 구독해 즉시 반영합니다.
   const categoryColorMap = useCategoryColorMap();
@@ -553,13 +688,16 @@ export const TransactionTable = memo<Props>(({
           </SortableHeader>
           <HeaderCell className="tag">플랫폼</HeaderCell>
           <HeaderCell>거래명</HeaderCell>
-          {/* 카테고리 컬럼은 색상 정사각형만 표시하고 제목도 짧게 표기합니다. */}
-          <HeaderCell style={{ textAlign: "center", padding: "10px 0" }}>분류</HeaderCell>
+          <HeaderCell className="tag">상품</HeaderCell>
+          <HeaderCell style={{ padding: "10px 12px" }}>카테고리</HeaderCell>
           <HeaderCell className="right">금액</HeaderCell>
-          <HeaderCell className="tag">상태</HeaderCell>
+          <HeaderCell className="tag">상태/결제</HeaderCell>
           {rows.map((row, rowIndex) => {
             const active = row.id === selectedId;
             const hovered = row.id === hoveredId && !active;
+            const isHighlighted = !!highlightId && row.id === highlightId;
+            const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
+            const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
             /**
              * 첫 렌더에서 잡힌 행 중 현재 위치에 있는 경우에만 stagger 인덱스를 내려보냅니다.
              * 인피니트 스크롤로 추가된 행이나 필터 변경 후 새로 등장한 행은 undefined가 되어
@@ -570,16 +708,23 @@ export const TransactionTable = memo<Props>(({
               $active: active,
               $hovered: hovered,
               $enterIndex: enterIndex,
+              $highlight: isHighlighted,
               onClick: () => onSelect(row.id),
               onMouseEnter: () => setHoveredId(row.id),
               onMouseLeave: () =>
                 setHoveredId((current) => (current === row.id ? "" : current)),
               style: { cursor: "pointer" },
             };
+            // 첫 셀에만 ref 를 달아 scrollIntoView 의 타겟으로 사용합니다.
+            // 같은 grid row 의 다른 셀들은 자동으로 함께 화면에 들어옵니다.
+            const setRowRef = (el: HTMLDivElement | null) => {
+              if (el) desktopRowRefs.current.set(row.id, el);
+              else desktopRowRefs.current.delete(row.id);
+            };
 
             return (
               <React.Fragment key={row.id}>
-                <DataCell {...common}>
+                <DataCell ref={setRowRef} {...common}>
                   <Tag kind={row.type === "expense" ? "expense" : "income"}>
                     {TYPE_LABELS[row.type]}
                   </Tag>
@@ -589,19 +734,23 @@ export const TransactionTable = memo<Props>(({
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                 </DataCell>
                 <DataCell {...common}>{row.title}</DataCell>
-                <DataCell {...common} style={{ ...common.style, padding: "12px 0" }}>
-                  {/* 색상 정사각형 + hover 툴팁. 거래에 연결된 카테고리만큼 정사각형이 늘어납니다. */}
+                <DataCell {...common}>
+                  {(row.detail?.items?.length ?? 0) > 0 && (
+                    <ItemCountChip>+{row.detail!.items.length}개</ItemCountChip>
+                  )}
+                </DataCell>
+                <DataCell {...common} style={{ ...common.style, padding: "10px 12px" }}>
                   <CategoryCell>
                     {row.categories.map((cat) => (
-                      <SquareWrap key={cat}>
+                      <CategoryItem key={cat}>
                         <ColorSquare
                           $color={categoryColorMap[cat]}
                           aria-label={getCategoryName(cat)}
                         />
-                        <CategoryTooltip role="tooltip" $color={categoryColorMap[cat]}>
+                        <CategoryLabel title={getCategoryName(cat)}>
                           {getCategoryName(cat)}
-                        </CategoryTooltip>
-                      </SquareWrap>
+                        </CategoryLabel>
+                      </CategoryItem>
                     ))}
                   </CategoryCell>
                 </DataCell>
@@ -612,7 +761,14 @@ export const TransactionTable = memo<Props>(({
                   </Amount>
                 </DataCell>
                 <DataCell {...common}>
-                  <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                  <StatusCell>
+                    <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                    {(installmentKind === "installment_billing" ||
+                      installmentKind === "installment_approval") &&
+                    installmentLabel ? (
+                      <Tag kind="installment">{installmentLabel}</Tag>
+                    ) : null}
+                  </StatusCell>
                 </DataCell>
               </React.Fragment>
             );
@@ -622,11 +778,20 @@ export const TransactionTable = memo<Props>(({
       <MobileList>
         {rows.map((row) => {
           const isActive = row.id === selectedId;
+          const isHighlighted = !!highlightId && row.id === highlightId;
+          const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
+          const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
+          const setMobileRowRef = (el: HTMLButtonElement | null) => {
+            if (el) mobileRowRefs.current.set(row.id, el);
+            else mobileRowRefs.current.delete(row.id);
+          };
           return (
             <MobileGroup key={row.id} $active={isActive}>
               <MobileRow
+                ref={setMobileRowRef}
                 type="button"
                 $active={isActive}
+                $highlight={isHighlighted}
                 aria-expanded={isActive}
                 aria-controls={`mobile-detail-${row.id}`}
                 // 같은 행을 다시 탭하면 닫히는 "토글" 동작. 사용자가 한 행에 대한
@@ -649,6 +814,11 @@ export const TransactionTable = memo<Props>(({
                   </Tag>
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                   <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
+                  {(installmentKind === "installment_billing" ||
+                    installmentKind === "installment_approval") &&
+                  installmentLabel ? (
+                    <Tag kind="installment">{installmentLabel}</Tag>
+                  ) : null}
                 </MobileTags>
                 <MobileFooter>
                   <MobileCategories aria-label="카테고리">

@@ -30,6 +30,16 @@ interface DatePickerProps {
    * - "sm": OCR 편집의 메타 바처럼 태그/구분선 사이에 끼워 넣을 때. 28px 높이로 작게.
    */
   size?: "sm" | "md";
+  /**
+   * 선택할 수 있는 가장 최근 날짜("YYYY.MM.DD"). 이 날짜 이후의 셀과 다음 달 화살표는
+   * 모두 비활성화돼 클릭/포커스가 차단됩니다. 거래일자처럼 미래를 막아야 하는 곳에서만 사용하고,
+   * 결제예정일처럼 미래가 자연스러운 곳에서는 생략합니다.
+   */
+  maxDate?: string;
+  /**
+   * 선택할 수 있는 가장 오래된 날짜("YYYY.MM.DD"). 이전 셀/이전 달 화살표가 비활성화됩니다.
+   */
+  minDate?: string;
   "aria-label"?: string;
 }
 
@@ -143,9 +153,14 @@ const StepButton = styled.button`
     background ${tokens.motion.fast} ease,
     border-color ${tokens.motion.fast} ease;
 
-  &:hover {
+  &:hover:not(:disabled) {
     background: ${tokens.color.foot};
     border-color: ${tokens.color.accentBorder};
+  }
+
+  &:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
   }
 `;
 
@@ -183,24 +198,28 @@ const DayButton = styled.button<{
   $selected: boolean;
   $today: boolean;
   $dayOfWeek: number; // 0=일, 6=토
+  $outOfRange?: boolean;
 }>`
   height: 32px;
-  border: 1px solid ${({ $today }) => ($today ? tokens.color.accent : "transparent")};
+  border: 1px solid ${({ $today, $outOfRange }) =>
+    $outOfRange ? "transparent" : $today ? tokens.color.accent : "transparent"};
   border-radius: ${tokens.radius.control};
   background: ${({ $selected }) =>
     $selected ? tokens.color.accent : "transparent"};
-  color: ${({ $selected, $currentMonth, $dayOfWeek }) => {
+  color: ${({ $selected, $currentMonth, $dayOfWeek, $outOfRange }) => {
+    if ($outOfRange) return tokens.color.ink5;
     if ($selected) return "#fff";
     if (!$currentMonth) return tokens.color.ink5;
     if ($dayOfWeek === 0) return tokens.color.neg;
     if ($dayOfWeek === 6) return tokens.color.accent;
     return tokens.color.ink1;
   }};
+  opacity: ${({ $outOfRange }) => ($outOfRange ? 0.35 : 1)};
   font-family: inherit;
   font-size: 12.5px;
   font-weight: ${({ $selected, $today }) =>
     $selected || $today ? 700 : 500};
-  cursor: pointer;
+  cursor: ${({ $outOfRange }) => ($outOfRange ? "not-allowed" : "pointer")};
   transition:
     background ${tokens.motion.fast} ease,
     border-color ${tokens.motion.fast} ease,
@@ -209,6 +228,10 @@ const DayButton = styled.button<{
   &:hover:not(:disabled) {
     background: ${({ $selected }) =>
       $selected ? tokens.color.accentHover : tokens.color.foot};
+  }
+
+  &:disabled {
+    cursor: not-allowed;
   }
 `;
 
@@ -265,18 +288,25 @@ function toIsoKey(date: Date): string {
 /**
  * 6주(42칸) 달력 그리드를 만드는 헬퍼.
  * 달의 1일이 속한 주의 일요일부터 시작해 42일을 채우고, 앞뒤 달 날짜는 isCurrentMonth=false로 표기합니다.
+ * isOutOfRange는 maxDate/minDate를 넘는 셀을 disabled로 표시하기 위한 플래그.
  */
+interface DayCellWithRange extends DayCell {
+  isOutOfRange: boolean;
+}
+
 function buildMonthGrid(
   viewYear: number,
   viewMonth: number,
   selectedIso: string | null,
-  todayIso: string
-): DayCell[] {
+  todayIso: string,
+  maxIso?: string,
+  minIso?: string
+): DayCellWithRange[] {
   const firstOfMonth = new Date(viewYear, viewMonth, 1);
   const startOffset = firstOfMonth.getDay(); // 0=일요일
   const gridStart = new Date(viewYear, viewMonth, 1 - startOffset);
 
-  const cells: DayCell[] = [];
+  const cells: DayCellWithRange[] = [];
   for (let i = 0; i < 42; i++) {
     const current = new Date(
       gridStart.getFullYear(),
@@ -284,12 +314,15 @@ function buildMonthGrid(
       gridStart.getDate() + i
     );
     const key = toIsoKey(current);
+    const overMax = maxIso ? key > maxIso : false;
+    const underMin = minIso ? key < minIso : false;
     cells.push({
       key,
       label: current.getDate(),
       isCurrentMonth: current.getMonth() === viewMonth,
       isToday: key === todayIso,
       isSelected: selectedIso !== null && key === selectedIso,
+      isOutOfRange: overMax || underMin,
     });
   }
   return cells;
@@ -301,8 +334,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   onChange,
   placeholder = "날짜 선택",
   size = "md",
+  maxDate,
+  minDate,
   "aria-label": ariaLabel,
 }) => {
+  // YYYY.MM.DD → YYYY-MM-DD 로 한 번만 변환해서 셀 비교에 재사용합니다.
+  const maxIso = maxDate && isValidDotDate(maxDate) ? toIsoDate(maxDate) : undefined;
+  const minIso = minDate && isValidDotDate(minDate) ? toIsoDate(minDate) : undefined;
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
@@ -353,11 +391,31 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
   const todayIso = toIsoDate(todayAsDotDate());
   const cells = useMemo(
-    () => buildMonthGrid(view.year, view.month, selectedIso || null, todayIso),
-    [view.year, view.month, selectedIso, todayIso]
+    () => buildMonthGrid(view.year, view.month, selectedIso || null, todayIso, maxIso, minIso),
+    [view.year, view.month, selectedIso, todayIso, maxIso, minIso]
   );
 
+  /**
+   * 표시 중인 달의 다음/이전 달이 모두 maxIso 너머/minIso 미만인지 판정.
+   * 6주 그리드의 "현재 달" 마지막 날짜를 잡아 비교합니다.
+   */
+  const isNextMonthOutOfRange = useMemo(() => {
+    if (!maxIso) return false;
+    // 다음 달 1일을 비교 기준으로 — 다음 달의 1일조차 maxIso 너머이면 그 달은 통째로 막아야 합니다.
+    const nextFirst = new Date(view.year, view.month + 1, 1);
+    return toIsoKey(nextFirst) > maxIso;
+  }, [view.year, view.month, maxIso]);
+
+  const isPrevMonthOutOfRange = useMemo(() => {
+    if (!minIso) return false;
+    // 이전 달의 마지막 날을 비교 기준으로 — 그 날조차 minIso 미만이면 그 달은 통째로 막아야 합니다.
+    const prevLast = new Date(view.year, view.month, 0);
+    return toIsoKey(prevLast) < minIso;
+  }, [view.year, view.month, minIso]);
+
   const goMonth = (offset: number) => {
+    if (offset > 0 && isNextMonthOutOfRange) return;
+    if (offset < 0 && isPrevMonthOutOfRange) return;
     setView((current) => {
       const next = new Date(current.year, current.month + offset, 1);
       return { year: next.getFullYear(), month: next.getMonth() };
@@ -365,6 +423,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   };
 
   const pickByIsoKey = (isoKey: string) => {
+    // 범위 밖 셀은 onChange 호출 자체를 차단해 "더블클릭 한방에 미래로 가는" 우회 경로를 막습니다.
+    if (maxIso && isoKey > maxIso) return;
+    if (minIso && isoKey < minIso) return;
     // 셀 클릭 시 표시 달도 그 날짜가 속한 달로 바꿔줘 "다음 달 첫 날" 선택 같은 케이스에서 달력이 따라옵니다.
     const [y, m] = isoKey.split("-").map(Number);
     setView({ year: y, month: m - 1 });
@@ -374,6 +435,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
 
   const handleTodayClick = () => {
     const today = todayAsDotDate();
+    // 오늘이 maxDate를 넘는 비정상 케이스(시계 이상 등)에서도 안전하게 차단.
+    if (maxIso && toIsoDate(today) > maxIso) return;
+    if (minIso && toIsoDate(today) < minIso) return;
     onChange(today);
     const iso = toIsoDate(today);
     const [y, m] = iso.split("-").map(Number);
@@ -427,10 +491,20 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               {view.year}년 {view.month + 1}월
             </MonthLabel>
             <StepGroup>
-              <StepButton type="button" onClick={() => goMonth(-1)} aria-label="이전 달">
+              <StepButton
+                type="button"
+                onClick={() => goMonth(-1)}
+                disabled={isPrevMonthOutOfRange}
+                aria-label="이전 달"
+              >
                 ‹
               </StepButton>
-              <StepButton type="button" onClick={() => goMonth(1)} aria-label="다음 달">
+              <StepButton
+                type="button"
+                onClick={() => goMonth(1)}
+                disabled={isNextMonthOutOfRange}
+                aria-label="다음 달"
+              >
                 ›
               </StepButton>
             </StepGroup>
@@ -454,9 +528,12 @@ export const DatePicker: React.FC<DatePickerProps> = ({
                   $selected={cell.isSelected}
                   $today={cell.isToday}
                   $dayOfWeek={dayOfWeek}
+                  $outOfRange={cell.isOutOfRange}
+                  disabled={cell.isOutOfRange}
                   onClick={() => pickByIsoKey(cell.key)}
                   aria-label={cell.key}
                   aria-pressed={cell.isSelected}
+                  aria-disabled={cell.isOutOfRange || undefined}
                 >
                   {cell.label}
                 </DayButton>

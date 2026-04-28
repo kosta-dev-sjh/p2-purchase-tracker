@@ -16,6 +16,7 @@ import { RecentTransactions } from "./components/RecentTransactions";
 import { InsightCards } from "./components/InsightCards";
 import { buildHomeData } from "./data";
 import {
+  computeMaxMonthKey,
   computeMinYear,
   getCurrentMonthKey,
   getMonthOption,
@@ -90,6 +91,21 @@ export const HomePage: React.FC = () => {
     () => computeMinYear(rows.map((row) => row.date)),
     [rows]
   );
+  // 미래 거래(과거 데이터 정합 케이스)가 있으면 그 월까지 노출. 새 거래는 거래일자 maxDate로 차단됩니다.
+  const pickerMaxMonth = useMemo(
+    () => computeMaxMonthKey(rows.map((row) => row.date)),
+    [rows]
+  );
+  const markedMonthKeys = useMemo(() => {
+    const monthKeys = rows
+      .map((row) => {
+        const match = row.date.match(/(\d{4})[./-](\d{1,2})/);
+        if (!match) return "";
+        return `${match[1]}-${match[2].padStart(2, "0")}`;
+      })
+      .filter(Boolean);
+    return Array.from(new Set(monthKeys));
+  }, [rows]);
 
   const { getInsight, setInsight } = useAiInsightsStore();
   const [isAiLoading, setIsAiLoading] = useState(false);
@@ -103,11 +119,20 @@ export const HomePage: React.FC = () => {
     const cached = getInsight(month);
 
     if (!cached || cached.hash !== hash) {
+      // 외부 비동기 호출(AI 인사이트) 트리거 + loading flag 동기화는 effect 의 정당한 용도라
+      // react-hooks/set-state-in-effect 비활성화. 호출 자체가 cascading 으로 이어지지 않고
+      // finally 에서 한 번만 풀어 줍니다.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsAiLoading(true);
       const rulesText = data.insights.map(i => `${i.title}: ${i.body}`).join('\n');
-      
+
+      // 실패하면 null 이 돌아옵니다. 그 경우 캐시에 쓰지 않아야
+      // 다음 hash 변동 때 자연스럽게 재시도됩니다.
+      // (에러 문자열을 정상 인사이트로 캐시해 그 달 내내 에러가 박히던 버그 방지)
       generateInsight(rulesText).then(insightText => {
-        setInsight(month, hash, insightText);
+        if (insightText) {
+          setInsight(month, hash, insightText);
+        }
       }).finally(() => {
         setIsAiLoading(false);
       });
@@ -141,27 +166,47 @@ export const HomePage: React.FC = () => {
       title="최신 소비 요약"
       headerRight={
         <HeaderRight>
-          <MonthPicker value={month} onChange={setMonth} minYear={pickerMinYear} />
-          <DateStamp>{monthOption.stamp}</DateStamp>
+          <MonthPicker
+            value={month}
+            onChange={setMonth}
+            minYear={pickerMinYear}
+            maxMonthKey={pickerMaxMonth}
+            markedMonthKeys={markedMonthKeys}
+          />
+          {/* "오늘:" 라벨을 명시해 헤더 월(선택한 달)과 우상단 stamp(오늘 날짜)의 의미가 헷갈리지 않게 합니다.
+              이전에는 "2026.04.27"만 적혀 있어 사용자가 헤더의 "2026년 3월"과 무엇이 다른지 한눈에 못 알아챘어요. */}
+          <DateStamp>오늘: {monthOption.stamp}</DateStamp>
         </HeaderRight>
       }
     >
       <Grid>
-        {/* Home은 상단 요약 → 차트 → 최근 거래 → 인사이트 순서로 읽히도록 구성합니다. */}
+        {/*
+         * Home 읽기 순서(2026-04-28 변경):
+         *   얼마(KPI) → 왜(인사이트) → 어디에/어떻게(차트) → 디테일(최근 거래)
+         *
+         * 이전에는 인사이트가 페이지 맨 아래에 있어 스크롤 없이는 사용자 시야에 들어오지
+         * 않았습니다. KPI 숫자 답을 먼저 보여준 다음 곧바로 ✨ AI 인사이트 + 룰 기반 카드
+         * 3장이 따라오도록 위치를 올렸습니다 — 차트보다 위에 두는 이유는 "왜 이 숫자인가"
+         * 가 차트의 시각 분석보다 인지적으로 한 단계 빠른 정보이기 때문입니다.
+         */}
         {/* data-tour: ProductTour 스포트라이트 타겟. 실제 인증으로 교체되더라도 유지해도 무해합니다. */}
         <div data-tour="home-kpi">
           <KpiStrip kpis={data.kpis} />
         </div>
-        <Row2>
-          <PlatformDonut total={data.platformDonut.total} items={data.platformDonut.items} />
-          <TrendChart points={data.trend.points} />
-        </Row2>
-        <RecentTransactions items={data.recent} />
-        <InsightCards 
-          items={data.insights} 
+        <InsightCards
+          items={data.insights}
           aiInsightText={currentInsight?.insightText}
           isAiLoading={isAiLoading}
         />
+        <Row2>
+          <PlatformDonut
+            total={data.platformDonut.total}
+            items={data.platformDonut.items}
+            periodLabel={data.periodLabel}
+          />
+          <TrendChart points={data.trend.points} />
+        </Row2>
+        <RecentTransactions items={data.recent} />
       </Grid>
       {/*
         WelcomeTutorial 표시 우선순위:

@@ -14,6 +14,7 @@ export const DATE_HEADERS = [
 ] as const;
 
 export const MERCHANT_HEADERS = [
+  "이용가맹점명",
   "이용가맹점",
   "가맹점명",
   "가맹점",
@@ -35,6 +36,66 @@ export const AMOUNT_HEADERS = [
   "amount",
 ] as const;
 
+export const PAYMENT_MODE_HEADERS = [
+  "일시불할부구분",
+  "일시불/할부",
+  "이용구분",
+  "할부구분",
+  "결제구분",
+] as const;
+
+export const INSTALLMENT_MONTHS_HEADERS = [
+  "할부개월",
+  "할부 개월",
+  "할부기간",
+] as const;
+
+export const INSTALLMENT_CYCLE_HEADERS = [
+  "할부회차",
+  "회차",
+  "분할회차",
+] as const;
+
+export const BILLING_AMOUNT_HEADERS = [
+  "결제금액",
+  "청구금액",
+  "월청구금액",
+] as const;
+
+export const APPROVAL_NUMBER_HEADERS = [
+  "승인번호",
+  "승인No",
+  "approval",
+] as const;
+
+export const CARD_LABEL_HEADERS = [
+  "카드명",
+  "카드명(카드뒤4자리)",
+  "카드별명",
+  "이용카드",
+  "카드번호",
+] as const;
+
+export const PAYMENT_DUE_DATE_HEADERS = [
+  "결제예정일자",
+  "결제예정일",
+  "결제일",
+  "청구일",
+] as const;
+
+export const REMAINING_BALANCE_HEADERS = [
+  "결제 후잔액",
+  "결제 후 잔액",
+  "잔액",
+] as const;
+
+export const CANCELLATION_HEADERS = [
+  "취소여부",
+  "정상취소 구분",
+  "정상∙취소 구분",
+  "정상/취소 구분",
+] as const;
+
 export const STATUS_HEADERS = [
   "거래구분",
   "거래상태",
@@ -52,6 +113,11 @@ export const HEADER_HINTS = [
   ...DATE_HEADERS,
   ...MERCHANT_HEADERS,
   ...AMOUNT_HEADERS,
+  ...PAYMENT_MODE_HEADERS,
+  ...INSTALLMENT_MONTHS_HEADERS,
+  ...INSTALLMENT_CYCLE_HEADERS,
+  ...BILLING_AMOUNT_HEADERS,
+  ...APPROVAL_NUMBER_HEADERS,
   ...STATUS_HEADERS,
 ] as const;
 

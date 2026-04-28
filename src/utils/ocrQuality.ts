@@ -25,7 +25,6 @@
  *   - `reasons` 배열을 돌려주어 디버깅/로깅 시 "왜 이 tier 로 분류됐는지" 추적 가능.
  */
 
-import type { OcrOrder, OcrImageItem } from "../pages/OcrEdit/data";
 
 export type OcrCardTier = "clean" | "borderline" | "bad";
 
@@ -74,7 +73,7 @@ const WEIRD_SYMBOLS_REGEX = /[<>{}|=~`_']/g;
  * 실측: "촨뜸므. 헬펙 코멋오리지널...", "훌:' 유한양행...", "[ 잘아눌 덴티본..." 등.
  * 정상 상품명은 구두점이 선두 바로 뒤에 붙는 구조가 거의 없어 오탐 낮음.
  */
-const PREFIX_OCR_NOISE_REGEX = /^([가-힣]{1,3})[.:;'")\]_·`\[\]\-]+(?=\s|[가-힣])/;
+const PREFIX_OCR_NOISE_REGEX = /^([가-힣]{1,3})[.:;'")\]_·`[\]-]+(?=\s|[가-힣])/;
 
 /**
  * 단일 자모(ㄱ-ㅎ·ㅏ-ㅣ, ㆍ)는 정상 상품명에 등장하지 않습니다. 개수를 세어 품질 신호로 사용.
@@ -98,6 +97,7 @@ function countMatches(s: string, re: RegExp): number {
 export function classifyOcrCardQuality(card: {
   name: string | null | undefined;
   price: number;
+  date?: string;
   quantity?: number;
   statusTag?: "purchase" | "sub" | "cancel" | "refund";
   /** Tesseract 가 가격을 아예 못 읽었을 때 true. price===0 이어도 AI 자동 호출 대상이 됨. */
@@ -113,6 +113,7 @@ export function classifyOcrCardQuality(card: {
   const hangulRatio =
     nonSpaceLen > 0 ? hangulCount / nonSpaceLen : 0;
   const price = card.price ?? 0;
+  const hasDate = !!(card.date ?? "").trim();
   const isCancelLike =
     card.statusTag === "cancel" || card.statusTag === "refund";
 
@@ -131,6 +132,12 @@ export function classifyOcrCardQuality(card: {
   //   가능성이 높으므로 안전하게 AI 대상으로 올립니다.
   if ((card.quantity ?? 1) >= 10) {
     badReasons.push(`비정상 수량 (qty=${card.quantity})`);
+  }
+
+  // B0b (2026-04-27). 지출 추적에서 날짜는 금액만큼 핵심 필드입니다. 현재 파이프라인은 AI 가
+  // 날짜를 회복할 수 있으므로, 이름/가격이 있는데 날짜가 비면 자동 보정 대상으로 올립니다.
+  if (!hasDate && nameLen > 0 && (price > 0 || card.priceOcrFailed)) {
+    badReasons.push("주문/결제 날짜 누락");
   }
 
   // B1. 이름이 비었거나 한글 3 글자 미만 → 사람이 이해 못 함.
@@ -399,6 +406,13 @@ export function classifyOcrCardQuality(card: {
     badReasons.push("연속 slash 파편");
   }
 
+  // B3x (2026-04-27). 선두 조사/단일 음절 찌꺼기 + 공백 + 본문.
+  //   예: "개 체크미...", "을 띠테르..." 처럼 상품명 앞에 한 글자 토막이 남아있는 케이스.
+  //   정상 상품명에서 선두가 조사 1글자로 시작하는 경우는 매우 드물어 AI 승격 신호로 사용.
+  if (/^(?:개|을|를|의|이|가)\s+[가-힣]/.test(name) && nameLen >= 12) {
+    badReasons.push("선두 조사 1글자 파편");
+  }
+
   // B3c (2026-04-24 철회): "공백 분리 1~2자 한글 청크 3+" 규칙은 false positive 가 많아 제거.
   //   `박스 심플`, `이는` 같은 정상 한국 상품명의 내부 공백까지 OCR 분리로 오인해, 샘플 23장 중
   //   52% 가 AI 트리거로 올라가면서 "1차 필터" 의 비용 절약 목적이 희석됐습니다.
@@ -447,6 +461,7 @@ export function classifyOcrCardQuality(card: {
 export function pickBadProducts<T extends {
   name: string | null | undefined;
   price: number;
+  date?: string;
   quantity?: number;
   priceOcrFailed?: boolean;
   aiApplied?: boolean;
@@ -477,48 +492,3 @@ export function pickBadProducts<T extends {
   });
 }
 
-/**
- * 주문 하나의 품질 요약. 카드별 tier 를 집계해 "이 주문에 AI 후보가 몇 개 있나" 를 보여줍니다.
- */
-export function summarizeOrderQuality(order: OcrOrder) {
-  const per = order.products.map((p) =>
-    classifyOcrCardQuality({
-      name: p.name,
-      price: p.price,
-      quantity: p.quantity,
-      statusTag: order.statusTag,
-    }),
-  );
-  const counts = { clean: 0, borderline: 0, bad: 0 } as Record<OcrCardTier, number>;
-  per.forEach((q) => {
-    counts[q.tier] += 1;
-  });
-  return { per, counts, total: per.length };
-}
-
-/**
- * 이미지 전체 품질 요약. "이미지를 AI 로 재분석" 배너 트리거 여부를 계산합니다.
- *
- * 기준 (2026-04-24, 실측 기반):
- *   - 카드 중 bad 비율 ≥ 30% 이면 배너 노출.
- *   - 단, 카드가 1 장뿐일 때는 1/1 = 100% 가 되어 민감하게 배너가 뜨므로 최소 카드 수 3 조건 병합.
- */
-export function summarizeImageQuality(image: OcrImageItem) {
-  const allProducts = image.orders.flatMap((o) =>
-    o.products.map((p) => ({ order: o, product: p })),
-  );
-  const per = allProducts.map(({ order, product }) =>
-    classifyOcrCardQuality({
-      name: product.name,
-      price: product.price,
-      quantity: product.quantity,
-      statusTag: order.statusTag,
-    }),
-  );
-  const counts = { clean: 0, borderline: 0, bad: 0 } as Record<OcrCardTier, number>;
-  per.forEach((q) => counts[q.tier] += 1);
-  const total = per.length;
-  const badRatio = total > 0 ? counts.bad / total : 0;
-  const shouldShowImageBanner = total >= 3 && badRatio >= 0.3;
-  return { counts, total, badRatio, shouldShowImageBanner };
-}

@@ -39,7 +39,6 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
   if (workbook.SheetNames.length === 0) return "";
 
   const chunks: string[] = [];
-  const dropped: string[] = [];
   for (const sheetName of workbook.SheetNames) {
     const sheet = workbook.Sheets[sheetName];
     // readXlsxAsRows와 동일한 옵션으로 날짜를 제대로 포맷합니다.
@@ -53,7 +52,7 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
     // 2차원 배열을 CSV 텍스트로 변환 (쉼표 포함 셀은 따옴표로 감싸기)
     const csv = aoa.map((row) => row.map(escapeCSVCell).join(",")).join("\n");
     if (!looksLikeDataSheet(csv)) {
-      dropped.push(sheetName);
+      // 데이터 시트로 판정되지 않은 시트는 AI 전달 대상에서 제외합니다(노이즈 감소).
       continue;
     }
     chunks.push(`--- Sheet: ${sheetName} ---\n${csv}`);
@@ -76,11 +75,6 @@ export async function readXlsxAsCsvText(file: File): Promise<string> {
     }).join("\n\n");
   }
 
-  if (dropped.length > 0) {
-    // 디버깅용 로그: 어떤 시트가 제거되었는지 개발 중에 바로 보이도록.
-    console.log("[xlsxImport] AI 전달에서 제외한 시트:", dropped);
-  }
-
   return chunks.join("\n\n");
 }
 
@@ -96,7 +90,7 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
   // 첫 시트만 읽으면 실제 거래가 다른 탭에 있을 때 전부 놓치므로, 모든 시트를 순회하며
   // 각 시트에서 헤더를 찾아 CsvRow 배열로 변환하고 합칩니다.
   const allRows: CsvRow[] = [];
-  for (const sheetName of workbook.SheetNames) {
+  workbook.SheetNames.forEach((sheetName, sheetIndex) => {
     const sheet = workbook.Sheets[sheetName];
     // dateNF: sheet_to_json이 Date 셀을 ISO 형태 문자열로 포맷해서 내려주도록 지정합니다.
     //         이 옵션이 없으면 Excel 일련번호("46131.375" 등)가 그대로 내려와 날짜 파서가 오인식합니다.
@@ -107,14 +101,10 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
       dateNF: "yyyy-mm-dd",
       blankrows: false,
     });
-    if (aoa.length === 0) continue;
+    if (aoa.length === 0) return;
 
     const matrix = aoa.map((cells) => cells.map((cell) => String(cell ?? "").trim()));
     const headerIdx = findHeaderRowIndex(matrix);
-
-    // BC카드처럼 병합셀 상위헤더(row N) + 서브헤더(row N+1) 2행 구조 감지.
-    // 상위 헤더 행의 빈 칸(병합셀 연속 위치)에 서브헤더 행이 값을 채우는 패턴이면
-    // 두 행을 병합해 유효 헤더로 쓰고, 데이터는 N+2행부터 읽습니다.
     const mainHeader = (matrix[headerIdx] ?? []).map((h) =>
       h.replace(/[\r\n]+/g, "").trim()
     );
@@ -123,11 +113,18 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
     );
     const hasSubHeader = mainHeader.some((h, i) => h === "" && subRow[i] !== "");
 
-    let sheetRows: CsvRow[];
-    if (hasSubHeader) {
+    // 기본 경로는 rowsToCsvRows의 범용 2행 헤더 처리로 태웁니다.
+    // 다만 BC카드처럼 병합셀 상위헤더(row N) + 서브헤더(row N+1) 구조가 강한 파일은
+    // subHeader 패턴이 명확해도 hints가 약하면 놓칠 수 있어, 0건일 때만 명시적 fallback을 탑니다.
+    let sheetRows = rowsToCsvRows(matrix, headerIdx, {
+      sheetName,
+      sheetIndex,
+    });
+
+    if (sheetRows.length === 0 && hasSubHeader) {
       // 서브헤더가 있는 컬럼은 서브헤더 우선, 없으면 주 헤더 사용
       const mergedHeader = mainHeader.map((h, i) => (subRow[i] !== "" ? subRow[i] : h));
-      sheetRows = matrix.slice(headerIdx + 2).reduce<CsvRow[]>((acc, cells) => {
+      sheetRows = matrix.slice(headerIdx + 2).reduce<CsvRow[]>((acc, cells, rowOffset) => {
         const row: CsvRow = {};
         let hasValue = false;
         mergedHeader.forEach((header, index) => {
@@ -136,16 +133,18 @@ export async function readXlsxAsRows(file: File): Promise<CsvRow[]> {
           row[header] = value;
           if (value !== "") hasValue = true;
         });
-        if (hasValue) acc.push(row);
+        if (hasValue) {
+          row.__sheetName = sheetName;
+          row.__sheetIndex = String(sheetIndex);
+          row.__rowIndex = String(headerIdx + 2 + rowOffset + 1);
+          acc.push(row);
+        }
         return acc;
       }, []);
-    } else {
-      sheetRows = rowsToCsvRows(matrix, headerIdx);
     }
-
     if (sheetRows.length > 0) {
       allRows.push(...sheetRows);
     }
-  }
+  });
   return allRows;
 }

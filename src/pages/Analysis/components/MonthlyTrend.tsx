@@ -97,7 +97,14 @@ export const MonthlyTrend: React.FC<{ points: Point[]; average: number }> = ({
     </CardHd>
     <CardBd style={{ paddingTop: 4 }}>
       <ChartWrap>
-        <ResponsiveContainer width="100%" height="100%">
+        {/* initialDimension 으로 첫 동기 렌더 -1 워닝 차단. ChartWrap height 200 과 동일. */}
+        <ResponsiveContainer
+          width="100%"
+          height="100%"
+          minHeight={200}
+          minWidth={1}
+          initialDimension={{ width: 1, height: 200 }}
+        >
           <AreaChart data={points} margin={{ top: 12, right: 12, left: -16, bottom: 0 }}>
             <defs>
               <linearGradient id="analysis-trend-fill" x1="0" y1="0" x2="0" y2="1">

@@ -113,7 +113,9 @@ export const ImagePreview: React.FC<{ image?: OcrImageItem }> = ({ image }) => {
   const [isZoomed, setIsZoomed] = useState(false);
 
   // 이미지가 바뀌면 이전 확대 뷰를 닫아 줍니다(선택 변경 시 자연스럽게 초기화).
+  // 외부 prop(image.id) 에 따라 내부 zoom 상태를 동기화하는 정당한 effect 케이스.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setIsZoomed(false);
   }, [image?.id]);
 

@@ -3,12 +3,16 @@
  * 위치: src\pages\Settings\components\DangerSection.tsx
  */
 import React, { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { tokens } from "../../../styles/tokens";
 import { SettingsBlock } from "./SettingsSection";
-import { profileStore } from "../../../stores/profileStore";
-import { transactionsStore } from "../../../stores/transactionsStore";
+import {
+  deleteCurrentAccount,
+  getAccountDeletionProvider,
+} from "../../../lib/firebaseSync";
+import { useAuthSession } from "../../../stores/authStore";
 
 const Box = styled.div`
   display: flex;
@@ -85,6 +89,12 @@ const StatusText = styled.div`
   font-weight: 600;
 `;
 
+const ErrorText = styled(StatusText)`
+  color: ${tokens.color.neg};
+`;
+
+const ACCOUNT_DELETION_GRACE_DAYS = 7;
+
 /**
  * 되돌릴 수 없는 삭제 흐름이므로 확인 문구 입력을 요구합니다.
  * 사용자가 정확히 '삭제'라고 타이핑해야 실제 삭제 버튼이 활성화됩니다.
@@ -92,43 +102,71 @@ const StatusText = styled.div`
 const CONFIRM_PHRASE = "삭제";
 
 export const DangerSection: React.FC = () => {
+  const navigate = useNavigate();
+  const { user } = useAuthSession();
+  const deletionProvider = getAccountDeletionProvider(user);
   const [confirming, setConfirming] = useState(false);
   const [phrase, setPhrase] = useState("");
+  const [password, setPassword] = useState("");
   const [done, setDone] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const reset = () => {
     setPhrase("");
+    setPassword("");
+    setError(null);
     setConfirming(false);
   };
 
-  const handleDelete = () => {
+  const handleDelete = async () => {
     if (phrase.trim() !== CONFIRM_PHRASE) return;
-    // 데모 단계라 실제 계정 삭제 대신 로컬 데이터를 초기화합니다.
-    // Firestore 연동 시 이 두 호출을 계정 삭제 API 호출로 바꾸면 됩니다.
-    profileStore.reset();
-    transactionsStore.replaceAll([]);
-    setDone(true);
-    reset();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await deleteCurrentAccount(deletionProvider === "password" ? password : undefined);
+      setDone(true);
+      reset();
+      navigate("/login", { replace: true });
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      let message = "계정 삭제에 실패했어요. 잠시 후 다시 시도해 주세요.";
+      switch (code) {
+        case "auth/missing-password":
+          message = "현재 비밀번호를 입력해 주세요.";
+          break;
+        case "auth/wrong-password":
+        case "auth/invalid-credential":
+          message = "현재 비밀번호가 일치하지 않아요.";
+          break;
+        case "auth/popup-closed-by-user":
+          message = "Google 인증 창이 닫혔어요. 다시 시도해 주세요.";
+          break;
+        case "functions/failed-precondition":
+        case "failed-precondition":
+          message = "보안을 위해 최근 로그인 확인이 필요해요. 다시 로그인한 뒤 시도해 주세요.";
+          break;
+        case "functions/unauthenticated":
+        case "auth/no-current-user":
+          message = "로그인 상태가 만료됐어요. 다시 로그인해 주세요.";
+          break;
+      }
+      setError(message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (done) {
     return (
-      <SettingsBlock title="계정 삭제" subtitle="데모 환경에서 모든 로컬 데이터를 비웠어요.">
+      <SettingsBlock title="계정 삭제" subtitle="삭제 예약을 저장했고 로그인 화면으로 이동 중이에요.">
         <Box>
           <div>
-            <div className="title">삭제가 완료됐어요</div>
-            <div className="sub">프로필과 거래 내역이 초기값으로 되돌아갔어요.</div>
+            <div className="title">삭제 예약이 완료됐어요</div>
+            <div className="sub">{ACCOUNT_DELETION_GRACE_DAYS}일 안에 다시 로그인하면 계정이 자동으로 복구돼요.</div>
           </div>
-          <Button
-            variant="secondary"
-            size="md"
-            onClick={() => {
-              setDone(false);
-              // 리셋한 데이터를 페이지 전반에 반영하려면 새로고침이 가장 확실합니다.
-              window.location.reload();
-            }}
-          >
-            새로고침
+          <Button variant="secondary" size="md" onClick={() => navigate("/login", { replace: true })}>
+            로그인으로 이동
           </Button>
         </Box>
       </SettingsBlock>
@@ -136,13 +174,13 @@ export const DangerSection: React.FC = () => {
   }
 
   return (
-    <SettingsBlock title="계정 삭제" subtitle="계정을 삭제하면 모든 거래 내역과 설정이 영구적으로 제거돼요.">
+    <SettingsBlock title="계정 삭제" subtitle={`${ACCOUNT_DELETION_GRACE_DAYS}일 뒤 영구 삭제되며, 그 전까지 다시 로그인하면 자동 복구돼요.`}>
       {confirming ? (
         <ConfirmBox>
-          <div className="msg">정말로 삭제할까요?</div>
+          <div className="msg">삭제를 예약할까요?</div>
           <div className="sub">
             계속하려면 아래 입력란에 <b>{CONFIRM_PHRASE}</b> 라고 정확히 입력해 주세요.
-            데모 환경에서는 로컬 저장된 프로필과 거래 내역이 초기값으로 재설정돼요.
+            예약 직후에는 로그아웃되고, {ACCOUNT_DELETION_GRACE_DAYS}일 안에 다시 로그인하면 자동으로 복구돼요.
           </div>
           <ConfirmInput
             value={phrase}
@@ -150,25 +188,45 @@ export const DangerSection: React.FC = () => {
             placeholder={CONFIRM_PHRASE}
             aria-label="삭제 확인 문구"
           />
+          {deletionProvider === "password" && (
+            <ConfirmInput
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              placeholder="현재 비밀번호"
+              aria-label="현재 비밀번호"
+              // Chrome DevTools Issues: "Improve form fields autocomplete attributes" 회피.
+              // 비밀번호 변경/탈퇴 같은 재인증 흐름은 current-password 가 표준.
+              autoComplete="current-password"
+            />
+          )}
+          {deletionProvider === "google.com" && (
+            <div className="sub">삭제 전에 Google 재인증 팝업이 한 번 열려요.</div>
+          )}
           <Actions>
-            <Button variant="secondary" size="md" onClick={reset}>
+            <Button variant="secondary" size="md" onClick={reset} disabled={submitting}>
               취소
             </Button>
             <Button
               variant="danger"
               size="md"
               onClick={handleDelete}
-              disabled={phrase.trim() !== CONFIRM_PHRASE}
+              disabled={
+                submitting ||
+                phrase.trim() !== CONFIRM_PHRASE ||
+                (deletionProvider === "password" && !password)
+              }
             >
-              영구 삭제
+              {submitting ? "예약 중..." : "삭제 예약"}
             </Button>
           </Actions>
+          {error && <ErrorText>{error}</ErrorText>}
         </ConfirmBox>
       ) : (
         <Box>
           <div>
-            <div className="title">계정과 모든 데이터 삭제</div>
-            <div className="sub">이 작업은 되돌릴 수 없어요.</div>
+            <div className="title">계정 삭제 예약</div>
+            <div className="sub">유예 기간이 끝나면 Firebase Auth 계정과 데이터가 함께 영구 삭제돼요.</div>
           </div>
           <Button variant="danger" size="md" onClick={() => setConfirming(true)}>
             계정 삭제

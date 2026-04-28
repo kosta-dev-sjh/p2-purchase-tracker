@@ -145,10 +145,15 @@ const CenterLabel = styled.div`
   }
 `;
 
-export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
-  total,
-  items,
-}) => {
+export const PlatformDonut: React.FC<{
+  total: number;
+  items: DonutItem[];
+  /**
+   * 카드 내 "이번 달 …" 라벨에 들어갈 기간 표시. 현재 월이면 "이번 달", 아니면 "YYYY년 M월".
+   * 미지정 시 과거 호환을 위해 "이번 달"로 폴백합니다.
+   */
+  periodLabel?: string;
+}> = ({ total, items, periodLabel = "이번 달" }) => {
   const [mode, setMode] = useState<Mode>("amount");
 
   const countTotal = useMemo(
@@ -181,7 +186,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
   }, [items, mode, countTotal]);
 
   const centerAmount = mode === "amount" ? formatKRW(total) : `${countTotal}건`;
-  const centerCaption = mode === "amount" ? "이번 달 총소비" : "이번 달 총 주문";
+  const centerCaption = mode === "amount" ? `${periodLabel} 총소비` : `${periodLabel} 총 주문`;
 
   return (
     <Card>
@@ -189,7 +194,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
         <HeaderRow>
           <div>
             <CardTitle>플랫폼별 소비 비중</CardTitle>
-            <CardSub>이번 달 기준</CardSub>
+            <CardSub>{periodLabel} 기준</CardSub>
           </div>
           <SegmentedControl<Mode>
             value={mode}
@@ -201,7 +206,17 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
       <CardBd>
         <Body>
           <DonutWrap>
-            <ResponsiveContainer width="100%" height="100%">
+            {/* recharts 6.x ResponsiveContainer 는 defaultProps initialDimension={-1,-1} 를
+                useState 초기값으로 써서 첫 동기 렌더에 calculatedWidth/Height=-1 워닝을 띄웁니다.
+                initialDimension 을 DonutWrap 명시 크기(200x200)로 주면 첫 measure 부터 양수.
+                minHeight/minWidth 는 calculate 단계 fallback 이라 워닝 자체는 못 막습니다. */}
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minHeight={200}
+              minWidth={200}
+              initialDimension={{ width: 200, height: 200 }}
+            >
               <PieChart>
                 <Pie
                   data={chartItems}
@@ -253,7 +268,7 @@ export const PlatformDonut: React.FC<{ total: number; items: DonutItem[] }> = ({
         </Body>
       </CardBd>
       <CardFoot>
-        <span>이번 달 총 {countTotal}건</span>
+        <span>{periodLabel} 총 {countTotal}건</span>
         <span className="tnum" style={{ fontWeight: 600, color: tokens.color.ink2 }}>
           {items.length}개 플랫폼
         </span>

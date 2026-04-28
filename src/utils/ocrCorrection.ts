@@ -216,7 +216,7 @@ function normalizeQuotes(input: string): string {
  * 영향을 주지 않습니다. 멱등 — 두 번 태워도 "1개" → "1개" 로 유지됩니다.
  */
 function recoverTrailingGaeUnit(input: string): string {
-  return input.replace(/(\d{1,3})\s*[}\)\|]\s*(?=$|[\s,.·])/gm, "$1개");
+  return input.replace(/(\d{1,3})\s*[})|]\s*(?=$|[\s,.·])/gm, "$1개");
 }
 
 /**
@@ -237,10 +237,47 @@ function recoverTrailingGaeUnit(input: string): string {
  *   줄 끝/공백/구분자가 오는지 lookahead 로 명시적으로 확인합니다.
  */
 function recoverWonUnit(input: string): string {
-  return input.replace(
+  // 기존: 한글 변형 [윤웜왠]
+  let out = input.replace(
     /(\d[\d,]*)\s*[윤웜왠](?=$|[\s·•,.\-*)])/gm,
     "$1 원",
   );
+  // 통화기호 OCR 변형 — 한글 폰트의 "원" 이 ¢/€ 같은 통화기호로 읽히는 케이스. platform 무관
+  // 일반 OCR 정정이라 plat 분기 없이 적용.
+  out = out.replace(/(\d[\d,]*)\s*[¢€](?=$|[\s·•,.\-*)])/gm, "$1 원");
+  // 구조적 회복(2026-04-27): "원" 이 "8" 로 OCR 됐을 때 — 천 단위 콤마 형식이 깨지는 패턴만
+  // 보수적으로 회복.
+  //   "1,3508" → "1,350 원" (마지막 그룹이 4자리이므로 천 단위 형식 위반 → "원" 의 8 변형 추정)
+  //   "12,348" → 변경 없음 (마지막 그룹이 3자리, 정상 형식)
+  //   "1,234,5678" → "1,234,567 원" (마지막 그룹 4자리 위반)
+  // wordlist 하드코딩이 아닌 **숫자 형식 위반 검출** 이라 §5 정책과 호환.
+  out = out.replace(/(\d{1,3}(?:,\d{3})*,\d{3})8(?=\s|$|[^\d,])/gm, "$1 원");
+  // "원 → 2" 변형 — 위와 동일한 형식 위반 검출 룰. mobile/web3 캡쳐에서 다수 관찰 (`18,0002`).
+  out = out.replace(/(\d{1,3}(?:,\d{3})*,\d{3})2(?=\s|$|[^\d,])/gm, "$1 원");
+  // 콤마 → period 변형 + 원→8 동시 — `7.0008` = 7,000원. 한국 소매가가 소수점을 거의 안 쓰므로
+  // `\d.\d{3}8` 패턴은 OCR 가 콤마를 마침표로 잘못 읽고 원을 8 로 붙인 결과로 해석 안전.
+  // 단, 연도 anchor (예: `2025.728.11:02주문`) 와 충돌하지 않게 period 앞에 다른 digit/period
+  // 가 없는 경우만 fire (= 라인의 첫 number 토큰).
+  out = out.replace(/(?:^|[^\d.])(\d{1,3})\.(\d{3})8(?=\s|$|[^\d,])/gm, (match, p1, p2) => {
+    // 캡쳐 그룹 앞 prefix 보존
+    const prefix = match.slice(0, match.length - p1.length - 1 - p2.length - 1);
+    return `${prefix}${p1},${p2} 원`;
+  });
+  // 추가 구조적 회복(2026-04-27 round 2): 콤마 없는 no-comma 가격에서 "원→8" 회복.
+  //   네이버 mobile/web 캡쳐에서 OCR 가 콤마를 자주 흘려서 "85008", "1008", "5008" 같이
+  //   콤마 없이 trailing 8 이 붙는 케이스가 다수.
+  //
+  //   safety: stripping 8 했을 때 "00 으로 끝나는 round number" 인 경우만 변환. 한국 소매가는
+  //   원 단위 절단 (0/00) 이 압도적이라 round 가 아닌 잔여 (예: 1234, 9999) 는 진짜 가격으로 취급.
+  //   non-zero 시작 안 하면 무시 (00008 같은 노이즈 방어).
+  //
+  //   wordlist 하드코딩이 아닌 **숫자 형식 + round 가격 휴리스틱** 이라 §5 정책과 호환.
+  out = out.replace(/([1-9]\d*0{2})8(?=\s|$|[^\d,원])/gm, "$1 원");
+  // 콤마 anchor 단독 가격 회복 — `=                  9,860` 처럼 OCR 가 `원` 자체를 떨어뜨린
+  // 케이스. 라인이 콤마-숫자 외에 한글/원 을 포함하지 않는 (= 가격이 라인의 사실상 전부) 경우만
+  // ` 원` 을 부착. 한글/원 이 있는 라인은 제외해서 `상품 1,234개` 같은 수량/카운트 false positive 방어.
+  out = out.replace(/^([^\d가-힣원\n]*\d{1,3}(?:,\d{3})+)([^\d가-힣원\n]*)$/gm, "$1 원$2");
+  return out;
 }
 
 /**
@@ -282,7 +319,7 @@ function dropStandaloneRibbonNoiseLines(input: string): string {
   const lines = input.split("\n");
 
   const isProtectedLine = (line: string): boolean =>
-    /(?:20\d{2}\s*[.\-]\s*\d{1,2}\s*[.\-]\s*\d{1,2}|\d[\d,]*\s*원|배송\s*완료|상품\s*준비\s*중|결제\s*완료|주문\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|주문\s*상세보기|반품\s*상세\s*보기)/.test(
+    /(?:20\d{2}\s*[.-]\s*\d{1,2}\s*[.-]\s*\d{1,2}|\d[\d,]*\s*원|배송\s*완료|상품\s*준비\s*중|결제\s*완료|주문\s*완료|반품\s*완료|환불\s*완료|취소\s*완료|주문\s*상세보기|반품\s*상세\s*보기)/.test(
       line,
     );
 
@@ -370,7 +407,27 @@ function dropStandaloneRibbonNoiseLines(input: string): string {
  *   6. 숫자 / 원 / 개 복구 → 형식 정규화.
  *   7. 공백 축약 → 마지막에 돌려 위의 치환이 만든 미세한 공백 차이도 함께 정리.
  */
-export function applyOcrCorrections(rawText: string): string {
+/**
+ * 플랫폼 분기 정책(2026-04-27 추가):
+ *
+ * 후처리 규칙은 두 부류로 갈립니다.
+ *   1) Tesseract 일반 정정 (전각 → 반각, NFC, 인비저블, 줄 끝 공백, 콤마 가운뎃점, …)
+ *      → 모든 플랫폼에 무차별 안전.
+ *   2) **Coupang-specific** 노이즈 제거 (`dropStandaloneRibbonNoiseLines` 등)
+ *      → 쿠팡 로켓배송 리본/배지 OCR 잔류 패턴에 맞춰 만들어진 휴리스틱.
+ *
+ * 2026-04-27 사용자 보고: 네이버 list view 캡쳐의 가격+날짜 라인("226,797원   4. 7. 11:29 결제")
+ *   주변에 dropStandaloneRibbonNoiseLines 가 길이 20 이하 + 한글 짧은 토막 + 라틴/숫자 비율 같은
+ *   조합으로 "4. 7. 11:29 결제" 처럼 결제 키워드만 있는 짧은 라인을 ribbon noise 로 오인하는
+ *   사례가 우려됨. 이 함수는 Coupang 전용으로 유지하고 platform === "naver" 일 때는 건너뜁니다.
+ *
+ * 시그니처는 `platform` 옵셔널 두 번째 인자로 확장. 기본값은 "coupang" 호환 거동(이전과 동일)을
+ * 유지해 호출 누락 시 회귀를 막습니다 — Coupang 호출부는 그대로 동작.
+ */
+export function applyOcrCorrections(
+  rawText: string,
+  platform: "coupang" | "naver" = "coupang",
+): string {
   if (!rawText) return rawText;
   let text = rawText;
   text = toNfc(text);
@@ -380,7 +437,11 @@ export function applyOcrCorrections(rawText: string): string {
   text = normalizeHyphens(text);
   text = normalizeQuotes(text);
   text = rejoinSplitKoreanWords(text);
-  text = dropStandaloneRibbonNoiseLines(text);
+  if (platform === "coupang") {
+    // Coupang 로켓배지 OCR 잔류 제거. 네이버는 ribbon 패턴이 다르고, 짧은 결제 라인을
+    // 잘못 떨어뜨릴 수 있어 platform 분기로 격리합니다.
+    text = dropStandaloneRibbonNoiseLines(text);
+  }
   text = removeOrphanJamoI(text);
   text = recoverCommaAsPeriodInPrice(text);
   text = mergeThousandSeparator(text);

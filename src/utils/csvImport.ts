@@ -10,13 +10,24 @@ import type {
 } from "../pages/Transactions/components/TransactionTable";
 import {
   AMOUNT_HEADERS,
+  APPROVAL_NUMBER_HEADERS,
+  BILLING_AMOUNT_HEADERS,
+  CANCELLATION_HEADERS,
+  CARD_LABEL_HEADERS,
   CATEGORY_HEADERS,
   DATE_HEADERS,
+  INSTALLMENT_CYCLE_HEADERS,
+  INSTALLMENT_MONTHS_HEADERS,
   MERCHANT_HEADERS,
+  PAYMENT_DUE_DATE_HEADERS,
+  PAYMENT_MODE_HEADERS,
+  REMAINING_BALANCE_HEADERS,
   STATUS_HEADERS,
 } from "./importHeaders";
-import { parseCsv, type CsvRow } from "./csvParse";
+import { type CsvRow } from "./csvParse";
 import { normalizeMerchant } from "./merchantNormalize";
+import { inferCardRecordKind } from "./cardInstallment";
+import { MAX_IMPORT_ROW_COUNT } from "../constants/inputLimits";
 
 const CATEGORY_MAP: Record<string, TxCategory> = {
   생활용품: "living",
@@ -53,9 +64,9 @@ function pickFirstValue(row: CsvRow, headers: readonly string[]): string {
   return "";
 }
 
-function parseAmount(raw: any): number | null {
+function parseAmount(raw: unknown): number | null {
   if (typeof raw === "number") return Number.isFinite(raw) ? raw : null;
-  const rawStr = String(raw || "").trim();
+  const rawStr = String(raw ?? "").trim();
   // 숫자, 마이너스 부호, 점(소수점)만 남기고 제거
   const cleaned = rawStr.replace(/[^0-9.-]/g, "");
   if (!cleaned) return null;
@@ -64,8 +75,8 @@ function parseAmount(raw: any): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-function normalizeDate(raw: any): string | null {
-  const rawStr = String(raw || "").trim();
+function normalizeDate(raw: unknown): string | null {
+  const rawStr = String(raw ?? "").trim();
   // 숫자만 추출 (예: "2026년 4월 20일" -> ["2026", "4", "20"])
   let digits = rawStr.match(/\d+/g);
   if (!digits) return null;
@@ -88,6 +99,21 @@ function normalizeDate(raw: any): string | null {
   if (year.length !== 4 && digits[2].length === 4) {
     year = digits[2];
     day = digits[0];
+  }
+
+  // 미국식 단축 날짜(MM/DD/YY). 현대카드 엑셀처럼 "4/20/26"으로 내려오는 경우를 지원합니다.
+  if (
+    year.length !== 4 &&
+    digits[2].length <= 2 &&
+    rawStr.includes("/") &&
+    Number(digits[0]) >= 1 &&
+    Number(digits[0]) <= 12 &&
+    Number(digits[1]) >= 1 &&
+    Number(digits[1]) <= 31
+  ) {
+    year = String(2000 + Number(digits[2]));
+    month = digits[0];
+    day = digits[1];
   }
 
   const y = Number(year);
@@ -143,20 +169,111 @@ export interface CsvImportResult {
   skipped: CsvImportSkipped[];
 }
 
+type CardPaymentMode = "lump_sum" | "installment" | "unknown";
+
+function parsePositiveInteger(raw: string): number | null {
+  const digits = String(raw || "").match(/\d+/g);
+  if (!digits || digits.length === 0) return null;
+  const value = Number(digits[0]);
+  return Number.isFinite(value) ? value : null;
+}
+
+function parseInstallmentCycle(raw: string): { current: number; total: number } | null {
+  const match = String(raw || "").match(/(\d+)\s*\/\s*(\d+)/);
+  if (!match) return null;
+
+  const current = Number(match[1]);
+  const total = Number(match[2]);
+  if (!Number.isFinite(current) || !Number.isFinite(total) || current <= 0 || total <= 0) {
+    return null;
+  }
+
+  return { current, total };
+}
+
+function parsePaymentMode(
+  raw: string,
+  months: number | null,
+  cycle: { current: number; total: number } | null,
+): CardPaymentMode {
+  const normalized = String(raw || "").replace(/\s+/g, "");
+  if (/할부/.test(normalized) || (months !== null && months > 1) || cycle) {
+    return "installment";
+  }
+  if (/일시불/.test(normalized) || months === 0 || months === 1) {
+    return "lump_sum";
+  }
+  return "unknown";
+}
+
+function looksLikeSummaryRow(raw: CsvRow, merchantRaw: string, dateRaw: string): boolean {
+  const joined = Object.values(raw).join(" ");
+  if (/총\s*합계|합계|소계|누계|건수합계/.test(joined)) return true;
+  if (!Object.keys(raw).some((key) => MERCHANT_HEADERS.some((header) => key.includes(header)))) return true;
+  if (String(dateRaw || "").includes("~")) return true;
+  if (!merchantRaw && !dateRaw) return true;
+  return false;
+}
+
 export function importRows(parsed: CsvRow[]): CsvImportResult {
   const imported: TxRow[] = [];
   const skipped: CsvImportSkipped[] = [];
   const now = Date.now();
 
-  parsed.forEach((raw, index) => {
+  // 행 수 상한 보호. 정상 카드 한 달 이용내역은 200행 이하라 10K 한도는 사실상 무한대로
+  // 잡혀 있으나, 악의적 입력(거대 CSV)이 메모리에서 풀리는 것을 방지합니다.
+  // 한도 초과 시 앞쪽 행만 처리하고 나머지는 한 건의 skip 항목으로 요약 보고합니다.
+  const truncated = parsed.length > MAX_IMPORT_ROW_COUNT;
+  const rows = truncated ? parsed.slice(0, MAX_IMPORT_ROW_COUNT) : parsed;
+  if (truncated) {
+    skipped.push({
+      index: MAX_IMPORT_ROW_COUNT,
+      reason: `행 수 상한(${MAX_IMPORT_ROW_COUNT}) 초과 — 이후 ${parsed.length - MAX_IMPORT_ROW_COUNT}행은 처리하지 않습니다.`,
+      raw: {},
+    });
+  }
+
+  rows.forEach((raw, index) => {
     const dateRaw = pickFirstValue(raw, DATE_HEADERS);
     const merchantRaw = pickFirstValue(raw, MERCHANT_HEADERS);
     const amountRaw = pickFirstValue(raw, AMOUNT_HEADERS);
+    const billedAmountRaw = pickFirstValue(raw, BILLING_AMOUNT_HEADERS);
     const categoryRaw = pickFirstValue(raw, CATEGORY_HEADERS);
     const statusRaw = pickFirstValue(raw, STATUS_HEADERS);
+    const paymentModeRaw = pickFirstValue(raw, PAYMENT_MODE_HEADERS);
+    const installmentMonthsRaw = pickFirstValue(raw, INSTALLMENT_MONTHS_HEADERS);
+    const installmentCycleRaw = pickFirstValue(raw, INSTALLMENT_CYCLE_HEADERS);
+    const approvalNumberRaw = pickFirstValue(raw, APPROVAL_NUMBER_HEADERS);
+    const dueDateRaw = pickFirstValue(raw, PAYMENT_DUE_DATE_HEADERS);
+    const remainingBalanceRaw = pickFirstValue(raw, REMAINING_BALANCE_HEADERS);
+    const cardLabelRaw = pickFirstValue(raw, CARD_LABEL_HEADERS);
+    const cancellationRaw = pickFirstValue(raw, CANCELLATION_HEADERS);
+
+    if (looksLikeSummaryRow(raw, merchantRaw, dateRaw)) {
+      skipped.push({ index, reason: "요약/합계 행은 건너뜁니다.", raw });
+      return;
+    }
 
     const date = normalizeDate(dateRaw);
     const amount = parseAmount(amountRaw);
+    const billedAmount = parseAmount(billedAmountRaw);
+    const installmentMonths = parsePositiveInteger(installmentMonthsRaw);
+    const installmentCycle = parseInstallmentCycle(installmentCycleRaw);
+    const remainingBalance = parseAmount(remainingBalanceRaw);
+    const paymentMode = parsePaymentMode(paymentModeRaw, installmentMonths, installmentCycle);
+    const recordKind = inferCardRecordKind({
+      raw,
+      amount,
+      billedAmount,
+      cycle: installmentCycle,
+      remainingBalance,
+      paymentMode,
+      installmentCycleHeaders: INSTALLMENT_CYCLE_HEADERS,
+      remainingBalanceHeaders: REMAINING_BALANCE_HEADERS,
+      billingAmountHeaders: BILLING_AMOUNT_HEADERS,
+    });
+    const effectiveAmount =
+      recordKind === "billing" ? (billedAmount ?? amount) : (amount ?? billedAmount);
     // 가맹점명이 비면 행을 버리지 않고 "알 수 없음"으로 대체해 import합니다.
     const effectiveMerchantRaw = merchantRaw || "알 수 없음";
     const { platform, cleaned } = normalizeMerchant(effectiveMerchantRaw);
@@ -165,15 +282,25 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       skipped.push({ index, reason: "날짜 형식을 읽을 수 없습니다.", raw });
       return;
     }
-    if (amount === null) {
+    if (effectiveAmount === null) {
       skipped.push({ index, reason: "금액 형식을 읽을 수 없습니다.", raw });
       return;
     }
     
     const resolvedPlatform = platform ?? "unspecified";
     const category = (CATEGORY_MAP[categoryRaw.trim()] ?? "etc") as TxCategory;
-    const status = inferStatus(statusRaw, amount);
-    const txShape = toTxShape(amount, status);
+    const status = inferStatus(`${statusRaw} ${cancellationRaw}`.trim(), effectiveAmount);
+    const txShape = toTxShape(effectiveAmount, status);
+    const dueDate = normalizeDate(dueDateRaw);
+    const fingerprintParts = [
+      date,
+      effectiveMerchantRaw,
+      approvalNumberRaw,
+      String(amount ?? ""),
+      String(billedAmount ?? ""),
+      String(raw.__sheetName ?? ""),
+      String(raw.__rowIndex ?? ""),
+    ].filter(Boolean);
 
     const row: TxRow = {
       id: `csv-${now}-${index}`,
@@ -185,14 +312,41 @@ export function importRows(parsed: CsvRow[]): CsvImportResult {
       amount: txShape.amount,
       status: txShape.status,
       source: "csv",
+      detail: {
+        items: [],
+        // 카드 CSV/XLSX 업로드 경로의 거래는 "CARD" 로 마킹해 DetailPanel 의 입력 방식 태그가
+        // "카드내역" 으로 표시되도록 합니다(2026-04-28). 이전에는 "MANUAL" 로 강제되어 사용자
+        // 입장에서 "카드로 올렸는데 수동 입력으로 보이는" 표시 회귀가 있었습니다.
+        // 레거시 데이터(이미 "MANUAL" 로 저장된 csv 거래) 는 DetailPanel 의 getEffectiveSource
+        // 게터가 row.source === "csv" 폴백으로 호환합니다.
+        source: "CARD",
+        cardImport: {
+          recordKind,
+          paymentMode,
+          ...(installmentMonths !== null ? { installmentMonths } : {}),
+          ...(installmentCycle
+            ? {
+                installmentCurrentCycle: installmentCycle.current,
+                installmentCycleTotal: installmentCycle.total,
+              }
+            : {}),
+          ...(amount !== null ? { approvedAmount: amount } : {}),
+          ...(billedAmount !== null ? { billedAmount } : {}),
+          ...(remainingBalance !== null ? { remainingBalance } : {}),
+          ...(approvalNumberRaw ? { approvalNumber: approvalNumberRaw } : {}),
+          ...(cardLabelRaw ? { cardLabel: cardLabelRaw } : {}),
+          ...(dueDate ? { dueDate } : {}),
+          ...(raw.__sheetName ? { sourceSheet: raw.__sheetName } : {}),
+          ...(effectiveMerchantRaw ? { originalMerchant: effectiveMerchantRaw } : {}),
+          ...(fingerprintParts.length > 0
+            ? { rawRowFingerprint: fingerprintParts.join("|") }
+            : {}),
+        },
+      },
     };
 
     imported.push(row);
   });
 
   return { total: parsed.length, imported, skipped };
-}
-
-export function importCsv(text: string): CsvImportResult {
-  return importRows(parseCsv(text));
 }

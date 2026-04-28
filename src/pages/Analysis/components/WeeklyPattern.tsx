@@ -38,6 +38,12 @@ interface WeeklyPatternProps {
    * 예: "금·토·일에 전체의 **58%**가 집중돼요."
    */
   note?: string;
+  /**
+   * 카드 헤더 아래 보조 라벨. weekendShare(주말 비중) 에 따라 정반대 메시지가
+   * 노출돼야 하므로 호출부(Analysis/data.ts)에서 동적으로 산출해 내려줍니다.
+   * 미지정 시 중립 라벨로 폴백해, 빈 데이터·과거 호출부에서 회귀가 발생하지 않게 합니다.
+   */
+  subtitle?: string;
 }
 
 /**
@@ -104,18 +110,28 @@ const WeeklyTick: React.FC<TickProps & { days?: WeeklyDay[] }> = ({
   );
 };
 
-export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note }) => {
+export const WeeklyPattern: React.FC<WeeklyPatternProps> = ({ days, note, subtitle }) => {
   return (
     <Card>
       <CardHd>
         <div>
           <CardTitle>요일별 지출 패턴</CardTitle>
-          <CardSub>주말에 집중되는 경향</CardSub>
+          {/* 호출부에서 weekendShare 기반 부제를 내려주지 않으면 중립 폴백 라벨로 떨어집니다.
+              과거에는 "주말에 집중되는 경향" 이 하드코딩 되어 있어 본문(note) 이 "평일 쪽 지출이 더 많아요"
+              로 나올 때 헤더와 본문이 정반대 메시지를 전달하던 회귀가 있었습니다. */}
+          <CardSub>{subtitle ?? "이번 달 요일별 분포"}</CardSub>
         </div>
       </CardHd>
       <CardBd>
         <ChartWrap>
-          <ResponsiveContainer width="100%" height="100%">
+          {/* initialDimension 으로 첫 동기 렌더 -1 워닝 차단. ChartWrap height 180 과 동일. */}
+          <ResponsiveContainer
+            width="100%"
+            height="100%"
+            minHeight={180}
+            minWidth={1}
+            initialDimension={{ width: 1, height: 180 }}
+          >
             <BarChart
               data={days}
               margin={{ top: 16, right: 8, left: 8, bottom: 0 }}

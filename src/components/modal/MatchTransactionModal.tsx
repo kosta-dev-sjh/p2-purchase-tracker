@@ -161,12 +161,12 @@ export const MatchTransactionModal: React.FC<MatchTransactionModalProps> = ({
   return (
     <Modal isOpen={isOpen} onClose={onClose} title="이미 기록된 결제건이 있어요">
       <Description>
-        아래 거래에 OCR로 추출한 상품을 추가하거나, 별도 거래로 저장할 수 있어요.
+        아래 거래에 주문 캡처로 추출한 상품을 추가하거나, 별도 거래로 저장할 수 있어요.
         자동으로 병합하지 않으니 원하는 쪽을 선택해 주세요.
       </Description>
 
       <CandidateBlock>
-        <div className="label">이번에 저장할 OCR 결과</div>
+        <div className="label">이번에 저장할 주문 캡처 결과</div>
         <div className="row">
           <span>
             <Tag kind={candidate.platform}>{PLATFORM_LABELS[candidate.platform]}</Tag>

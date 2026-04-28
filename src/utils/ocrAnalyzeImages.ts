@@ -14,7 +14,7 @@
 import { createWorker } from "tesseract.js";
 import type { UploadedImage } from "../pages/OcrUpload/data";
 import type { Platform } from "../pages/OcrUpload/components/PlatformSelect";
-import type { OcrImageItem, OcrOrder } from "../pages/OcrEdit/data";
+import type { OcrImageItem, OcrOrder, OcrProduct } from "../pages/OcrEdit/data";
 import {
   parseCoupangOrderText,
   parseNaverOrderText,
@@ -28,6 +28,9 @@ import { preprocessImageForOcr } from "./ocrPreprocess";
 import { applyOcrCorrections } from "./ocrCorrection";
 import { pickBadProducts } from "./ocrQuality";
 import { runAiOcrFallback } from "./aiOcrFallback";
+import { detectPlatformFromRawText } from "./ocrPlatformDetect";
+import { buildHistoryCache, applyHistoryCorrectionToProducts } from "./ocrHistoryCorrection";
+import { transactionsStore } from "../stores/transactionsStore";
 
 /**
  * 분석 진행률 이벤트. AnalysisProgressModal 이 그대로 받아 두 개의 진행 바를 그립니다.
@@ -98,7 +101,7 @@ function stripResidualButtonText(name: string): string {
 function toFiniteAmount(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
-    const digits = value.replace(/[^\d.\-]/g, "");
+    const digits = value.replace(/[^\d.-]/g, "");
     if (!digits) return 0;
     const n = Number(digits);
     return Number.isFinite(n) ? n : 0;
@@ -130,6 +133,7 @@ function toProduct(
     id: `${imageId}-product-${idx}`,
     name: hasItem ? cleanedName : "상품명 입력 필요",
     price: unitPrice,
+    ...(res.date ? { date: res.date } : {}),
     quantity: qty,
     // Tesseract 단에서 가격 라인을 못 읽은 경우만 플래그를 전파 — AI 자동 보정 트리거 용도.
     ...(res.priceOcrFailed ? { priceOcrFailed: true } : {}),
@@ -140,7 +144,7 @@ function toProduct(
  * 쿠팡 캡쳐 전용: 주문 헤더 날짜별로 그룹화해 각 날짜마다 OcrOrder 를 하나씩 만듭니다.
  * 헤더가 1개면 카드 1장(묶음 상품), N개면 N장이 생깁니다.
  */
-function buildCoupangOrders(
+export function buildCoupangOrders(
   imageId: string,
   parsed: PurchaseOCRResult[],
 ): OcrOrder[] {
@@ -191,30 +195,103 @@ function buildCoupangOrders(
 }
 
 /**
- * 네이버용: "이미지 1장 = 주문 N건(목록형)" 형식이라 결과 1개당 OcrOrder 1개.
+ * 네이버용: 결과 1개당 OcrOrder 1개. 단 두 가지 예외:
+ *
+ *   1) folded(접힌 주문, "주문 펼쳐보기"/"총 N건 펼쳐보기") 메타:
+ *      - products[] 는 대표 상품 1개로 유지하되 가격은 0/미확정 (toProduct 가 흡수)
+ *      - totalAmount 는 product 합계 대신 sectionTotal 을 우선 사용 — 정책 §6.
+ *      - folded/itemCountHint/sectionTotal 메타를 그대로 OcrOrder 에 보존해
+ *        OrderCard / DetailPanel 이 "접힌 주문 · 외 n건 숨김" 안내를 띄울 수 있게 합니다.
+ *
+ *   2) **expandedFoldGroup** ("총 N건 주문 접기" 펼쳐진 fold 묶음):
+ *      같은 결제(주문번호 1개) 로 묶인 N개 카드가 모두 visible 인 상태. 1차 파서가 status
+ *      anchor 단위로 N개 OcrOrder 를 만들면 거래내역에 N건으로 분리되는데, 사용자 실제 결제는
+ *      1건이라 정합성 어긋남(2026-04-27 사용자 보고). 모든 결과 카드를 1개 OcrOrder 의
+ *      products[] 로 합쳐 저장. orderDate/statusTag 는 첫 카드 기준. totalAmount 는 모든
+ *      products price 합계.
  */
-function buildFlatOrders(
+export function buildFlatOrders(
   imageId: string,
   parsed: PurchaseOCRResult[],
 ): OcrOrder[] {
-  return parsed.map((res, idx) => {
+  const buildSingleOrder = (res: PurchaseOCRResult, idx: number): OcrOrder => {
     const statusTag = detectStatusFromOcrText(res.statusText ?? res.rawText) ?? "purchase";
     const product = toProduct(res, idx, imageId);
     // toProduct 가 이미 toFiniteAmount 로 가격/수량을 정규화한 결과를 그대로 사용합니다.
     // 외부 res.price 를 다시 곱하면 string 으로 들어온 경우 NaN 이 생길 수 있으니,
     // product.price·product.quantity 만 신뢰합니다.
+    const productSum = product
+      ? toFiniteAmount(product.price) * (toFiniteAmount(product.quantity) || 1)
+      : 0;
+    const sectionTotal = toFiniteAmount(res.sectionTotal);
+    const folded = res.folded === true;
+    // folded 일 때만 sectionTotal 을 totalAmount 로 끌어옵니다. 펼친 주문은 products 합계를
+    // 신뢰하고, sectionTotal 은 메타로만 보존(정합성 점검용).
+    const totalAmount = folded && sectionTotal > 0 ? sectionTotal : productSum;
+
     return {
       id: `${imageId}-order-${idx}`,
       orderDate: res.date ?? "",
       statusTag,
       statusLabel: "자동 추출됨",
-      totalAmount: product
-        ? toFiniteAmount(product.price) * (toFiniteAmount(product.quantity) || 1)
-        : 0,
+      totalAmount,
       rawText: res.rawText,
       products: product ? [product] : [],
+      ...(folded ? { folded: true } : {}),
+      ...(res.itemCountHint !== undefined ? { itemCountHint: res.itemCountHint } : {}),
+      ...(sectionTotal > 0 ? { sectionTotal } : {}),
     };
-  });
+  };
+
+  const mergeOrders = (orders: OcrOrder[], label: string): OcrOrder => {
+    const first = orders[0];
+    const products = orders.flatMap((order) => order.products);
+    const totalAmount = products.reduce(
+      (sum, p) => sum + toFiniteAmount(p.price) * (toFiniteAmount(p.quantity) || 1),
+      0,
+    );
+    const orderDate =
+      orders.map((order) => order.orderDate).find((date) => date && date.trim()) ?? "";
+    const itemCountHint = orders.find((order) => typeof order.itemCountHint === "number")?.itemCountHint;
+    const sectionTotal = orders.reduce(
+      (max, order) => Math.max(max, toFiniteAmount(order.sectionTotal)),
+      0,
+    );
+    return {
+      id: first.id,
+      orderDate,
+      statusTag: first.statusTag,
+      statusLabel: label,
+      totalAmount,
+      rawText: orders.map((order) => order.rawText ?? "").filter(Boolean).join("\n"),
+      products,
+      ...(itemCountHint !== undefined ? { itemCountHint } : {}),
+      ...(sectionTotal > 0 ? { sectionTotal } : {}),
+    };
+  };
+
+  const orders: OcrOrder[] = [];
+  for (let idx = 0; idx < parsed.length; idx += 1) {
+    const res = parsed[idx];
+    const currentOrder = buildSingleOrder(res, idx);
+
+    if (res.addonCandidate && orders.length > 0) {
+      const prev = orders[orders.length - 1];
+      orders[orders.length - 1] = mergeOrders([prev, currentOrder], "자동 추출됨 (추가상품 묶음)");
+      continue;
+    }
+
+    const foldTailCount = res.expandedFoldTailCount ?? 0;
+    if (foldTailCount > 1 && orders.length >= foldTailCount - 1) {
+      const previousGroup = orders.splice(orders.length - (foldTailCount - 1), foldTailCount - 1);
+      orders.push(mergeOrders([...previousGroup, currentOrder], "자동 추출됨 (펼쳐진 묶음)"));
+      continue;
+    }
+
+    orders.push(currentOrder);
+  }
+
+  return orders;
 }
 
 /**
@@ -235,6 +312,11 @@ export async function analyzeUploadedImages(
   if (targetImages.length === 0) return [];
 
   const totalCount = targetImages.length;
+
+  // 사용자 history-based 자체 보정 cache 빌드 (1회). transactionsStore 의 기존 거래 title/items 를
+  // 정규화해서 fuzzy 매칭 후보로 사용. AI 호출 0, wordlist 하드코딩 0 — 사용자별 동적 학습.
+  // 자세한 정책/알고리즘은 src/utils/ocrHistoryCorrection.ts 참고.
+  const historyCache = buildHistoryCache(transactionsStore.loadAll());
 
   // 초기 상태: 첫 이미지 준비 중. 외부(모달)가 "0/N, 0%"를 그릴 수 있게 한 번 흘려 줍니다.
   onProgress({
@@ -311,12 +393,10 @@ export async function analyzeUploadedImages(
         preserve_interword_spaces: "1",
       } as unknown as never);
     } catch {
-      console.warn("[ocrAnalyzeImages] tesseract.setParameters 실패 — 기본값으로 진행");
+      // setParameters 실패는 기본값으로 진행해도 무방하므로 조용히 흘립니다.
     }
 
     const processed: OcrImageItem[] = [];
-    // AI 호출 통계 누적 — 아래 완료 요약 로깅에 사용.
-    let triggeredImages = 0;
 
     // ───────── 이미지별 단일 파이프라인 (Tesseract → 파싱 → 필요 시 AI) ─────────
     //
@@ -364,10 +444,11 @@ export async function analyzeUploadedImages(
       }
 
       // ── Tesseract ── 진행률은 logger 가 0→0.5 스케일로 자동 흘려보냄.
-      const preprocessed = await preprocessImageForOcr(image.file);
+      const preprocessed = await preprocessImageForOcr(image.file, { platform: image.platform });
       const result = await worker.recognize(preprocessed);
-      const rawText = applyOcrCorrections(result.data.text);
-      console.log(`[OCR rawText] ${image.fileName}\n`, rawText);
+      // 후처리는 platform-aware. Coupang 전용 ribbon noise 제거가 네이버 결제 라인을 잘못
+      // 떨어뜨릴 위험 때문에 platform 을 같이 넘겨줍니다(ocrCorrection.applyOcrCorrections 분기).
+      const rawText = applyOcrCorrections(result.data.text, image.platform);
 
       // Tesseract 완료 시점 명시적 0.5 마크 (logger 가 마지막 0.5 를 쏴줄 수도 있지만 보장 목적).
       onProgress({
@@ -393,6 +474,11 @@ export async function analyzeUploadedImages(
           ? buildCoupangOrders(image.id, parsedData)
           : buildFlatOrders(image.id, parsedData);
 
+      // Platform auto-detection: rawText 기반으로 사용자가 선택한 platform 이 맞는지 확인.
+      // mismatch 면 OcrUpload 가 confirm 모달을 띄워 재선택 권유. 자세한 알고리즘은
+      // src/utils/ocrPlatformDetect.ts 참고. literal UI 라벨/배지 시그널만 사용.
+      const detection = detectPlatformFromRawText(rawText);
+
       const imageItem: OcrImageItem = {
         id: image.id,
         fileName: image.fileName,
@@ -401,6 +487,8 @@ export async function analyzeUploadedImages(
         status: "analyzed",
         platform: image.platform,
         rawText,
+        detectedPlatform: detection.detected,
+        detectionConfidence: detection.confidence,
         orders:
           orders.length > 0
             ? orders
@@ -416,11 +504,33 @@ export async function analyzeUploadedImages(
               ],
       };
 
+      // ── 사용자 history-based 자체 보정 ──
+      //
+      // AI 게이트 전에 history cache 매칭으로 OCR itemName 변형을 자체 회복. 이전에 같은
+      // 사용자가 정정/저장한 거래 title 과 fuzzy 매칭(임계 0.7) 되면 cache 의 깨끗한 이름으로 교체.
+      // 이렇게 보정된 카드는 ocrQuality 의 bad 분류에 영향을 주어 일부 AI 호출이 자연 회피됨.
+      const totalCardCountForCorrection = imageItem.orders.reduce((a, o) => a + o.products.length, 0);
+      if (historyCache.length > 0 && totalCardCountForCorrection > 0) {
+        imageItem.orders = imageItem.orders.map((o) => {
+          const { products: corrected } = applyHistoryCorrectionToProducts(
+            o.products,
+            historyCache,
+          );
+          return { ...o, products: corrected };
+        });
+      }
+
       // ── AI 필요 여부 판단 후 호출 ──
       //
       // 1차 필터: bad 카드가 하나라도 있어야 AI 호출. 비용 절약 목적 유지.
       // 호출 시에는 이미지 전체 카드(clean 포함) 를 넘겨 clean 카드도 AI 가 미세 오류 발견 시
       // 함께 보정. aiService 가 changedIds 로 실제 변경된 카드만 aiApplied 플래그를 찍음.
+      //
+      // 정책 (CLAUDE.md §9.1): pickBadProducts 는 platform-agnostic 으로 유지. 네이버 전용
+      // 게이트 분기를 여기에 추가하면 ocrQuality 책임 경계가 흐려져 회귀 추적이 어려워진다.
+      // 네이버 캡쳐의 OCR 실패(가격 0 원, 날짜 결측 등) 를 게이트가 못 잡으면 그건 ocrQuality
+      // 의 bad 룰 자체가 부족하다는 측정 신호 — Phase D harness 결과 보고 platform 무관 룰로
+      // 글로벌 임계값을 조정한다 (네이버 한정 우회로 만들지 않는다).
       const badPerOrder = imageItem.orders.map((o) =>
         pickBadProducts(o.products, o.statusTag),
       );
@@ -428,12 +538,6 @@ export async function analyzeUploadedImages(
       const allProducts = imageItem.orders.flatMap((o) => o.products);
 
       if (flatBad.length > 0 && allProducts.length > 0) {
-        triggeredImages += 1;
-        // 이 이미지가 AI 2차 확인을 거친다는 사실을 imageItem 에 기록. EditForm 의 debug
-        // chip("🛠 DEBUG: AI 인식됨") 만 이 값을 읽습니다. DEBUG_OCR_AI 가 false 인 배포
-        // 빌드에서는 읽는 쪽이 tree-shake 돼 사용자에게는 노출되지 않습니다.
-        imageItem.aiInvoked = true;
-        // AI 시작 — progress 0.5 유지, phase "ai-fallback" 으로 전환해 모달이 subtext 를 바꿈.
         onProgress({
           currentIndex: i,
           totalCount,
@@ -445,20 +549,46 @@ export async function analyzeUploadedImages(
           phase: "ai-fallback",
         });
 
+        // AI 에 현재 날짜 hint 같이 넘김 — 각 product 가 속한 OcrOrder 의 orderDate 를 임시 attach.
+        // Functions 의 prompt 가 "현재날짜=..." 컨텍스트로 활용. 응답에서 product 마다 보정된
+        // date 가 돌아오면 caller 가 OcrOrder.orderDate 빈 곳을 채움(2026-04-27 사용자 보고).
+        const productOrderMap = new Map<string, string>();
+        const allProductsWithDate = imageItem.orders.flatMap((o) =>
+          o.products.map((p) => {
+            productOrderMap.set(p.id, o.id);
+            return o.orderDate
+              ? ({ ...p, date: o.orderDate } as OcrProduct & { date?: string })
+              : p;
+          }),
+        );
+
         const fallback = await runAiOcrFallback({
           imageId: imageItem.id,
           platform: imageItem.platform,
           rawText: imageItem.rawText ?? "",
-          allProducts,
+          allProducts: allProductsWithDate,
           badIds: flatBad.map((p) => p.id),
           imageFile: image.file,
         });
         if (!fallback.failed) {
           const byId = new Map(fallback.products.map((p) => [p.id, p]));
-          imageItem.orders = imageItem.orders.map((o) => ({
-            ...o,
-            products: o.products.map((p) => byId.get(p.id) ?? p),
-          }));
+          imageItem.orders = imageItem.orders.map((o) => {
+            const updatedProducts = o.products.map((p) => byId.get(p.id) ?? p);
+            // AI 가 회복한 date 가 있고 OcrOrder.orderDate 가 비었으면 product 의 date 를
+            // 끌어다 채움. 같은 결제(같은 OcrOrder) 의 product 들은 같은 date 가 정상이라
+            // 첫 번째 non-empty 를 사용.
+            let nextOrderDate = o.orderDate;
+            if (!nextOrderDate || !nextOrderDate.trim()) {
+              for (const p of updatedProducts) {
+                const d = (p as OcrProduct & { date?: string }).date;
+                if (d && /^\d{4}-\d{2}-\d{2}$/.test(d)) {
+                  nextOrderDate = d;
+                  break;
+                }
+              }
+            }
+            return { ...o, orderDate: nextOrderDate, products: updatedProducts };
+          });
         }
       }
 
@@ -475,45 +605,6 @@ export async function analyzeUploadedImages(
       });
 
       processed.push(imageItem);
-    }
-
-    // ───────── AI 변경 실효율 로깅 ─────────
-    //
-    // CLAUDE.md §9.4 에 명문화된 3개 지표를 콘솔에 찍습니다. 게이트 과민/둔감 판단 자료.
-    // 개발자 도구에서 평소 업로드 시 수치가 쌓이도록 console.info 레벨로 출력.
-    //
-    //   - 게이트 발동율: 전체 중 AI 호출로 넘어간 이미지 비율
-    //   - 카드 레벨 실효율: 전체 카드 중 실제로 aiApplied 찍힌 비율
-    //   - 이미지 레벨 실효율: AI 호출된 이미지 중 최소 1카드 이상 수정된 비율
-    //
-    // 실효율이 지속적으로 낮으면 ocrQuality.classifyOcrCardQuality 의 bad 판정 기준을
-    // 완화할 후보. 반대로 높으면 현재 게이트가 잘 조정된 것.
-    try {
-      const totalCards = processed.reduce(
-        (acc, img) => acc + img.orders.reduce((a, o) => a + o.products.length, 0),
-        0,
-      );
-      const aiAppliedCards = processed.reduce(
-        (acc, img) =>
-          acc + img.orders.reduce(
-            (a, o) => a + o.products.filter((p) => p.aiApplied).length,
-            0,
-          ),
-        0,
-      );
-      const aiChangedImages = processed.filter((img) =>
-        img.orders.some((o) => o.products.some((p) => p.aiApplied)),
-      ).length;
-      // triggeredImages 는 루프 중 AI 호출이 발동한 이미지 수(위에서 누적).
-      const pct = (n: number, d: number) => (d > 0 ? ((n / d) * 100).toFixed(1) : "0.0");
-      console.info(
-        `[OCR] 완료 요약 · 이미지 ${processed.length}장 · 카드 ${totalCards}개\n` +
-        `       게이트 발동율: ${triggeredImages}/${processed.length}장 (${pct(triggeredImages, processed.length)}%)\n` +
-        `       카드 실효율  : ${aiAppliedCards}/${totalCards}카드 (${pct(aiAppliedCards, totalCards)}%) 가 AI 보정됨\n` +
-        `       이미지 실효율: ${aiChangedImages}/${triggeredImages || 0}장 (${pct(aiChangedImages, triggeredImages)}%) 의 AI 호출에서 최소 1카드 수정`,
-      );
-    } catch (e) {
-      console.warn("[OCR] 완료 요약 로깅 실패:", e);
     }
 
     // 모든 이미지 완료. 100%로 한 번 더 찍어 줍니다.

@@ -13,15 +13,18 @@ import {
   CATEGORY_LABELS,
   MAX_CATEGORIES_PER_TX,
   PLATFORM_OPTIONS,
+  sortCategoriesByStandard,
 } from "../../../constants/labels";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
 import { useCategoriesStore } from "../../../stores/categoriesStore";
+import { todayAsDotDate } from "../../../utils/date";
+import { MAX_MEMO_LENGTH, MAX_TITLE_LENGTH } from "../../../constants/inputLimits";
 
 export type CategoryKey = keyof typeof CATEGORY_LABELS;
 
-// 표시 순서의 기준. 스토어에 동일한 id가 있으면 스토어 이름이 우선됩니다.
-const CATEGORY_ORDER: CategoryKey[] = ["living", "fashion", "digital", "food", "etc"];
+// 표시 순서는 constants/labels.STANDARD_CATEGORY_ORDER를 공유해 다른 페이지와 일관됩니다.
+// (이전에는 이 파일 안에만 있어 설정·내역 페이지와 순서가 달라지는 일관성 이슈가 있었어요.)
 
 /**
  * 수동 입력 폼의 메타 필드들. 상위 ManualEntry 페이지가 저장 버튼을 눌렀을 때
@@ -39,6 +42,14 @@ export interface MetaFieldValues {
   date: string;
   categories: string[];
   memo: string;
+  installmentKind: "none" | "lump_sum" | "installment";
+  installmentMonths: string;
+  // 회차(현재/전체) 입력은 데이터 일관성 정책으로 입력 surface 에서 제거됐습니다(2026-04-28).
+  // CSV import 가 카드사마다 회차를 잡는 비율이 들쭉날쭉해서, 수동입력에서만 잘 들어오면
+  // 결국 데이터셋이 섞여 보이는 문제. 타입(`cardImport.installmentCurrentCycle/Total`) 은
+  // 호환성 위해 남겨 두지만, 새 입력 경로에서는 채우지 않습니다.
+  billedAmount: string;
+  dueDate: string;
 }
 
 const Grid = styled.div`
@@ -73,6 +84,38 @@ const PlatformSelect = styled.select`
     border-color: ${tokens.color.accent};
     box-shadow: ${tokens.shadow.focus};
     outline: none;
+  }
+`;
+
+const InlineHint = styled.div`
+  margin-top: 6px;
+  color: ${tokens.color.ink4};
+  font-size: 11px;
+  line-height: 1.45;
+`;
+
+/*
+ * 카드내역 출처 안내 배너.
+ * 거래 편집 모달에서 cardImport 가 있는 거래를 수정할 때, 결제 메타 필드들이 카드사 원본에서
+ * 끌어온 값임을 시각적으로 미리 알립니다. 사용자가 "여기는 손대면 원본과 달라진다" 는 점을
+ * 의식하고 입력하도록 유도하는 것이 목적입니다(완전 차단은 아님 — 파서 오류 시 수정할 수
+ * 있어야 하기 때문).
+ */
+const CardSourceNotice = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.5;
+
+  strong {
+    color: ${tokens.color.ink2};
+    font-weight: 700;
   }
 `;
 
@@ -168,22 +211,25 @@ export const MetaFields: React.FC<{
   value: MetaFieldValues;
   onChange: (next: MetaFieldValues) => void;
   fieldIdPrefix?: string;
-}> = ({ value, onChange, fieldIdPrefix = "meta" }) => {
+  /**
+   * true 면 결제방식 필드 위에 "카드사 데이터에서 가져온 값" 안내 배너를 노출합니다.
+   * TransactionEditModal 에서 cardImport 가 있는 거래를 편집할 때만 사용하고,
+   * 수동 입력 신규 작성 화면에서는 의미가 없어 false(기본).
+   */
+  cardSourceNotice?: boolean;
+}> = ({ value, onChange, fieldIdPrefix = "meta", cardSourceNotice = false }) => {
   const patch = (partial: Partial<MetaFieldValues>) =>
     onChange({ ...value, ...partial });
+  const isInstallment = value.installmentKind === "installment";
+  const hasBilledAmount = value.billedAmount.trim().length > 0;
 
   // 카테고리 목록은 스토어 전체 항목을 사용합니다.
-  // 표준 카테고리는 기존 순서(CATEGORY_ORDER)로 먼저 정렬하고, 커스텀 카테고리는 뒤에 이어 붙입니다.
+  // 정렬 정책은 한 곳(constants/labels.sortCategoriesByStandard)에서 결정해 다른 페이지와 일관성을 맞춥니다.
   const storeCategories = useCategoriesStore();
-  const categoryOptions = [
-    ...CATEGORY_ORDER.flatMap((key) => {
-      const entry = storeCategories.find((c) => c.id === key);
-      return entry ? [{ key: entry.id, label: entry.name }] : [];
-    }),
-    ...storeCategories
-      .filter((c) => !CATEGORY_ORDER.includes(c.id as CategoryKey))
-      .map((c) => ({ key: c.id, label: c.name })),
-  ];
+  const categoryOptions = sortCategoriesByStandard(storeCategories).map((c) => ({
+    key: c.id,
+    label: c.name,
+  }));
 
   // 카테고리 상한(MAX_CATEGORIES_PER_TX)에 도달했으면 새로 추가하는 토글은 무시합니다.
   // 이미 체크된 항목을 끄는 동작은 항상 허용되어야 하므로 가드는 "체크 시도"에만 걸립니다.
@@ -207,6 +253,7 @@ export const MetaFields: React.FC<{
             placeholder="예: 쿠팡 주문, 네이버 환불"
             value={value.title}
             onChange={(event) => patch({ title: event.target.value })}
+            maxLength={MAX_TITLE_LENGTH}
           />
         </FormField>
       </Field>
@@ -247,15 +294,94 @@ export const MetaFields: React.FC<{
         <FormField label="거래일자" required>
           {/* 저장 포맷("YYYY.MM.DD")을 그대로 주고받을 수 있는 커스텀 DatePicker.
               네이티브 <input type="date">는 브라우저마다 팝업 UI가 달라 디자인 통일이 어려워
-              앱 토큰과 같은 결을 쓰는 자체 캘린더로 교체했습니다. */}
+              앱 토큰과 같은 결을 쓰는 자체 캘린더로 교체했습니다.
+              maxDate=오늘로 미래 날짜 선택을 차단합니다. 거래일자는 이미 발생한 결제만 의미가 있고,
+              미래로 입력하면 거래 내역 페이지가 미래 달로 점프해 사용자가 거래를 다시 못 찾는
+              데이터 노출 이슈가 생깁니다. */}
           <DatePicker
             id={`${fieldIdPrefix}-date`}
             value={value.date}
             onChange={(next) => patch({ date: next })}
+            maxDate={todayAsDotDate()}
             aria-label="거래일자"
           />
         </FormField>
       </Field>
+      {cardSourceNotice && (
+        <Field $span={2}>
+          <CardSourceNotice role="note">
+            <span aria-hidden="true">💳</span>
+            <span>
+              <strong>카드사 데이터에서 가져온 값이에요.</strong>{" "}
+              결제방식·할부개월·결제예정일·청구금액은 카드 원본을 기반으로 채워져 있어요.
+              수정하면 원본과 달라져요.
+            </span>
+          </CardSourceNotice>
+        </Field>
+      )}
+      <Field>
+        <FormField label="결제방식" helpText="사용자 화면에서는 일시불과 할부만 구분해 보여줘요.">
+          <PlatformSelect
+            value={value.installmentKind}
+            onChange={(event) =>
+              patch({
+                installmentKind: event.target.value as MetaFieldValues["installmentKind"],
+              })
+            }
+            aria-label="결제방식"
+          >
+            <option value="none">선택 안 함</option>
+            <option value="lump_sum">일시불</option>
+            <option value="installment">할부</option>
+          </PlatformSelect>
+        </FormField>
+      </Field>
+      <Field>
+        <FormField label="결제예정일" helpText="선택 항목 · 카드대금 결제 예정일이 보이면 함께 기록해 둘 수 있어요.">
+          <DatePicker
+            id={`${fieldIdPrefix}-due-date`}
+            value={value.dueDate}
+            onChange={(next) => patch({ dueDate: next })}
+            aria-label="결제예정일"
+          />
+        </FormField>
+      </Field>
+      {isInstallment && (
+        <Field>
+          <FormField
+            label="할부개월"
+            helpText="총 할부 개월 수를 입력해요."
+          >
+            <AmountInput
+              id={`${fieldIdPrefix}-installment-months`}
+              placeholder="예: 3"
+              value={value.installmentMonths}
+              onChange={(rawDigits) => patch({ installmentMonths: rawDigits })}
+            />
+          </FormField>
+        </Field>
+      )}
+      {/*
+       * 회차(현재/전체) 입력은 의도적으로 제거했습니다.
+       * 카드사 CSV 가 회차를 잡는 정도가 일정하지 않아 데이터셋이 섞여 보이는 문제 해결을
+       * 위함. 회차 정보가 필요한 사용자는 "이번 달 청구금액 + 할부개월 + 결제예정일" 조합으로
+       * 충분히 진행 상황을 추적할 수 있습니다.
+       */}
+      {isInstallment && (
+        <Field>
+          <FormField label="이번 달 청구금액" helpText="선택 항목 · 청구형 자료처럼 실제 반영 금액을 아는 경우에만 입력해요.">
+            <AmountInput
+              id={`${fieldIdPrefix}-billed-amount`}
+              placeholder="예: 27,472"
+              value={value.billedAmount}
+              onChange={(rawDigits) => patch({ billedAmount: rawDigits })}
+            />
+            {hasBilledAmount && (
+              <InlineHint>청구금액을 입력하면 내부적으로 더 정확한 할부 정보로 저장해요.</InlineHint>
+            )}
+          </FormField>
+        </Field>
+      )}
       <Field $span={2}>
         <FormField
           label={
@@ -321,6 +447,7 @@ export const MetaFields: React.FC<{
             placeholder="거래에 대한 메모를 남겨보세요."
             value={value.memo}
             onChange={(event) => patch({ memo: event.target.value })}
+            maxLength={MAX_MEMO_LENGTH}
           />
         </FormField>
       </Field>

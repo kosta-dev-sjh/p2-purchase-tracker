@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npm install *)",
+      "Bash(mkdir -p ~/.npm-global)",
+      "Bash(npm config *)",
+      "Read(//Users/maren/**)",
+      "Bash(echo 'export PATH=~/.npm-global/bin:$PATH')"
+    ]
+  }
+}

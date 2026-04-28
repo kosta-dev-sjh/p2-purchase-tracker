@@ -515,14 +515,150 @@ const ToggleAdd = styled.button`
   font-weight: 600;
 `;
 
+/**
+ * 접힌 주문(folded) 안내 배너.
+ * 네이버에서 `포함 총 N건` / `주문 펼쳐보기` 가 보였을 때 파서가 OcrOrder.folded 를 true 로
+ * 찍습니다(strategy doc §6, §12-5). 사용자에게 "이 주문은 상세가 미확인 상태이고 외 N건이
+ * 숨겨져 있을 수 있다"는 사실을 명확히 전달해, 상품 합계를 그대로 신뢰하지 않도록 안내합니다.
+ *
+ * 색은 정보 톤(tint + ink3)으로 — 저장을 막지 않는 soft hint. 같은 카드 안의
+ * TruncationBanner(노랑 경고)와 시각적으로 분리해 사용자가 "에러"로 받아들이지 않게 합니다.
+ */
+const FoldedBanner = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px dashed ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.tint};
+  color: ${tokens.color.ink3};
+  font-size: 12px;
+  line-height: 1.55;
+
+  strong {
+    color: ${tokens.color.ink2};
+    font-weight: 700;
+  }
+`;
+
+/**
+ * "쿠폰/추가 할인 적용" 영역.
+ *
+ * 정책: docs/Naver_OCR_Parsing_Strategy.md §6-1, §12-3.
+ *   - 상품 가격에 자동 배분하지 않고 order 레벨에서만 차감액을 보존
+ *   - 체크박스 OFF 면 차감액은 0(또는 undefined)으로 저장
+ *   - 입력은 숫자만 허용(쉼표 자동 정리는 onChange 단계에서 처리)
+ *
+ * 시각 톤: tokens.line2 + ink2 — 본문(상품 목록)과 시각적으로 분리되되 "에러"는 아닌 보조 영역.
+ */
+const DiscountSection = styled.div`
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid ${tokens.color.line2};
+`;
+
+const DiscountToggleRow = styled.label`
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: ${tokens.color.ink2};
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+
+  input {
+    width: 14px;
+    height: 14px;
+    accent-color: ${tokens.color.accent};
+    cursor: pointer;
+  }
+`;
+
+const DiscountHelp = styled.div`
+  margin-top: 6px;
+  color: ${tokens.color.ink4};
+  font-size: 11.5px;
+  line-height: 1.5;
+`;
+
+const DiscountInputRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+`;
+
+const DiscountInput = styled.input`
+  width: 160px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.panel};
+  color: ${tokens.color.ink1};
+  font-family: ${tokens.font.mono};
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
+  transition: border-color ${tokens.motion.fast}, box-shadow ${tokens.motion.fast};
+
+  &:focus {
+    border-color: ${tokens.color.accent};
+    box-shadow: ${tokens.shadow.focus};
+  }
+
+  &::placeholder {
+    color: ${tokens.color.ink5};
+  }
+`;
+
+const DiscountSuffix = styled.span`
+  color: ${tokens.color.ink3};
+  font-size: 12.5px;
+`;
+
+/**
+ * 전체 거래금액 카드 안에서 "상품합계 / 차감액 / 최종" 3 줄 분해 표시를 담는 영역.
+ * 차감액이 0 이거나 미입력이면 분해 표시가 사라지고 단일 라인으로 떨어집니다.
+ */
+const TotalBreakdown = styled.div`
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed ${tokens.color.line2};
+  color: ${tokens.color.ink3};
+  font-size: 11.5px;
+  line-height: 1.5;
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .row.minus {
+    color: ${tokens.color.neg};
+  }
+`;
+
 export interface OrderCardProps {
   platform: Platform;
   order: OcrOrder;
   /**
-   * 주문일자·상태 태그 변경. 상위(OcrEditPage)에서 해당 주문만 patch합니다.
-   * totalAmount는 상품 목록의 파생값으로 자동 동기화되므로 여기서는 받지 않습니다.
+   * 주문일자·상태 태그·쿠폰/차감액 변경. 상위(OcrEditPage)에서 해당 주문만 patch 하고
+   * deriveOrderTotal 로 totalAmount 를 다시 계산합니다.
    */
-  onOrderPatch?: (patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>) => void;
+  onOrderPatch?: (
+    patch: Partial<
+      Pick<OcrOrder, "orderDate" | "statusTag" | "couponEnabled" | "discountAmount">
+    >,
+  ) => void;
   /**
    * 상품 목록 변경. ProductTable에서 상품을 추가·수정·삭제할 때마다 올라옵니다.
    */
@@ -568,6 +704,39 @@ export const OrderCard: React.FC<OrderCardProps> = ({
     setIsAdding(false);
   };
 
+  // ── 파생값 계산 ────────────────────────────────────────────────────────────
+  // sumProducts: 상품 카드의 (가격 × 수량) 합계.
+  // baseAmount  : "전체 거래금액" 계산의 기준값. folded 면 sectionTotal 우선.
+  // discount    : 사용자 입력 차감액. couponEnabled 가 꺼져 있으면 0 으로 흡수.
+  // 산식 자체는 OcrEditPage 의 deriveOrderTotal 과 동일해야 합니다(저장 시 totalAmount 와의
+  // 정합성 보장 목적). UI 표시 분해를 위해 여기서도 같은 규칙을 한 번 더 펼쳐 둡니다.
+  const sumProducts = order.products.reduce((acc, p) => {
+    const price = Number.isFinite(p.price) ? p.price : 0;
+    const qty = Number.isFinite(p.quantity ?? 1) ? (p.quantity ?? 1) : 1;
+    return acc + price * qty;
+  }, 0);
+  const sectionTotalNum = Number.isFinite(order.sectionTotal ?? NaN)
+    ? Number(order.sectionTotal)
+    : 0;
+  const baseAmount = order.folded && sectionTotalNum > 0 ? sectionTotalNum : sumProducts;
+  const discount = order.couponEnabled
+    ? Number.isFinite(order.discountAmount ?? NaN)
+      ? Math.max(0, Number(order.discountAmount))
+      : 0
+    : 0;
+  const showBreakdown = discount > 0;
+  const hiddenItemCount =
+    order.folded && typeof order.itemCountHint === "number"
+      ? Math.max(0, order.itemCountHint - order.products.length)
+      : 0;
+
+  // 차감액 입력 — 콤마/공백을 허용해 사용자가 "1,000" 같이 입력해도 OK. 내부 저장은 number.
+  const handleDiscountInput = (value: string) => {
+    const digits = value.replace(/[^\d]/g, "");
+    const parsed = digits === "" ? 0 : Number(digits);
+    if (onOrderPatch) onOrderPatch({ discountAmount: Number.isFinite(parsed) ? parsed : 0 });
+  };
+
   return (
     <CardWrap>
       <CardBd>
@@ -584,6 +753,27 @@ export const OrderCard: React.FC<OrderCardProps> = ({
             </DeleteButton>
           )}
         </HeaderRow>
+
+        {order.folded && (
+          /*
+           * 접힌 주문 안내 배너.
+           * - 상품 상세가 1차 OCR 단계에서 모두 보이지 않은 상태임을 명시
+           * - itemCountHint 가 있으면 "외 N건 숨김" 까지 함께 노출
+           * - 사용자에게 "결제 차이는 아래 쿠폰/추가 할인에서 보정해 주세요" 동선을 제시
+           */
+          <FoldedBanner role="status" aria-live="polite">
+            <span aria-hidden="true">🔒</span>
+            <span>
+              <strong>접힌 주문 · 상세 미확인</strong>
+              {hiddenItemCount > 0 && ` · 외 ${hiddenItemCount}건 숨김`}
+              <div style={{ marginTop: 4 }}>
+                네이버 화면에 펼쳐지지 않은 주문이라 상품 상세가 일부만 보일 수 있어요.
+                실제 결제 금액과 차이가 있다면 아래 <strong>쿠폰/추가 할인 적용</strong>에
+                차감액을 입력해 주세요.
+              </div>
+            </span>
+          </FoldedBanner>
+        )}
 
         <MetaRow>
           <MetaCell>
@@ -627,12 +817,13 @@ export const OrderCard: React.FC<OrderCardProps> = ({
         <Total>
           <div className="label">전체 거래금액 *</div>
           {/*
-            totalAmount는 아래 상품 목록의 (가격 × 수량) 합계로 자동 계산됩니다.
-            과거에는 이 필드가 개별 입력 칸이었고, 상품합계와 값이 다르면 저장 시점에
-            경고 모달이 떴습니다. 쿠팡 파서가 결제 섹션을 섹션 경계로 걸러내면서
-            "총 결제금액"이 상품으로 오인식될 일이 없어져, totalAmount를 파생값으로
-            두는 쪽이 일관성 면에서 명확해졌습니다. id는 validateBeforeSave에서
-            focusOrderField가 참조하므로 유지합니다.
+            totalAmount 는 아래 상품 목록의 (가격 × 수량) 합계 또는(접힌 주문) sectionTotal 에서
+            "쿠폰/추가 할인 차감액" 을 뺀 값입니다(deriveOrderTotal 단일 규칙).
+            과거에는 이 필드가 개별 입력 칸이었고, 상품합계와 값이 다르면 저장 시점에 경고
+            모달이 떴습니다. 쿠팡 파서가 결제 섹션을 섹션 경계로 걸러내면서 "총 결제금액"이
+            상품으로 오인식될 일이 없어졌고, 네이버 접힌 주문은 sectionTotal 메타로 따로
+            보존하기로 정리하면서 totalAmount 를 파생값으로 두는 쪽이 일관성 면에서 명확해
+            졌습니다. id 는 validateBeforeSave 에서 focusOrderField 가 참조하므로 유지합니다.
           */}
           <div
             id={`ocr-order-amount-${order.id}`}
@@ -645,8 +836,22 @@ export const OrderCard: React.FC<OrderCardProps> = ({
             ₩{order.totalAmount.toLocaleString("ko-KR")}
           </div>
           <div className="hint">
-            아래 상품 목록의 (가격 × 수량) 합계로 자동 계산돼요. 상품을 추가·수정·삭제하면 즉시 반영됩니다.
+            {order.folded
+              ? "접힌 주문이라 화면에 보인 결제 섹션 합계에서 차감액을 뺀 값으로 자동 계산돼요."
+              : "아래 상품 목록의 (가격 × 수량) 합계에서 차감액을 뺀 값으로 자동 계산돼요. 상품을 추가·수정·삭제하면 즉시 반영됩니다."}
           </div>
+          {showBreakdown && (
+            <TotalBreakdown aria-label="거래금액 분해">
+              <div className="row">
+                <span>{order.folded ? "결제 섹션 합계" : "상품 합계"}</span>
+                <span>₩{baseAmount.toLocaleString("ko-KR")}</span>
+              </div>
+              <div className="row minus">
+                <span>주문단위 차감액</span>
+                <span>-₩{discount.toLocaleString("ko-KR")}</span>
+              </div>
+            </TotalBreakdown>
+          )}
         </Total>
 
         <SectionLabel>상품 목록 *</SectionLabel>
@@ -656,6 +861,55 @@ export const OrderCard: React.FC<OrderCardProps> = ({
           statusTag={order.statusTag}
           fieldIdPrefix={`ocr-order-${order.id}`}
         />
+
+        {/*
+         * 쿠폰/추가 할인 적용 영역.
+         *
+         * 정책: docs/Naver_OCR_Parsing_Strategy.md §6-1, §12-3, §12-4.
+         *   - OCR 수정 화면에서만 노출(수동입력 화면에는 추가하지 않는다)
+         *   - 체크 OFF: 차감액은 적용되지 않고 totalAmount 는 상품합계 그대로
+         *   - 체크 ON: 숫자 입력칸 노출 → 입력값이 totalAmount 에서 즉시 차감
+         *   - 차감액은 자동 상품별 배분 없이 order 레벨에서만 보존
+         *
+         * onOrderPatch 가 없는 read-only 컨텍스트(쓰기 권한 없는 부모)에서는 영역을 노출하지
+         * 않아 UI 가 "건드릴 수 없는 입력" 으로 보이지 않게 합니다.
+         */}
+        {onOrderPatch && (
+          <DiscountSection>
+            <DiscountToggleRow>
+              <input
+                type="checkbox"
+                checked={!!order.couponEnabled}
+                onChange={(event) => {
+                  const enabled = event.target.checked;
+                  // 체크 해제 시 차감액도 0 으로 리셋해 deriveOrderTotal 결과가 즉시 상품합계로
+                  // 돌아오도록 한다. 사용자가 체크를 잠깐 끈 사이에 차감액이 그림자처럼 남아 있어
+                  // totalAmount 에 영향을 주는 일이 없도록 동시에 patch.
+                  onOrderPatch({ couponEnabled: enabled, discountAmount: enabled ? (order.discountAmount ?? 0) : 0 });
+                }}
+              />
+              쿠폰/추가 할인 적용
+            </DiscountToggleRow>
+            <DiscountHelp>
+              주문단위 쿠폰·포인트·카드 할인 등 상품 외 차감액을 입력해요. 자동으로 상품별로
+              나누지 않고 주문 합계에서 한 번만 빼서 최종 거래금액에 반영합니다.
+            </DiscountHelp>
+            {order.couponEnabled && (
+              <DiscountInputRow>
+                <DiscountInput
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9,]*"
+                  placeholder="0"
+                  value={(order.discountAmount ?? 0).toLocaleString("ko-KR")}
+                  onChange={(event) => handleDiscountInput(event.target.value)}
+                  aria-label="주문단위 차감액"
+                />
+                <DiscountSuffix>원 차감</DiscountSuffix>
+              </DiscountInputRow>
+            )}
+          </DiscountSection>
+        )}
 
         <CategorySection>
           <CategoryHeader>

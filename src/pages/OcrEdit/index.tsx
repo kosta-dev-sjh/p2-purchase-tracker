@@ -62,7 +62,7 @@ function toFiniteAmount(value: unknown): number {
   if (typeof value === "number") return Number.isFinite(value) ? value : 0;
   if (typeof value === "string") {
     // 콤마/공백/원/₩/달러 기호 등 가격 표기에 흔한 비-숫자 문자를 제거하고 정수로 환원.
-    const digits = value.replace(/[^\d.\-]/g, "");
+    const digits = value.replace(/[^\d.-]/g, "");
     if (!digits) return 0;
     const n = Number(digits);
     return Number.isFinite(n) ? n : 0;
@@ -76,6 +76,30 @@ function sumProductTotal(products: OcrOrder["products"]): number {
     const qty = toFiniteAmount(product.quantity) || 1;
     return sum + price * qty;
   }, 0);
+}
+
+/**
+ * 주문의 최종 거래금액(`totalAmount`)을 단일 규칙으로 도출합니다.
+ *
+ * - 일반 주문: `상품합계(가격 × 수량) - 차감액`
+ * - 접힌 주문(`order.folded === true`): `sectionTotal - 차감액`
+ *   접힌 주문은 `products[]` 가 대표 상품 1개로만 채워져 있고 가격이 0/미확정일 수 있어
+ *   상품합계로는 의미 있는 값이 안 나옵니다. 정책상 `sectionTotal` 을 상품 가격에 강제 주입하지
+ *   않으므로(strategy doc §6, §12-5), 거래금액 산출 단계에서 base 를 갈아끼웁니다.
+ *
+ * - 음수가 되지 않게 0 으로 막습니다(차감액 > 상품합계 인 사용자 입력 보호).
+ *
+ * 모든 OCR 카드의 `totalAmount` 동기화는 이 함수 한 곳을 통과해야 하며, OrderCard 의
+ * "전체 거래금액" 표시도 이 함수를 직접 호출하지 않고 `order.totalAmount` 만 읽으면 됩니다.
+ */
+// 외부 import 없음 — 같은 파일 내부 사용만 있어 export 를 떼고 react-refresh 룰을 만족시킵니다.
+function deriveOrderTotal(order: OcrOrder): number {
+  const productsSum = sumProductTotal(order.products);
+  const sectionTotal = toFiniteAmount(order.sectionTotal);
+  const base = order.folded && sectionTotal > 0 ? sectionTotal : productsSum;
+  const discount = order.couponEnabled ? toFiniteAmount(order.discountAmount) : 0;
+  const next = base - discount;
+  return next > 0 ? next : 0;
 }
 
 /**
@@ -98,7 +122,7 @@ function normalizeImagesTotals(images: OcrImageItem[]): OcrImageItem[] {
     ...image,
     orders: image.orders.map((order) => ({
       ...order,
-      totalAmount: sumProductTotal(order.products),
+      totalAmount: deriveOrderTotal(order),
     })),
   }));
 }
@@ -149,6 +173,22 @@ function buildCandidateFromOrder(
     ? Math.abs(order.totalAmount)
     : -Math.abs(order.totalAmount);
 
+  // 사용자가 OCR 수정 화면에서 입력한 차감액. couponEnabled 가 켜져 있을 때만 의미가 있고,
+  // 꺼진 상태로 저장되면 detail 에 아예 싣지 않아 거래 상세에서 "차감액 0원" 노이즈가 생기지
+  // 않게 합니다.
+  const discountForDetail =
+    order.couponEnabled && toFiniteAmountInner(order.discountAmount) > 0
+      ? toFiniteAmountInner(order.discountAmount)
+      : undefined;
+
+  // 접힌 주문(folded) 메타. itemCountHint(파서가 읽은 N) 가 있으면 "외 (N - products.length)건 숨김"
+  // 안내에 사용합니다. 음수가 되면 안 되므로 0 으로 막아 둡니다.
+  const folded = order.folded === true;
+  const hiddenItemCount =
+    folded && typeof order.itemCountHint === "number"
+      ? Math.max(0, order.itemCountHint - order.products.length)
+      : undefined;
+
   return {
     id: `ocr-${image.id}-${order.id}-${Date.now()}`,
     type: isIncome ? "income" : "expense",
@@ -173,8 +213,25 @@ function buildCandidateFromOrder(
       sourceImageUrl: image.sourceDataUrl ?? "",
       // totalAmount를 상품 합계로 강제 동기화하면서, "상품 일부만 입력된" 상태가 구조적으로
       // 발생하지 않게 됐기 때문에 itemsCoverage 플래그는 OCR 경로에서 더 이상 붙지 않습니다.
+      ...(discountForDetail !== undefined ? { discountAmount: discountForDetail } : {}),
+      ...(folded ? { folded: true } : {}),
+      ...(folded && order.itemCountHint !== undefined
+        ? { itemCountHint: order.itemCountHint }
+        : {}),
+      ...(hiddenItemCount !== undefined && hiddenItemCount > 0
+        ? { hiddenItemCount }
+        : {}),
+      ...(toFiniteAmountInner(order.sectionTotal) > 0
+        ? { sectionTotal: toFiniteAmountInner(order.sectionTotal) }
+        : {}),
     },
   };
+}
+
+// buildCandidateFromOrder 내부에서만 쓰는 좁은 toFiniteAmount 별칭. 페이지 상단의 동일 함수와
+// 본질적으로 같지만, 여기 한 군데서만 number|undefined 추론을 단순화하기 위한 셰이드입니다.
+function toFiniteAmountInner(value: unknown): number {
+  return toFiniteAmount(value);
 }
 
 /**
@@ -287,22 +344,35 @@ export const OcrEditPage: React.FC = () => {
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
 
   /**
-   * 주문 필드(주문일자·상태 태그) 변경을 이미지 상태에 반영합니다.
-   * totalAmount는 더 이상 사용자가 직접 수정하지 않고 handleProductsChange에서
-   * 상품 합계로 자동 동기화되므로 이 patch 타입에서는 제외했습니다.
+   * 주문 필드 변경을 이미지 상태에 반영합니다.
+   *
+   * 직접 수정 가능한 필드:
+   *   - orderDate, statusTag : 사용자 입력 그대로 반영
+   *   - couponEnabled        : "쿠폰/추가 할인 적용" 체크박스 상태
+   *   - discountAmount       : 주문단위 차감액(쿠폰/포인트/카드 할인 등)
+   *
+   * `totalAmount` 는 deriveOrderTotal 단일 함수가 산출하는 파생값입니다. patch 가 위 4 개
+   * 필드를 건드리든 handleProductsChange 가 products[] 를 갱신하든, 항상 같은 함수로 다시
+   * 계산되도록 한 곳에 모아 둡니다.
    */
   const handleOrderPatch = (
     orderId: string,
-    patch: Partial<Pick<OcrOrder, "orderDate" | "statusTag">>
+    patch: Partial<
+      Pick<OcrOrder, "orderDate" | "statusTag" | "couponEnabled" | "discountAmount">
+    >
   ) => {
     setImages((prev) =>
       prev.map((image) => {
         if (image.id !== selectedId) return image;
         return {
           ...image,
-          orders: image.orders.map((order) =>
-            order.id === orderId ? { ...order, ...patch } : order
-          ),
+          orders: image.orders.map((order) => {
+            if (order.id !== orderId) return order;
+            const next = { ...order, ...patch };
+            // 차감액·체크박스 토글이 들어올 수 있으니 여기서도 totalAmount 를 다시 도출해
+            // OrderCard 의 "전체 거래금액" 표시가 즉시 반응하도록 한다.
+            return { ...next, totalAmount: deriveOrderTotal(next) };
+          }),
         };
       })
     );
@@ -326,11 +396,13 @@ export const OcrEditPage: React.FC = () => {
         if (image.id !== selectedId) return image;
         return {
           ...image,
-          orders: image.orders.map((order) =>
-            order.id === orderId
-              ? { ...order, products, totalAmount: sumProductTotal(products) }
-              : order
-          ),
+          orders: image.orders.map((order) => {
+            if (order.id !== orderId) return order;
+            const next = { ...order, products };
+            // products 변경 시에도 deriveOrderTotal 한 곳을 통과해 차감액·folded·sectionTotal
+            // 정책이 동일하게 적용되도록 한다(handleOrderPatch 와 같은 규칙 공유).
+            return { ...next, totalAmount: deriveOrderTotal(next) };
+          }),
         };
       })
     );
@@ -678,7 +750,7 @@ export const OcrEditPage: React.FC = () => {
   const currentMatch = matchQueue[0];
 
   return (
-    <AppShell activeNav="upload" crumb="입력 · OCR" title="OCR 결과 확인 및 수정">
+    <AppShell activeNav="upload" crumb="입력 · 주문 캡처" title="주문 캡처 결과 확인 및 수정">
       <Body>
         {/* OCR 편집 화면은 목록, 미리보기, 수정 폼의 3단 구성을 사용합니다. */}
         <ImageList
@@ -700,7 +772,7 @@ export const OcrEditPage: React.FC = () => {
       </Body>
       <Footer>
         <Button variant="ghost" size="lg" onClick={() => navigate("/ocr-upload")}>
-          다시 OCR 분석
+          캡처 다시 올리기
         </Button>
         <Button variant="primary" size="lg" onClick={handleSave}>
           저장

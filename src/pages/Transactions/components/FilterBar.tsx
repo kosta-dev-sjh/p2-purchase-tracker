@@ -4,7 +4,11 @@
  */
 import { memo, useRef, useState } from "react";
 import styled, { css } from "styled-components";
-import { PLATFORM_LABELS, STATUS_LABELS } from "../../../constants/labels";
+import {
+  PLATFORM_LABELS,
+  STATUS_LABELS,
+  sortCategoriesByStandard,
+} from "../../../constants/labels";
 import { SegmentedControl } from "../../../components/primitives/SegmentedControl";
 import { tokens } from "../../../styles/tokens";
 import { media } from "../../../tokens/breakpoints";
@@ -13,6 +17,7 @@ import type { TxPlatform, TxStatus, TxType } from "./TransactionTable";
 
 export type TypeFilter = "all" | TxType;
 export type StatusFilter = "all" | TxStatus;
+export type InstallmentFilter = "all" | "lump_sum" | "installment";
 
 interface FilterBarProps {
   search: string;
@@ -20,6 +25,7 @@ interface FilterBarProps {
   platform: "all" | TxPlatform;
   category: "all" | string;
   statusFilter: StatusFilter;
+  installmentFilter: InstallmentFilter;
   /** 모바일 아이콘 바의 정렬 토글을 여기서 함께 다루기 위해 받아 둡니다. PC 에서는 테이블 헤더가 정렬을 담당합니다. */
   sortOrder: "desc" | "asc";
   onToggleSort: () => void;
@@ -28,6 +34,7 @@ interface FilterBarProps {
   onPlatformChange: (value: "all" | TxPlatform) => void;
   onCategoryChange: (value: "all" | string) => void;
   onStatusChange: (value: StatusFilter) => void;
+  onInstallmentChange: (value: InstallmentFilter) => void;
 }
 
 const TYPE_OPTIONS: Array<{ value: TypeFilter; label: string }> = [
@@ -60,7 +67,7 @@ const Wrap = styled.div`
 
 const DesktopBar = styled.div`
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto auto auto;
   gap: 8px;
   align-items: center;
 
@@ -327,6 +334,7 @@ export const FilterBar = memo(({
   platform,
   category,
   statusFilter,
+  installmentFilter,
   sortOrder,
   onToggleSort,
   onSearchChange,
@@ -334,8 +342,11 @@ export const FilterBar = memo(({
   onPlatformChange,
   onCategoryChange,
   onStatusChange,
+  onInstallmentChange,
 }: FilterBarProps) => {
-  const storeCategories = useCategoriesStore();
+  // store 순서를 그대로 쓰면 페이지마다 카테고리 순서가 달라 일관성이 깨집니다.
+  // 정책 sortCategoriesByStandard로 통일해 설정/수동입력/내역 필터 모두 같은 순서를 보여줍니다.
+  const storeCategories = sortCategoriesByStandard(useCategoriesStore());
   // 모바일 아이콘 바 상태. 검색/필터 패널은 서로 독립적으로 열고 닫힐 수 있습니다.
   // 검색어가 이미 들어가 있는 상태로 페이지에 다시 들어오면 검색 패널을 자동으로 펼쳐 두어,
   // 사용자가 "왜 필터링이 되어 있지?" 하고 당황하지 않게 합니다.
@@ -361,14 +372,19 @@ export const FilterBar = memo(({
     platform !== "all",
     category !== "all",
     statusFilter !== "all",
+    installmentFilter !== "all",
   ].filter(Boolean).length;
 
   return (
     <Wrap>
       <DesktopBar>
         <Search>
+          {/* DevTools Issues: 'form field needs id or name' 회피용 name 속성.
+              Desktop/Mobile 두 곳에 동일 폼이라 -desktop / -mobile suffix 로 구분합니다. */}
           <input
             className="input"
+            name="tx-search-desktop"
+            aria-label="거래 검색"
             placeholder="주문명·상품명 검색"
             value={search}
             onChange={(event) => onSearchChange(event.target.value)}
@@ -388,6 +404,8 @@ export const FilterBar = memo(({
         </Search>
         <SegmentedControl value={typeFilter} options={TYPE_OPTIONS} onChange={onTypeChange} />
         <Select
+          name="tx-platform-desktop"
+          aria-label="플랫폼 필터"
           value={platform}
           onChange={(event) => onPlatformChange(event.target.value as "all" | TxPlatform)}
         >
@@ -398,6 +416,8 @@ export const FilterBar = memo(({
           <option value="unspecified">{PLATFORM_LABELS.unspecified}</option>
         </Select>
         <Select
+          name="tx-category-desktop"
+          aria-label="카테고리 필터"
           value={category}
           onChange={(event) => onCategoryChange(event.target.value)}
         >
@@ -407,6 +427,8 @@ export const FilterBar = memo(({
           ))}
         </Select>
         <Select
+          name="tx-status-desktop"
+          aria-label="상태 필터"
           value={statusFilter}
           onChange={(event) => onStatusChange(event.target.value as StatusFilter)}
         >
@@ -417,6 +439,16 @@ export const FilterBar = memo(({
           <option value="sub">{STATUS_LABELS.sub}</option>
           {/* "기타" 상태는 지출·수입 양쪽 폴백이라 상태 필터에도 노출해 수동 입력 정리에 쓰도록 합니다. */}
           <option value="etc">{STATUS_LABELS.etc}</option>
+        </Select>
+        <Select
+          name="tx-installment-desktop"
+          aria-label="결제방식 필터"
+          value={installmentFilter}
+          onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
+        >
+          <option value="all">결제방식 전체</option>
+          <option value="lump_sum">일시불</option>
+          <option value="installment">할부</option>
         </Select>
       </DesktopBar>
 
@@ -478,6 +510,8 @@ export const FilterBar = memo(({
               <input
                 ref={mobileSearchInputRef}
                 className="input"
+                name="tx-search-mobile"
+                aria-label="거래 검색"
                 placeholder="주문명·상품명 검색"
                 value={search}
                 onChange={(event) => onSearchChange(event.target.value)}
@@ -504,6 +538,8 @@ export const FilterBar = memo(({
             <SegmentedControl value={typeFilter} options={TYPE_OPTIONS} onChange={onTypeChange} />
             <FilterGroupLabel>플랫폼</FilterGroupLabel>
             <Select
+              name="tx-platform-mobile"
+              aria-label="플랫폼 필터"
               value={platform}
               onChange={(event) => onPlatformChange(event.target.value as "all" | TxPlatform)}
             >
@@ -514,6 +550,8 @@ export const FilterBar = memo(({
             </Select>
             <FilterGroupLabel>카테고리</FilterGroupLabel>
             <Select
+              name="tx-category-mobile"
+              aria-label="카테고리 필터"
               value={category}
               onChange={(event) => onCategoryChange(event.target.value)}
             >
@@ -524,6 +562,8 @@ export const FilterBar = memo(({
             </Select>
             <FilterGroupLabel>상태</FilterGroupLabel>
             <Select
+              name="tx-status-mobile"
+              aria-label="상태 필터"
               value={statusFilter}
               onChange={(event) => onStatusChange(event.target.value as StatusFilter)}
             >
@@ -533,6 +573,17 @@ export const FilterBar = memo(({
               <option value="refund">{STATUS_LABELS.refund}</option>
               <option value="sub">{STATUS_LABELS.sub}</option>
               <option value="etc">{STATUS_LABELS.etc}</option>
+            </Select>
+            <FilterGroupLabel>결제방식</FilterGroupLabel>
+            <Select
+              name="tx-installment-mobile"
+              aria-label="결제방식 필터"
+              value={installmentFilter}
+              onChange={(event) => onInstallmentChange(event.target.value as InstallmentFilter)}
+            >
+              <option value="all">결제방식 전체</option>
+              <option value="lump_sum">일시불</option>
+              <option value="installment">할부</option>
             </Select>
           </FilterPanel>
         </CollapsiblePanel>
