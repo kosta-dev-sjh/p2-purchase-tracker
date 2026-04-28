@@ -60,6 +60,30 @@ See also: `CONTRIBUTING.md`
 - Production hosting must rewrite unknown routes back to `index.html`
 - This fits Firebase Hosting-based SPA deployment better than GitHub Pages hash routing
 - Firebase Hosting / Functions deploy config lives in `firebase.json`
+- GitHub Actions production deploy now targets Firebase Hosting on pushes to `main`
+
+## CI/CD for Firebase Hosting
+
+The production site can be deployed automatically from GitHub Actions whenever `main` changes.
+
+Required GitHub repository secrets:
+
+- `FIREBASE_SERVICE_ACCOUNT_SPEND_TRACK_C2CC1`
+- `VITE_FIREBASE_API_KEY`
+- `VITE_FIREBASE_AUTH_DOMAIN`
+- `VITE_FIREBASE_PROJECT_ID`
+- `VITE_FIREBASE_STORAGE_BUCKET`
+- `VITE_FIREBASE_MESSAGING_SENDER_ID`
+- `VITE_FIREBASE_APP_ID`
+- `VITE_FIREBASE_MEASUREMENT_ID`
+
+Notes:
+
+- The workflow file is `.github/workflows/deploy-firebase-hosting.yml`
+- Pull requests to `main` can also use `.github/workflows/deploy-firebase-preview.yml` to publish a temporary preview URL
+- The workflow builds the Vite app and deploys the `dist` output to Firebase Hosting
+- `firebase.json` already contains SPA rewrites for `BrowserRouter`
+- Cloud Functions are not auto-deployed by this workflow; only Hosting is deployed
 
 ## Current stack
 
