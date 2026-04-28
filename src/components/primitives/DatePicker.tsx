@@ -108,15 +108,16 @@ const Trigger = styled.button<{ $open: boolean; $empty: boolean; $size: "sm" | "
 `;
 
 /**
- * 팝오버 패널. 트리거 바로 아래에 4px 간격으로 띄워 띄어보이지 않게 합니다.
- * 카드와 같은 shadow/radius를 써 '설정 · 카테고리 모달' 등 다른 플로팅 UI와 결을 맞춥니다.
- * $alignRight: 뷰포트 오른쪽 경계를 벗어날 때 자동으로 right: 0 로 전환합니다.
+ * 팝오버 패널. position: fixed 로 모달의 overflow 클리핑에서 탈출합니다.
+ * top/left/right는 트리거 버튼의 getBoundingClientRect()를 기준으로 계산합니다.
+ * z-index는 모달(1001)보다 높게 설정해 모달 위에 올라오게 합니다.
  */
-const Popover = styled.div<{ $alignRight: boolean }>`
-  position: absolute;
-  top: calc(100% + 4px);
-  ${({ $alignRight }) => ($alignRight ? "right: 0;" : "left: 0;")}
-  z-index: 20;
+const Popover = styled.div<{ $top: number; $left?: number; $right?: number }>`
+  position: fixed;
+  top: ${({ $top }) => $top}px;
+  ${({ $left, $right }) =>
+    $right !== undefined ? `right: ${$right}px;` : `left: ${$left ?? 0}px;`}
+  z-index: 1100;
   width: 264px;
   padding: 12px;
   border: 1px solid ${tokens.color.line};
@@ -343,9 +344,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   const maxIso = maxDate && isValidDotDate(maxDate) ? toIsoDate(maxDate) : undefined;
   const minIso = minDate && isValidDotDate(minDate) ? toIsoDate(minDate) : undefined;
   const [open, setOpen] = useState(false);
-  const [alignRight, setAlignRight] = useState(false);
+  const [popoverPos, setPopoverPos] = useState<{
+    top: number;
+    left?: number;
+    right?: number;
+  }>({ top: 0, left: 0 });
   const rootRef = useRef<HTMLDivElement | null>(null);
-  const popoverRef = useRef<HTMLDivElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
 
   // 외부에서 들어온 저장 포맷(YYYY.MM.DD)을 내부에서는 ISO로 다뤄 Date 연산을 편하게 합니다.
   const selectedIso = isValidDotDate(value) ? toIsoDate(value) : "";
@@ -372,12 +377,18 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     setOpen(true);
   };
 
-  // 팝오버가 열릴 때 뷰포트 우측 경계를 벗어나는지 확인해 alignRight를 결정합니다.
-  // useLayoutEffect를 써서 DOM이 그려진 직후, 사용자에게 보이기 전에 위치를 보정합니다.
+  // 팝오버가 열릴 때 트리거 버튼의 뷰포트 좌표를 기준으로 fixed 위치를 계산합니다.
+  // 오른쪽 공간이 부족하면 트리거 우측 끝에 맞춰 왼쪽으로 펼칩니다.
   useLayoutEffect(() => {
-    if (!open || !popoverRef.current) return;
-    const rect = popoverRef.current.getBoundingClientRect();
-    setAlignRight(rect.right > window.innerWidth);
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const POPOVER_WIDTH = 264;
+    const top = rect.bottom + 4;
+    if (rect.left + POPOVER_WIDTH > window.innerWidth) {
+      setPopoverPos({ top, right: window.innerWidth - rect.right });
+    } else {
+      setPopoverPos({ top, left: rect.left });
+    }
   }, [open]);
 
   // 팝오버가 열린 동안 바깥을 클릭하거나 Esc를 누르면 자연스럽게 닫히도록 전역 리스너 연결.
@@ -466,6 +477,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   return (
     <Root ref={rootRef}>
       <Trigger
+        ref={triggerRef}
         id={id}
         type="button"
         $open={open}
@@ -496,7 +508,13 @@ export const DatePicker: React.FC<DatePickerProps> = ({
         </svg>
       </Trigger>
       {open && (
-        <Popover ref={popoverRef} $alignRight={alignRight} role="dialog" aria-label="달력">
+        <Popover
+          $top={popoverPos.top}
+          $left={popoverPos.left}
+          $right={popoverPos.right}
+          role="dialog"
+          aria-label="달력"
+        >
           <PopoverHeader>
             <MonthLabel>
               {view.year}년 {view.month + 1}월
