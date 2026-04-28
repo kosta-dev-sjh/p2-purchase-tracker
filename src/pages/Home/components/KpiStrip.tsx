@@ -133,13 +133,20 @@ const Spark: React.FC<{ data: number[] }> = ({ data }) => {
   //   `width(-1) height(-1)` 경고를 쏟아내는 회귀가 있었습니다. grid cell 안에서 flex item 의
   //   기본 `min-width: auto` 때문인데, wrap 에 `width: 100%; min-width: 0` 를 직접 박아
   //   첫 프레임부터 0 이상의 측정값을 돌려주도록 고정합니다.
-  // 2026-04-28 추가: 위 wrap 정리만으로는 React 18 dev 모드의 첫 prepass 측정에서 -1 이
-  //   여전히 발생해 워닝이 떴습니다. recharts 가 권장하는 대로 ResponsiveContainer 에
-  //   minHeight/minWidth 를 명시해 첫 측정 -1 일 때 안전한 fallback 을 사용하게 하면 사라집니다.
-  //   값은 이미 부모 wrap 에 잡혀 있는 32px 와 동일하게 두어 시각 변화 없음.
+  // 2026-04-28 추가: minHeight/minWidth 는 calculateChartDimensions 단계에 끼어들지 않아
+  //   워닝이 계속 떴습니다. 근본 원인은 ResponsiveContainer 의 defaultProps
+  //   initialDimension = { width: -1, height: -1 }. 첫 동기 렌더에서 useState 초기값으로 -1
+  //   이 흘러 calculatedWidth/Height = -1 → warn() 트리거. initialDimension 을 부모 명시
+  //   크기(32x32)로 줘서 첫 측정값이 처음부터 양수가 되도록 합니다(recharts 6.x 검증).
   return (
     <div style={{ width: "100%", minWidth: 0, height: 32, marginTop: 10 }}>
-      <ResponsiveContainer width="100%" height="100%" minHeight={32} minWidth={1}>
+      <ResponsiveContainer
+        width="100%"
+        height="100%"
+        minHeight={32}
+        minWidth={1}
+        initialDimension={{ width: 1, height: 32 }}
+      >
         <AreaChart data={chartData} margin={{ top: 2, right: 0, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id="home-kpi-spark" x1="0" y1="0" x2="0" y2="1">

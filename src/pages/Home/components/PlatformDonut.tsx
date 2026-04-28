@@ -206,9 +206,17 @@ export const PlatformDonut: React.FC<{
       <CardBd>
         <Body>
           <DonutWrap>
-            {/* minHeight/minWidth 200 — DonutWrap 의 명시 크기와 동일하게 둬서 첫 prepass
-                측정값 -1 일 때 안전한 fallback 으로 사용. 시각 변화 없음. */}
-            <ResponsiveContainer width="100%" height="100%" minHeight={200} minWidth={200}>
+            {/* recharts 6.x ResponsiveContainer 는 defaultProps initialDimension={-1,-1} 를
+                useState 초기값으로 써서 첫 동기 렌더에 calculatedWidth/Height=-1 워닝을 띄웁니다.
+                initialDimension 을 DonutWrap 명시 크기(200x200)로 주면 첫 measure 부터 양수.
+                minHeight/minWidth 는 calculate 단계 fallback 이라 워닝 자체는 못 막습니다. */}
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minHeight={200}
+              minWidth={200}
+              initialDimension={{ width: 200, height: 200 }}
+            >
               <PieChart>
                 <Pie
                   data={chartItems}

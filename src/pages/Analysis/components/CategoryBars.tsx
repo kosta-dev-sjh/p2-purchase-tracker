@@ -104,8 +104,14 @@ const RowBar: React.FC<{ percent: number; color: string; delayMs?: number }> = (
   color,
   delayMs = 0,
 }) => (
-  // 첫 prepass 측정 -1 워닝 방지: BarCell 명시 height(20/18) 와 같은 값으로 fallback.
-  <ResponsiveContainer width="100%" height="100%" minHeight={18} minWidth={1}>
+  // initialDimension 으로 첫 동기 렌더 -1 워닝 차단. BarCell 명시 height(20/18) 와 동일.
+  <ResponsiveContainer
+    width="100%"
+    height="100%"
+    minHeight={18}
+    minWidth={1}
+    initialDimension={{ width: 1, height: 20 }}
+  >
     <BarChart
       data={[{ name: "row", value: Math.max(Math.min(percent, 100), 0) }]}
       layout="vertical"

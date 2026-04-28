@@ -122,9 +122,16 @@ export const TrendChart: React.FC<{ points: Point[] }> = ({ points }) => {
       <CardBd>
         {hasData ? (
           <ChartWrap>
-            {/* minHeight 212 = ChartWrap 의 명시 height 와 동일. 첫 prepass 측정 -1 일 때
-                안전한 fallback 으로 사용해 console 워닝을 막습니다. 시각 변화 없음. */}
-            <ResponsiveContainer width="100%" height="100%" minHeight={212} minWidth={1}>
+            {/* initialDimension 으로 첫 동기 렌더의 useState 초기값을 양수로 시드.
+                ChartWrap 명시 height 212 와 동일. width 는 부모 100% 라 정확한 값이 첫 프레임엔
+                알 수 없어 1 로 두면 ResizeObserver 첫 콜백에서 즉시 실값으로 갱신됩니다. */}
+            <ResponsiveContainer
+              width="100%"
+              height="100%"
+              minHeight={212}
+              minWidth={1}
+              initialDimension={{ width: 1, height: 212 }}
+            >
               <AreaChart data={visible} margin={{ top: 12, right: 12, left: -16, bottom: 0 }}>
                 <defs>
                   <linearGradient id="home-trend-fill" x1="0" y1="0" x2="0" y2="1">
