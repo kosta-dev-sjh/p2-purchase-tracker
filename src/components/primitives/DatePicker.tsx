@@ -9,6 +9,7 @@
  * 위치: src\components\primitives\DatePicker.tsx
  */
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import styled from "styled-components";
 import { tokens } from "../../styles/tokens";
 import {
@@ -351,6 +352,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   }>({ top: 0, left: 0 });
   const rootRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLButtonElement | null>(null);
+  const popoverRef = useRef<HTMLDivElement | null>(null);
 
   // 외부에서 들어온 저장 포맷(YYYY.MM.DD)을 내부에서는 ISO로 다뤄 Date 연산을 편하게 합니다.
   const selectedIso = isValidDotDate(value) ? toIsoDate(value) : "";
@@ -395,10 +397,10 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   useEffect(() => {
     if (!open) return;
     const handleClick = (event: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(event.target as Node)) {
-        setOpen(false);
-      }
+      const target = event.target as Node;
+      if (rootRef.current?.contains(target)) return;
+      if (popoverRef.current?.contains(target)) return;
+      setOpen(false);
     };
     const handleKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(false);
@@ -507,8 +509,9 @@ export const DatePicker: React.FC<DatePickerProps> = ({
           <path d="M10.5 2v3" />
         </svg>
       </Trigger>
-      {open && (
+      {open && createPortal(
         <Popover
+          ref={popoverRef}
           $top={popoverPos.top}
           $left={popoverPos.left}
           $right={popoverPos.right}
@@ -577,7 +580,8 @@ export const DatePicker: React.FC<DatePickerProps> = ({
               오늘
             </FooterButton>
           </Footer>
-        </Popover>
+        </Popover>,
+        document.body
       )}
     </Root>
   );
