@@ -17,7 +17,13 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
-import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
+import {
+  getCardInstallmentKind,
+  getCardInstallmentLabel,
+  getCardInstallmentTagKind,
+  getInstallmentInferredMessage,
+  getInstallmentMonthlyEstimate,
+} from "../../../utils/cardInstallment";
 import { resolveProductLink } from "../../../utils/productSearchUrl";
 
 const HeaderRow = styled.div`
@@ -245,6 +251,36 @@ const AmountBreakdown = styled.div`
 `;
 
 /**
+ * 할부 추정 메세지 박스. raw 회차/잔금 필드를 노출하지 않고 한 문장으로 "이 거래는
+ * 할부 어디쯤이다" 를 사용자에게 알려 줍니다. accentSubtle 톤을 써서 정보성 안내임을
+ * 부드럽게 전달.
+ */
+const InstallmentInferred = styled.div`
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid ${tokens.color.accentBorder};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.accentSubtle};
+  color: ${tokens.color.ink2};
+  font-size: 12px;
+  line-height: 1.5;
+
+  .badge {
+    flex: 0 0 auto;
+    padding: 1px 6px;
+    border-radius: ${tokens.radius.tag};
+    background: ${tokens.color.accent};
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+`;
+
+/**
  * 카테고리 칩은 표의 "분류" 컬럼처럼 색만 보여주는 대신,
  * 상세 패널에선 색 + 이름을 함께 노출해 의미가 한눈에 읽히게 합니다.
  * 여러 카테고리가 가로로 자연스럽게 줄바꿈될 수 있도록 flex-wrap을 씁니다.
@@ -355,11 +391,17 @@ const DetailPanelInner = ({
   const hasMemo = memoText.length > 0;
   const hasCategories = row.categories.length > 0;
   const cardImport = row.detail?.cardImport;
-  const installmentKind = getCardInstallmentKind(cardImport);
-  const installmentLabel = getCardInstallmentLabel(cardImport);
+  // amount 함께 넘겨 5만원 미만 자동 일시불 폴백.
+  const installmentKind = getCardInstallmentKind(cardImport, row.amount);
+  const installmentLabel = getCardInstallmentLabel(cardImport, row.amount);
+  const installmentTagKind = getCardInstallmentTagKind(cardImport, row.amount);
   const isInstallment =
     installmentKind === "installment_billing" ||
     installmentKind === "installment_approval";
+  // 할부 승인 거래만 "월 분할 추정 ₩X" 보조 정보가 의미 있음(청구건은 amount 가 이미 월 청구액).
+  const monthlyEstimate = getInstallmentMonthlyEstimate(cardImport, row.amount);
+  // 회차/잔금 raw 필드 노출 대신 한 문장 추정 메세지로 교체. 사용자에게 "추정" 임을 명시.
+  const installmentInferred = getInstallmentInferredMessage(cardImport, row.amount);
 
   return (
     <Card padding={0}>
@@ -375,10 +417,9 @@ const DetailPanelInner = ({
         <Tags>
           <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
           <Tag kind={row.type === "expense" ? "expense" : "income"}>{TYPE_LABELS[row.type]}</Tag>
-          {isInstallment ? (
-            <Tag kind="installment">{installmentLabel ?? "할부"}</Tag>
-          ) : installmentKind === "lump_sum" ? (
-            <Tag kind="purchase">일시불</Tag>
+          {/* 결제 방식: 일시불(회색) / 할부 승인(인디고·"할부 N개월") / 할부 청구(주황·"N/M회차") */}
+          {installmentTagKind && installmentLabel ? (
+            <Tag kind={installmentTagKind}>{installmentLabel}</Tag>
           ) : null}
         </Tags>
         <Title>{row.title}</Title>
@@ -534,11 +575,12 @@ const DetailPanelInner = ({
             <InfoGrid>
               <div className="key">결제방식</div>
               <div className="value">
-                {isInstallment
+                {installmentKind === "installment_approval" ||
+                installmentKind === "installment_billing"
                   ? "할부"
                   : installmentKind === "lump_sum"
-                      ? "일시불"
-                      : "미기록"}
+                    ? "일시불"
+                    : "미기록"}
               </div>
               {isInstallment && cardImport.installmentMonths ? (
                 <>
@@ -547,27 +589,30 @@ const DetailPanelInner = ({
                 </>
               ) : null}
               {/*
-               * "현재 회차 X/Y" 행은 의도적으로 표시하지 않습니다(2026-04-28).
-               * 입력 경로(수동입력 / CSV) 마다 회차 캡처율이 들쭉날쭉해 같은 데이터셋에서
-               * 어떤 거래는 회차가 보이고 어떤 건 안 보이는 일관성 문제가 있었습니다.
-               * 회차 자체는 cardImport 에 남아 있을 수 있어 호환성은 유지됩니다.
+               * 할부 승인은 amount 가 "총 약속 금액" 이라 KPI 합산은 ÷개월수 로 들어갑니다.
+               * 사용자가 헷갈리지 않도록 그 분할분을 명시.
                */}
-              {cardImport.approvedAmount ? (
+              {monthlyEstimate ? (
                 <>
-                  <div className="key">{isInstallment ? "원 결제금액" : "결제금액"}</div>
-                  <div className="value">{formatKRW(cardImport.approvedAmount)}</div>
+                  <div className="key">월 분할 추정</div>
+                  <div className="value">
+                    {formatKRW(monthlyEstimate)}{" "}
+                    <span style={{ color: tokens.color.ink4, fontWeight: 400 }}>
+                      (KPI 합산 기준)
+                    </span>
+                  </div>
                 </>
               ) : null}
+              {/*
+               * 입력 폼에 surface 가 있는 필드만 노출. raw 필드(approvedAmount /
+               * remainingBalance / installmentCurrentCycle / installmentCycleTotal) 는
+               * 카드사별 캡처율이 들쭉날쭉하고 사용자가 폼에서 손댈 surface 가 없어
+               * "왜 이 거래만 이 항목이 보이지?" 일관성 이슈를 만들어서 가립니다(audit 필드는 유지).
+               */}
               {cardImport.billedAmount ? (
                 <>
-                  <div className="key">이번 달 반영금액</div>
+                  <div className="key">이번 달 청구금액</div>
                   <div className="value">{formatKRW(cardImport.billedAmount)}</div>
-                </>
-              ) : null}
-              {cardImport.remainingBalance ? (
-                <>
-                  <div className="key">남은 잔액</div>
-                  <div className="value">{formatKRW(cardImport.remainingBalance)}</div>
                 </>
               ) : null}
               {cardImport.dueDate ? (
@@ -577,6 +622,17 @@ const DetailPanelInner = ({
                 </>
               ) : null}
             </InfoGrid>
+            {/*
+             * 회차/잔금 raw 필드 노출 대신 한 문장 추정 메세지 (2026-04-28).
+             * "이게 N번째 할부 같다" 를 우리가 추정해서 알려 줌. 데이터가 충분하면 구체적
+             * 숫자, 부족하면 일반적 안내. 항상 "추정" 임을 명시.
+             */}
+            {installmentInferred ? (
+              <InstallmentInferred role="note">
+                <span className="badge">추정</span>
+                <span>{installmentInferred}</span>
+              </InstallmentInferred>
+            ) : null}
           </Section>
         )}
 

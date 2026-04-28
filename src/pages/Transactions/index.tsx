@@ -103,6 +103,18 @@ const Grid = styled.div`
   gap: 16px;
 `;
 
+const SearchScopeBar = styled.div`
+  margin-top: -4px;
+  padding: 10px 14px;
+  border: 1px solid ${tokens.color.line2};
+  border-radius: ${tokens.radius.card};
+  background: ${tokens.color.foot};
+  color: ${tokens.color.ink4};
+  font-size: 12px;
+  line-height: 1.45;
+  text-align: center;
+`;
+
 // 삭제 확인 모달의 본문 레이아웃. 모달 컴포넌트 자체가 padding 을 책임지므로 여기선
 // 안내문 · 대상 거래 요약 · 액션 버튼 세 영역만 수직으로 쌓아 줍니다.
 const ConfirmBody = styled.div`
@@ -163,6 +175,36 @@ function toMonthKey(dateStr: string): string {
   return `${year}-${month.padStart(2, "0")}`;
 }
 
+function parseDateKey(dateStr: string): number | null {
+  const match = dateStr.match(/(\d{4})[./-](\d{1,2})[./-](\d{1,2})/);
+  if (!match) return null;
+  const [, year, month, day] = match;
+  return Number(year) * 10000 + Number(month) * 100 + Number(day);
+}
+
+function getSearchScopeRange(rows: TxRow[]): { min: string; max: string } | null {
+  let minDate = "";
+  let maxDate = "";
+  let minKey = Number.POSITIVE_INFINITY;
+  let maxKey = Number.NEGATIVE_INFINITY;
+
+  rows.forEach((row) => {
+    const dateKey = parseDateKey(row.date);
+    if (dateKey === null) return;
+    if (dateKey < minKey) {
+      minKey = dateKey;
+      minDate = row.date;
+    }
+    if (dateKey > maxKey) {
+      maxKey = dateKey;
+      maxDate = row.date;
+    }
+  });
+
+  if (!minDate || !maxDate) return null;
+  return { min: minDate, max: maxDate };
+}
+
 export const TransactionsPage: React.FC = () => {
   // 필터 상태는 모두 페이지 상단에서 관리해서 표와 상세 패널이 같은 기준을 보게 합니다.
   const location = useLocation();
@@ -203,6 +245,7 @@ export const TransactionsPage: React.FC = () => {
     () => Array.from(new Set(allRows.map((row) => toMonthKey(row.date)).filter(Boolean))),
     [allRows]
   );
+  const searchScopeRange = useMemo(() => getSearchScopeRange(allRows), [allRows]);
   const summary = useMemo(
     () => buildTransactionSummary(monthRows, prevMonthRows),
     [monthRows, prevMonthRows]
@@ -267,6 +310,10 @@ export const TransactionsPage: React.FC = () => {
     });
     return sorted;
   }, [allRows, category, installmentFilter, monthRows, platform, search, sortOrder, statusFilter, typeFilter]);
+  const searchScopeHint = useMemo(() => {
+    if (search.trim().length === 0 || !searchScopeRange) return "";
+    return `전체 검색 · ${searchScopeRange.min} ~ ${searchScopeRange.max} 데이터에서 ${filteredRows.length}건 찾았어요`;
+  }, [filteredRows.length, search, searchScopeRange]);
 
   const INITIAL_VISIBLE = 20;
   const LOAD_STEP = 20;
@@ -610,6 +657,9 @@ export const TransactionsPage: React.FC = () => {
               onStatusChange={handleStatusChange}
               onInstallmentChange={handleInstallmentChange}
             />
+            {searchScopeHint && (
+              <SearchScopeBar>{searchScopeHint}</SearchScopeBar>
+            )}
             <TransactionTable
               rows={visibleRows}
               totalCount={filteredRows.length}

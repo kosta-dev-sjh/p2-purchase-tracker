@@ -11,7 +11,10 @@ import { media } from "../../../tokens/breakpoints";
 import { formatKRW } from "../../../utils/format";
 import { PLATFORM_LABELS } from "../../../constants/labels";
 import type { TxRow } from "../../Transactions/components/TransactionTable";
-import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
+import {
+  getCardInstallmentLabel,
+  getCardInstallmentTagKind,
+} from "../../../utils/cardInstallment";
 
 const Table = styled.div`
   display: grid;
@@ -106,16 +109,17 @@ export const PreviewTable: React.FC<{ rows: TxRow[] }> = ({ rows }) => {
         const platformLabel = PLATFORM_LABELS[platformKey] || "미지정";
         const cardImport = row.detail?.cardImport;
 
-        // 미리보기에서도 사용자에게는 내부 승인/청구 구분을 노출하지 않고,
-        // 메인 거래표와 동일하게 "일시불 / 할부" 수준으로만 보여줍니다.
-        const installmentTag: { kind: "installment"; label: string } | null = (() => {
-          const label = getCardInstallmentLabel(cardImport);
-          const kind = getCardInstallmentKind(cardImport);
-          if (!label) return null;
-          if (kind === "installment_billing" || kind === "installment_approval") {
-            return { kind: "installment", label };
-          }
-          return null;
+        // 미리보기는 import 직전 단계라 사용자가 "어떤 결제 방식으로 들어올지" 한눈에 보이도록
+        // 메인 거래표와 동일한 분류(일시불/할부) 태그를 그대로 노출합니다.
+        // amount 함께 넘겨 5만원 미만은 자동 일시불 폴백.
+        const installmentTag: {
+          kind: "etc" | "installment";
+          label: string;
+        } | null = (() => {
+          const label = getCardInstallmentLabel(cardImport, row.amount);
+          const kind = getCardInstallmentTagKind(cardImport, row.amount);
+          if (!label || !kind) return null;
+          return { kind, label };
         })();
 
         const displayTitle = (row.title || "알 수 없음").trim();

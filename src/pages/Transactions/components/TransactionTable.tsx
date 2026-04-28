@@ -15,7 +15,11 @@ import {
   TYPE_LABELS,
 } from "../../../constants/labels";
 import { useCategoryColorMap, useCategoriesStore } from "../../../stores/categoriesStore";
-import { getCardInstallmentKind, getCardInstallmentLabel } from "../../../utils/cardInstallment";
+import {
+  getCardInstallmentLabel,
+  getCardInstallmentTagKind,
+  getInstallmentMonthlyEstimate,
+} from "../../../utils/cardInstallment";
 
 export type TxType = "expense" | "income";
 /**
@@ -499,6 +503,29 @@ const Amount = styled.span<{ $positive?: boolean }>`
 `;
 
 /**
+ * 할부 승인 행에서 "원본 총액" 아래 추정 월 분할분을 한 줄 더 보여주기 위한 스택 컨테이너.
+ * 할부 승인 행은 amount 가 "총 약속 금액(예: 60만원)" 이라 그 자체로는 "이번 달 빠지는 돈"
+ * 이 아닙니다. KPI 합산은 분할 추정으로 들어가니, 같은 추정값을 행에서도 보여 줘 사용자가
+ * "왜 KPI 에는 10만원이지?" 를 헷갈리지 않게 합니다.
+ */
+const AmountStack = styled.div`
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  line-height: 1.25;
+`;
+
+const AmountSub = styled.span`
+  color: ${tokens.color.ink4};
+  font-family: ${tokens.font.mono};
+  font-size: 11px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+`;
+
+/**
  * "+N개" 형태로 거래에 묶인 상품 수를 표시하는 칩.
  * 상품이 0개인 거래(단일 결제·청구건 등)는 셀을 비워 두어 시각 노이즈를 줄입니다.
  */
@@ -696,8 +723,19 @@ export const TransactionTable = memo<Props>(({
             const active = row.id === selectedId;
             const hovered = row.id === hoveredId && !active;
             const isHighlighted = !!highlightId && row.id === highlightId;
-            const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
-            const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
+            // amount 를 같이 넘겨 5만원 미만은 자동 일시불 폴백.
+            const installmentLabel = getCardInstallmentLabel(
+              row.detail?.cardImport,
+              row.amount,
+            );
+            const installmentTagKind = getCardInstallmentTagKind(
+              row.detail?.cardImport,
+              row.amount,
+            );
+            const monthlyEstimate = getInstallmentMonthlyEstimate(
+              row.detail?.cardImport,
+              row.amount,
+            );
             /**
              * 첫 렌더에서 잡힌 행 중 현재 위치에 있는 경우에만 stagger 인덱스를 내려보냅니다.
              * 인피니트 스크롤로 추가된 행이나 필터 변경 후 새로 등장한 행은 undefined가 되어
@@ -755,18 +793,22 @@ export const TransactionTable = memo<Props>(({
                   </CategoryCell>
                 </DataCell>
                 <DataCell {...common} $right>
-                  <Amount $positive={row.amount > 0}>
-                    {row.amount > 0 ? "+" : "-"}
-                    {formatKRW(Math.abs(row.amount))}
-                  </Amount>
+                  <AmountStack>
+                    <Amount $positive={row.amount > 0}>
+                      {row.amount > 0 ? "+" : "-"}
+                      {formatKRW(Math.abs(row.amount))}
+                    </Amount>
+                    {monthlyEstimate ? (
+                      <AmountSub>월 추정 {formatKRW(monthlyEstimate)}</AmountSub>
+                    ) : null}
+                  </AmountStack>
                 </DataCell>
                 <DataCell {...common}>
                   <StatusCell>
                     <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
-                    {(installmentKind === "installment_billing" ||
-                      installmentKind === "installment_approval") &&
-                    installmentLabel ? (
-                      <Tag kind="installment">{installmentLabel}</Tag>
+                    {/* 결제 방식 태그: 일시불(회색) / 할부(인디고). 카드 거래일 때만. */}
+                    {installmentTagKind && installmentLabel ? (
+                      <Tag kind={installmentTagKind}>{installmentLabel}</Tag>
                     ) : null}
                   </StatusCell>
                 </DataCell>
@@ -779,8 +821,18 @@ export const TransactionTable = memo<Props>(({
         {rows.map((row) => {
           const isActive = row.id === selectedId;
           const isHighlighted = !!highlightId && row.id === highlightId;
-          const installmentKind = getCardInstallmentKind(row.detail?.cardImport);
-          const installmentLabel = getCardInstallmentLabel(row.detail?.cardImport);
+          const installmentLabel = getCardInstallmentLabel(
+            row.detail?.cardImport,
+            row.amount,
+          );
+          const installmentTagKind = getCardInstallmentTagKind(
+            row.detail?.cardImport,
+            row.amount,
+          );
+          const monthlyEstimate = getInstallmentMonthlyEstimate(
+            row.detail?.cardImport,
+            row.amount,
+          );
           const setMobileRowRef = (el: HTMLButtonElement | null) => {
             if (el) mobileRowRefs.current.set(row.id, el);
             else mobileRowRefs.current.delete(row.id);
@@ -803,10 +855,15 @@ export const TransactionTable = memo<Props>(({
                     <div className="title">{row.title}</div>
                     <div className="meta">{row.date}</div>
                   </MobileTitle>
-                  <MobileAmount $positive={row.amount > 0}>
-                    {row.amount > 0 ? "+" : "-"}
-                    {formatKRW(Math.abs(row.amount))}
-                  </MobileAmount>
+                  <AmountStack>
+                    <MobileAmount $positive={row.amount > 0}>
+                      {row.amount > 0 ? "+" : "-"}
+                      {formatKRW(Math.abs(row.amount))}
+                    </MobileAmount>
+                    {monthlyEstimate ? (
+                      <AmountSub>월 추정 {formatKRW(monthlyEstimate)}</AmountSub>
+                    ) : null}
+                  </AmountStack>
                 </MobileTop>
                 <MobileTags>
                   <Tag kind={row.type === "expense" ? "expense" : "income"}>
@@ -814,10 +871,9 @@ export const TransactionTable = memo<Props>(({
                   </Tag>
                   <Tag kind={row.platform}>{PLATFORM_LABELS[row.platform]}</Tag>
                   <Tag kind={row.status}>{STATUS_LABELS[row.status]}</Tag>
-                  {(installmentKind === "installment_billing" ||
-                    installmentKind === "installment_approval") &&
-                  installmentLabel ? (
-                    <Tag kind="installment">{installmentLabel}</Tag>
+                  {/* 결제 방식 태그: 일시불(회색) / 할부 승인(인디고) / 할부 청구(주황). 카드 거래일 때만. */}
+                  {installmentTagKind && installmentLabel ? (
+                    <Tag kind={installmentTagKind}>{installmentLabel}</Tag>
                   ) : null}
                 </MobileTags>
                 <MobileFooter>
