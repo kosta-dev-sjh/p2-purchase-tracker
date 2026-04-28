@@ -195,6 +195,9 @@ export const DangerSection: React.FC = () => {
               onChange={(event) => setPassword(event.target.value)}
               placeholder="현재 비밀번호"
               aria-label="현재 비밀번호"
+              // Chrome DevTools Issues: "Improve form fields autocomplete attributes" 회피.
+              // 비밀번호 변경/탈퇴 같은 재인증 흐름은 current-password 가 표준.
+              autoComplete="current-password"
             />
           )}
           {deletionProvider === "google.com" && (
