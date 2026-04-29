@@ -28,6 +28,7 @@ functions/.env.*
 service-account*.json
 *-service-account.json
 google-credentials*.json
+_probe*.mts
 
 # Editor directories and files
 .vscode/*

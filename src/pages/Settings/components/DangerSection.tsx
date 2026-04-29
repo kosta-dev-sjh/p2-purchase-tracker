@@ -236,7 +236,7 @@ export const DangerSection: React.FC = () => {
         <Box>
           <div>
             <div className="title">계정 삭제 예약</div>
-            <div className="sub">유예 기간이 끝나면 Firebase Auth 계정과 데이터가 함께 영구 삭제돼요.</div>
+            <div className="sub">유예 기간이 끝나면 회원님의 계정과 저장된 데이터가 함께 영구 삭제돼요.</div>
           </div>
           <Button variant="danger" size="md" onClick={() => setConfirming(true)}>
             계정 삭제

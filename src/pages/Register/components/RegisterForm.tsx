@@ -13,6 +13,7 @@ import { normalizeAuthError } from "../../../lib/authError";
 import { PasswordStrength } from "./PasswordStrength";
 import { registerAccount, signInWithGoogle } from "../../../lib/firebaseSync";
 import { ONBOARDING_SEEN_KEY } from "../../../constants/onboarding";
+import { validatePasswordPolicy } from "../../../utils/passwordPolicy";
 
 interface RegisterFieldErrors {
   name?: string;
@@ -39,11 +40,7 @@ function getRegisterEmailError(email: string): string | undefined {
 }
 
 function getRegisterPasswordError(password: string): string | undefined {
-  if (!password) return "비밀번호를 입력해 주세요.";
-  if (/\s/.test(password)) return "비밀번호에 공백을 포함할 수 없어요.";
-  if (password.length < 8) return "비밀번호는 8자 이상이어야 해요.";
-  if (!/\d/.test(password)) return "비밀번호에 숫자를 포함해 주세요.";
-  return undefined;
+  return validatePasswordPolicy(password).error;
 }
 
 function validateRegisterFields(

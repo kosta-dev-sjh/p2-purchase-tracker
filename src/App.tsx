@@ -40,7 +40,7 @@ const SettingsPage = React.lazy(async () => ({ default: (await import("./pages/S
 
 const LoadingScreen = () => (
   <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontSize: 14 }}>
-    Firebase 연결 중...
+    계정 정보를 확인하는 중...
   </div>
 );
 

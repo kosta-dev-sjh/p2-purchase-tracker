@@ -13,6 +13,9 @@ import { todayAsDotDate } from "../../../utils/date";
 import { media } from "../../../tokens/breakpoints";
 import { useAuthSession } from "../../../stores/authStore";
 import { changeCurrentPassword, getAccountDeletionProvider } from "../../../lib/firebaseSync";
+import { validatePasswordPolicy } from "../../../utils/passwordPolicy";
+
+const EMAIL_CHANGE_NOTICE = "이메일 변경은 현재 점검 중이며 다음 업데이트에서 지원될 예정이에요.";
 
 const Item = styled.div`
   display: flex;
@@ -55,30 +58,6 @@ const EditorRow = styled.div`
   flex-wrap: wrap;
 `;
 
-const Input = styled.input`
-  flex: 1;
-  min-width: 220px;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid ${tokens.color.line};
-  border-radius: ${tokens.radius.control};
-  background: ${tokens.color.panel};
-  color: ${tokens.color.ink1};
-  font-family: inherit;
-  font-size: ${tokens.type.bodySm.size};
-  outline: none;
-
-  &:focus {
-    border-color: ${tokens.color.accent};
-    box-shadow: ${tokens.shadow.focus};
-  }
-
-  ${media.mobile} {
-    min-width: 0;
-    width: 100%;
-  }
-`;
-
 const PasswordInput = styled(PasswordTextInput)`
   flex: 1;
   min-width: 220px;
@@ -105,6 +84,27 @@ const Msg = styled.div<{ $tone: "success" | "error" }>`
   font-weight: 600;
 `;
 
+const EmailMeta = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+`;
+
+const VerificationBadge = styled.span<{ $verified: boolean }>`
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: ${({ $verified }) => ($verified ? tokens.color.posBg : tokens.color.warnBg)};
+  color: ${({ $verified }) => ($verified ? tokens.color.pos : tokens.color.warn)};
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+`;
+
 const SideButtons = styled.div`
   display: flex;
   gap: 8px;
@@ -115,18 +115,9 @@ const SideButtons = styled.div`
   }
 `;
 
-/**
- * 간단한 이메일 형식 검사. @와 .만 있으면 통과시키는 느슨한 검사로
- * 입력 피드백용 용도에 충분합니다.
- */
-function isEmail(value: string): boolean {
-  return /.+@.+\..+/.test(value.trim());
-}
-
 export const AccountSection: React.FC = () => {
   const profile = useProfile();
-  const [editing, setEditing] = useState<null | "email" | "password">(null);
-  const [emailDraft, setEmailDraft] = useState(profile.email);
+  const [editing, setEditing] = useState<null | "password">(null);
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -136,11 +127,10 @@ export const AccountSection: React.FC = () => {
   const passwordProvider = getAccountDeletionProvider(user);
   const needsCurrentPassword = passwordProvider === "password";
   const usesGoogleReauth = passwordProvider === "google.com";
+  const emailVerified = Boolean(user?.emailVerified);
 
   const startEmail = () => {
-    setEmailDraft(profile.email);
-    setEditing("email");
-    setMessage(null);
+    setMessage({ tone: "error", text: EMAIL_CHANGE_NOTICE });
   };
 
   const startPassword = () => {
@@ -156,23 +146,14 @@ export const AccountSection: React.FC = () => {
     setMessage(null);
   };
 
-  const saveEmail = () => {
-    if (!isEmail(emailDraft)) {
-      setMessage({ tone: "error", text: "올바른 이메일 형식을 입력해 주세요." });
-      return;
-    }
-    profileStore.save({ email: emailDraft.trim() });
-    setEditing(null);
-    setMessage({ tone: "success", text: "이메일을 변경했어요." });
-  };
-
   const savePassword = async () => {
     if (needsCurrentPassword && !currentPassword) {
       setMessage({ tone: "error", text: "현재 비밀번호를 입력해 주세요." });
       return;
     }
-    if (password.length < 8) {
-      setMessage({ tone: "error", text: "비밀번호는 8자 이상이어야 해요." });
+    const passwordValidation = validatePasswordPolicy(password);
+    if (!passwordValidation.isValid) {
+      setMessage({ tone: "error", text: passwordValidation.error ?? "비밀번호 정책을 확인해 주세요." });
       return;
     }
     if (password !== confirm) {
@@ -222,39 +203,25 @@ export const AccountSection: React.FC = () => {
   return (
     <SettingsBlock title="계정" subtitle="이메일과 비밀번호를 관리해요.">
       <Item>
-        {editing === "email" ? (
-          <EditorBody>
-            <div className="label">이메일 변경</div>
-            <EditorRow>
-              <Input
-                type="email"
-                value={emailDraft}
-                onChange={(event) => setEmailDraft(event.target.value)}
-                placeholder="new@example.com"
-              />
-              <SideButtons>
-                <Button variant="secondary" size="sm" onClick={cancel}>
-                  취소
-                </Button>
-                <Button variant="primary" size="sm" onClick={saveEmail}>
-                  저장
-                </Button>
-              </SideButtons>
-            </EditorRow>
-            {message && <Msg $tone={message.tone}>{message.text}</Msg>}
-          </EditorBody>
-        ) : (
-          <>
-            <div>
-              <div className="label">이메일</div>
+        <>
+          <div>
+            <div className="label">이메일</div>
+            <EmailMeta>
               <div className="sub">{profile.email}</div>
-              {message && editing === null && <Msg $tone={message.tone}>{message.text}</Msg>}
-            </div>
-            <Button variant="ghost" size="sm" onClick={startEmail}>
-              변경
-            </Button>
-          </>
-        )}
+              <VerificationBadge $verified={emailVerified}>
+                {emailVerified ? "이메일 검증 완료" : "이메일 미검증"}
+              </VerificationBadge>
+            </EmailMeta>
+            <div className="sub">{EMAIL_CHANGE_NOTICE}</div>
+            {!emailVerified && (
+              <div className="sub">현재는 검증 상태만 안내하며, 출시 전 강제 적용할 예정이에요.</div>
+            )}
+            {message && editing === null && <Msg $tone={message.tone}>{message.text}</Msg>}
+          </div>
+          <Button variant="ghost" size="sm" onClick={startEmail} disabled>
+            점검 중
+          </Button>
+        </>
       </Item>
       <Item>
         {editing === "password" ? (
@@ -274,7 +241,7 @@ export const AccountSection: React.FC = () => {
               <PasswordInput
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
-                placeholder="새 비밀번호 (8자 이상)"
+                placeholder="새 비밀번호 (8자 이상, 숫자 포함)"
                 autoComplete="new-password"
               />
               <PasswordInput
