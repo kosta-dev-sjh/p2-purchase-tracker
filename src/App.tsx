@@ -89,10 +89,37 @@ const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
 };
 
 /**
+ * 첫 방문(로그인 흔적이 localStorage 에 없는 사용자) 인지 빠르게 판정.
+ * Firebase Auth 는 browserLocalPersistence 로 토큰을 localStorage 의
+ * "firebase:authUser:..." 키에 저장하므로, 이 prefix 가 있는 키가 있으면
+ * "이전에 로그인 한 적 있는 사용자" 로 간주합니다.
+ *
+ * 키가 없으면 onAuthStateChanged 결과는 거의 확실히 unauthenticated 이므로,
+ * 그 결과를 기다리지 않고 랜딩을 즉시 보여줘 "계정 정보를 확인하는 중..." 깜빡임을
+ * 제거합니다(2026-04-30).
+ */
+function hasStoredFirebaseAuth(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (key && key.startsWith("firebase:authUser:")) return true;
+    }
+  } catch {
+    // private mode / 일부 보안 설정에서 localStorage 접근이 막힐 수 있음.
+    // 그 경우 "흔적 없음" 으로 간주해 랜딩 즉시 표시.
+    return false;
+  }
+  return false;
+}
+
+/**
  * 루트("/") 진입 분기:
  *  - 로그인 상태 → 기존 HomePage(대시보드)로 그대로 보냄.
  *  - 비로그인 상태 → 랜딩 페이지를 첫 인상으로 노출.
- *  - loading → 깜빡임을 막기 위해 공통 LoadingScreen 사용.
+ *  - loading + 저장된 토큰 흔적 있음 → LoadingScreen (잠깐 랜딩 보였다가 홈으로 튀는 회귀 방지).
+ *  - loading + 저장된 토큰 흔적 없음 → 랜딩 즉시 (첫 방문/비로그인 사용자에게 "계정 정보를
+ *    확인하는 중..." 텍스트가 무의미하게 깜빡이지 않도록).
  *
  * 이전에는 "/" 가 ProtectedRoute 로 감싸져 비로그인 시 즉시 /login 으로 튕겼지만,
  * 이제 첫 화면이 "이 앱이 뭐 하는 곳" 인지 보여주는 랜딩이 되도록 분기합니다.
@@ -101,7 +128,9 @@ const PublicOnlyRoute: React.FC<{ children: React.ReactNode }> = ({ children }) 
  */
 const RootRoute: React.FC = () => {
   const { status } = useAuthSession();
-  if (status === "loading") return <LoadingScreen />;
+  if (status === "loading") {
+    return hasStoredFirebaseAuth() ? <LoadingScreen /> : <LandingPage />;
+  }
   if (status === "authenticated") return <HomePage />;
   return <LandingPage />;
 };
