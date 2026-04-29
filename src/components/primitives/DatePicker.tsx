@@ -396,16 +396,26 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     const viewportH = window.innerHeight;
     const viewportW = window.innerWidth;
 
-    // 1) 세로: 아래로 펼칠 공간이 부족하면 위로 뒤집기. 위도 좁으면 가능한 한 화면 안쪽으로 클램프.
+    // 1) 세로 위치: 아래/위 공간을 비교해 4단계로 분기합니다.
+    //   a) 아래에 충분 → 트리거 바로 아래로 (기본 케이스).
+    //   b) 위에 충분 → 트리거 위로 뒤집기 (모달에서 트리거가 하단에 가까울 때).
+    //   c) 어느 쪽도 부족 + 아래가 더 넓음 → 트리거 바로 아래에 두고 하단 클립을 허용.
+    //   d) 어느 쪽도 부족 + 위가 더 넓음 → 위로 뒤집고 상단 마진까지 클램프.
+    // 단순히 "min(rect.bottom+GAP, viewportH - H)" 로 클램프하면 트리거가 화면 중앙쯤에 있을 때
+    // 팝오버가 트리거를 가리는 회귀가 났습니다(2026-04-30 manual-entry 검증). 4단계 분기로 그
+    // 회귀를 피합니다.
     const spaceBelow = viewportH - rect.bottom - GAP - VIEWPORT_MARGIN;
     const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
     let top: number;
-    if (spaceBelow >= POPOVER_HEIGHT_EST || spaceBelow >= spaceAbove) {
-      // 아래에 충분하거나, 아래쪽이 위쪽보다 넓으면 아래로. 다만 마지막 안전망으로 상단도 클램프.
-      top = Math.min(rect.bottom + GAP, viewportH - POPOVER_HEIGHT_EST - VIEWPORT_MARGIN);
-      if (top < VIEWPORT_MARGIN) top = VIEWPORT_MARGIN;
+    if (spaceBelow >= POPOVER_HEIGHT_EST) {
+      top = rect.bottom + GAP;
+    } else if (spaceAbove >= POPOVER_HEIGHT_EST) {
+      top = rect.top - POPOVER_HEIGHT_EST - GAP;
+    } else if (spaceBelow >= spaceAbove) {
+      // 아래도 부족하지만 위보다는 넓음 — 트리거 아래에 두고 하단 클립은 감수.
+      top = rect.bottom + GAP;
     } else {
-      // 위로 뒤집기 — 트리거 상단에서 팝오버 높이만큼 빼고 GAP 만큼 띄움.
+      // 위쪽이 더 넓음 — 위로 뒤집고 상단 마진을 보장.
       top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT_EST - GAP);
     }
 
