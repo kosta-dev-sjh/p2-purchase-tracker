@@ -237,41 +237,21 @@ const FilterChip = styled.button<{ $active?: boolean }>`
  * 반복결제 페이지 표 — 거래내역 표(TransactionTable) 와 같은 grid 컬럼 톤으로 통일해
  * "수입·지출 내역과 같은 모양으로 데이터를 본다" 는 인상 (2026-04-28 사용자 요청).
  *
- * 컬럼: 색칩(28) | 분류(110) | 가맹점(1fr) | 다음 결제(80) | 반복(72) | 금액(180)
- *   - 반복: 데이터 상 매월 같은 패턴이 검증된 경우 ✓ 칩, 아니면 dash
+ * 컬럼(2026-04-29): 색칩(28) | 분류(110) | 가맹점(1fr) | 다음 결제(96) | 금액(180)
+ *   - "반복(72)" 컬럼 제거. 사용자 피드백: 패턴 검증 여부는 사용자 관심 밖이라 제거하고
+ *     공간을 다른 정보에 양보. 패턴 검증 결과(patternVerified)는 행 클릭 시 거래내역
+ *     필터를 좁히는 데만 쓰고 화면에는 노출하지 않습니다.
+ *   - "다음 결제" 폭은 "5.19 추정" 이 한 줄에 들어가도록 96px 로 살짝 넓힘.
  * 스크롤은 분석 페이지의 SubscriptionList 카드에만 적용 — 이 전용 페이지는 페이지
  * 자체 스크롤로 충분하므로 내부 max-height 안 잡음.
  */
 const Table = styled.div`
   display: grid;
-  grid-template-columns: 28px 110px minmax(0, 1fr) 80px 72px 180px;
+  grid-template-columns: 28px 110px minmax(0, 1fr) 96px 180px;
 
   ${media.tablet} {
-    grid-template-columns: 28px 96px minmax(0, 1fr) 70px 64px 156px;
+    grid-template-columns: 28px 96px minmax(0, 1fr) 88px 156px;
   }
-`;
-
-/**
- * "월별 반복 확인됨" 칩. 데이터 상 같은 가맹점 2개월+ + 금액 ±15% 일관 시 노출.
- * 분류 칩(공과금/할부 등) 과는 의미가 달라 색을 분리: 정보성 그린 톤(pos).
- * 미확인 항목은 dash 로 비워둠 — 사용자가 "이건 아직 검증 안 된 추정 분류" 임을 즉각 인지.
- */
-const VerifiedChip = styled.span`
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  background: ${tokens.color.posBg};
-  color: ${tokens.color.pos};
-  font-size: 10.5px;
-  font-weight: 700;
-  white-space: nowrap;
-`;
-
-const UnverifiedDash = styled.span`
-  color: ${tokens.color.ink5 ?? tokens.color.ink4};
-  font-size: 13px;
 `;
 
 /**
@@ -754,12 +734,12 @@ export const SubscriptionsPage: React.FC = () => {
                 </EmptyState>
               ) : (
               <Table role="table">
-                {/* 헤더 행 — 거래내역 표와 같은 회색 톤. 색칩 컬럼은 빈 헤더로 둠. */}
+                {/* 헤더 행 — 거래내역 표와 같은 회색 톤. 색칩 컬럼은 빈 헤더로 둠.
+                    "반복" 컬럼은 2026-04-29 제거 (사용자 관심 밖, 행 클릭 시 필터에만 활용). */}
                 <HeaderCell aria-hidden="true" />
                 <HeaderCell>분류</HeaderCell>
                 <HeaderCell>가맹점</HeaderCell>
                 <HeaderCell>다음 결제</HeaderCell>
-                <HeaderCell className="center">반복</HeaderCell>
                 <HeaderCell className="right">금액</HeaderCell>
                 {visibleItems.map((item, index) => {
                   const hovered = item.id === hoveredId;
@@ -804,31 +784,22 @@ export const SubscriptionsPage: React.FC = () => {
                         </span>
                       </Cell>
                       <Cell {...cellProps}>
+                        {/*
+                         * "다음 결제" 셀(2026-04-29 v2): nextDate 는 buildSubscriptions 단계에서
+                         * 이미 "한 달 뒤 추정값" + 일자 0-패딩(M.DD) 으로 계산되어 들어옵니다.
+                         * 같은 달 내에서 모든 행 폭이 동일해 컬럼이 들쑥날쑥하지 않습니다.
+                         * "추정" 라벨도 별도 강조 색/굵기 없이 한 줄 텍스트로 차분히 표시.
+                         */}
                         <span
                           style={{
                             color: tokens.color.ink3,
                             fontSize: 12,
                             fontVariantNumeric: "tabular-nums",
+                            whiteSpace: "nowrap",
                           }}
                         >
-                          {item.nextDate || "—"}
+                          {item.nextDate ? `${item.nextDate} 추정` : "—"}
                         </span>
-                      </Cell>
-                      <Cell {...cellProps} $center>
-                        {/*
-                         * 반복 검증 시각화: 검증된 항목은 ✓ 칩, 아니면 dash.
-                         * 라벨 "확인" 으로 — "월별" 보다 직관적(2026-04-28).
-                         */}
-                        {item.patternVerified ? (
-                          <VerifiedChip
-                            title="같은 가맹점에서 2개월 이상 반복 + 금액 ±15% 이내 확인"
-                            aria-label="반복 패턴 확인됨"
-                          >
-                            ✓ 확인
-                          </VerifiedChip>
-                        ) : (
-                          <UnverifiedDash aria-label="반복 패턴 미확인">—</UnverifiedDash>
-                        )}
                       </Cell>
                       <Cell {...cellProps} $right>
                         <AmountCol>

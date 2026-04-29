@@ -506,9 +506,15 @@ export const OcrEditPage: React.FC = () => {
             targetId: `ocr-order-date-${order.id}`,
           };
         }
-        if (!order.totalAmount || Number.isNaN(order.totalAmount)) {
+        // totalAmount === 0 은 막지 않습니다.
+        // 사은품/이벤트/100% 쿠폰처럼 "기록 목적의 0원 주문" 을 사용자가 ProductTable 의
+        // '이대로 저장' 으로 의도적으로 확정하는 케이스가 있어서, 0 자체는 합법적인 저장값입니다.
+        // (ProductTable 라인 402-405 주석의 설계 의도와 일치) 여기서는 정말로 비정상인
+        // NaN/Infinity/undefined 만 걸러냅니다. deriveOrderTotal 이 항상 유한값을 반환하므로
+        // 평상시에는 여기 걸리는 일은 없고, 어디선가 파생 계산이 깨졌을 때의 안전장치 역할입니다.
+        if (typeof order.totalAmount !== "number" || !Number.isFinite(order.totalAmount)) {
           return {
-            message: `${orderLabel}의 금액이 비어 있거나 0이에요.`,
+            message: `${orderLabel}의 금액 정보가 올바르지 않아요.`,
             imageId: image.id,
             targetId: `ocr-order-amount-${order.id}`,
           };
@@ -553,8 +559,10 @@ export const OcrEditPage: React.FC = () => {
 
     // totalAmount가 상품 합계의 파생값으로 바뀌면서 "상품합계 ≠ 총액" 상태가
     // 구조적으로 발생하지 않게 됐기 때문에, 기존 ProductTotalWarningModal 게이트는 제거했습니다.
-    // validateBeforeSave가 "totalAmount > 0"을 이미 체크하므로 상품이 하나도 없거나
-    // 전부 0원인 주문은 여기에 도달하지 않습니다.
+    // 0원 주문은 validateBeforeSave 에서 차단하지 않습니다. 사은품/이벤트/100% 쿠폰처럼
+    // "기록은 남기되 금액은 0" 으로 의도된 거래를 사용자가 ProductTable 의 '이대로 저장' 으로
+    // 확정한 경우, 그 의도를 그대로 통과시킵니다. 단, 상품이 하나도 없는 주문은 거래명(상품)
+    // 비어 있음 검증에 그대로 걸리므로 빈 주문이 새는 경로는 닫혀 있습니다.
 
     performSaveFlow();
   };
