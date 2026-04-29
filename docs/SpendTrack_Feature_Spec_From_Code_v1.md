@@ -1,6 +1,6 @@
 # SpendTrack 기능명세서 (코드 기준 v1)
 
-- 작성일: 2026-04-27
+- 작성일: 2026-04-27 (2026-04-29 미세 갱신: 카테고리 8종, classifyCardRows 액션, CI/CD)
 - 작성 방식: 사용자 요청에 따라 `src/` 코드를 single source of truth 로 보고 재작성
 - 본 문서는 기존 `SpendTrack_Planning_Document.md` 와 별도로, **현재 실제 빌드되는 동작**만 정리합니다. planning 문서는 비전·결정 배경, 본 문서는 구현 사실의 인덱스.
 - 우선순위 충돌 시: 본 문서 ↔ 코드 차이가 있으면 코드를 신뢰하고 본 문서를 갱신합니다.
@@ -68,6 +68,7 @@ SpendTrack 는 React 19 + Vite + Firebase 기반 SPA로, 쇼핑 주문내역 OCR
 - 로그아웃: `signOut(auth)` 호출 → `authStore.setUnauthenticated()` → 로컬 상태 리셋 (프로필/카테고리/거래 모두 기본값/빈 배열로).
 - 계정 삭제: Firebase Functions `deleteAccount` 호출 (7일 grace, 재인증 필요).
 - AI 호출: Firebase Functions `geminiProxy` (Gemini 2.5 Flash) — API 키는 Functions Secret(`GEMINI_API_KEY`).
+- 배포: `.github/workflows/deploy-firebase-hosting.yml` 으로 main 자동 배포 + `deploy-firebase-preview.yml` 로 PR 미리보기 채널.
 
 ## 4. 화면별 기능 명세
 
@@ -206,6 +207,7 @@ SpendTrack 는 React 19 + Vite + Firebase 기반 SPA로, 쇼핑 주문내역 OCR
 - 우선순위: 학습 캐시(`spendtrack:category-learned:v1`) → bindings → 키워드 룰.
 - ManualEntry 는 사용자가 직접 고른 값이므로 추정 미적용.
 - 사용자가 거래 수정에서 카테고리를 명시적으로 바꾸면 학습 캐시에 기록.
+- 표준 카테고리: 2026-04-28 부터 5종 → **8종 확장**. 기존 living/fashion/digital/food/etc 에 더해 utility(공과금) / maintenance(관리비) / education(교육비) 추가. 색상 토큰은 `tokens.color.cat6/cat7/cat8`.
 
 ### 5-3. 상품 합계 점검 (`utils/productTotalCheck.ts`)
 
@@ -215,8 +217,13 @@ SpendTrack 는 React 19 + Vite + Firebase 기반 SPA로, 쇼핑 주문내역 OCR
 
 ### 5-4. AI 서비스 (`utils/aiService.ts`)
 
-- Firebase Functions `geminiProxy` 통일 호출. 키는 Functions secret.
-- 함수: `generateInsight(rulesText)` (Home), `fallbackOcrProducts(image, hints)` (OcrUpload), `fallbackCsv(text)` (CsvUpload).
+- Firebase Functions `geminiProxy` 통일 호출. 키는 Functions secret. 모델은 `gemini-2.5-flash`.
+- 액션 5종:
+  - `generateInsight(rulesText)` — Home 월별 1~2문장 요약.
+  - `fallbackOcrProducts(image, hints)` — OcrUpload bad 카드 보정 (이미지 멀티모달).
+  - `fallbackCsv(text)` — CsvUpload 파싱 성공률 < 50% 시 행 재해석.
+  - `fallbackOcr(text)` — 단건 텍스트 → 상태 판정.
+  - `classifyCardRows(rows)` — CSV/XLSX 헤더 매칭 0건 시트에 한해 시트당 1회 발동, 행별 일시불/할부 분류 (`paymentMode` + `installmentMonths`). 실패 시 빈 배열 → 1차 파서 결과 유지.
 - 호출 타이밍 원칙: 화면 진입 시 반복 호출 금지. 데이터가 실제 갱신될 때만.
 
 ### 5-5. 모바일 반응형

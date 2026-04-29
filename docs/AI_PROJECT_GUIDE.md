@@ -98,7 +98,9 @@ planning과 코드가 어긋나면, 구현 판단은 우선 코드 기준으로 
 - AI 호출은 Firebase Functions `geminiProxy` 단일 경로로 통일됨
   (`functions/src/index.ts`, `src/utils/aiService.ts`). 키는 Functions secret
   `GEMINI_API_KEY` 에 보관, 프론트 번들에 직접 노출되지 않음. 요금제는 paid
-  Gemini 2.5 Flash.
+  Gemini 2.5 Flash. 액션 5종: `generateInsight` / `fallbackOcr` /
+  `fallbackOcrProducts` / `fallbackCsv` / `classifyCardRows` (CSV 헤더 매칭
+  0건 시트에 한해 시트당 1회).
 - 쿠팡 OCR 1차 파이프라인은 운영 가능한 수준까지 보강 완료. 추가 정확도 튜닝은
   동결, 회귀 대응만 (`docs/OCR_Architecture_Decision.md` §9.1).
 - 네이버 OCR은 얕은 1차 파서 + AI 보정 정책으로 진행 중
