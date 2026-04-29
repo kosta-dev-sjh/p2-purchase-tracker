@@ -1,16 +1,8 @@
 # spend-track
 
-## 문서 안내
+## 협업 참고
 
-- 기획 기준: `docs/SpendTrack_Planning_Document.md`
 - AI 작업 규칙: `CLAUDE.md`
-- AI 프로젝트 요약: `docs/AI_PROJECT_GUIDE.md`
-- 현재 빌드 동작 (코드 기준 인덱스): `docs/SpendTrack_Feature_Spec_From_Code_v1.md`
-- 도메인 / 인프라 참고:
-  - `docs/collaboration/SpendTrack_Firestore_Data_Model.md`
-  - `docs/OCR_Architecture_Decision.md`
-  - `docs/Naver_OCR_Parsing_Strategy.md`
-  - `docs/Naver_OCR_Pattern_Catalog.md`
 
 ## Requirements
 
@@ -81,9 +73,8 @@ Notes:
 
 - The workflow file is `.github/workflows/deploy-firebase-hosting.yml`
 - Pull requests to `main` can also use `.github/workflows/deploy-firebase-preview.yml` to publish a temporary preview URL
-- The workflow builds the Vite app and deploys the `dist` output to Firebase Hosting
+- The workflow builds the Vite app, deploys the `dist` output to Firebase Hosting, and applies `firestore.rules`
 - `firebase.json` already contains SPA rewrites for `BrowserRouter`
-- Cloud Functions are not auto-deployed by this workflow; only Hosting is deployed
 
 ## Current stack
 

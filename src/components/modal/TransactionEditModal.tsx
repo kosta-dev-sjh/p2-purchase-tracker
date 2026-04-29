@@ -461,8 +461,7 @@ export const TransactionEditModal: React.FC<Props> = ({ row, onClose, onSubmit }
       //   - discountAmount : 주문단위 차감액(쿠폰/포인트/카드 할인)
       //   - folded / itemCountHint / hiddenItemCount / sectionTotal : 네이버 접힌 주문 메타
       //   - cardImport : 카드 CSV 원본 메타 (audit 필드는 기존 값, 폼 노출 필드는 사용자 입력)
-      // 정책 근거: docs/Naver_OCR_Parsing_Strategy.md §12-3 — 차감액은 별도 슬롯으로 보존,
-      //         §12-5 — 접힌 주문은 메타와 안내를 남긴다.
+      // 정책 근거: 차감액은 별도 슬롯으로 보존하고, 접힌 주문은 메타와 안내를 남깁니다.
       detail: hasDetailSignal
         ? {
             items: products.map((product) => ({
