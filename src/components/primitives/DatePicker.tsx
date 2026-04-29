@@ -385,12 +385,17 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   // 가까워 팝오버가 그대로 아래로 펼쳐지면 달력 마지막 주와 footer 가 잘려 보였습니다.
   // 아래 공간이 부족하면 트리거 위쪽으로 뒤집어 펼치고, 좌/우 가장자리에서도 8px 이상
   // 마진을 남기도록 클램프해 좁은 폭에서 잘리지 않게 합니다.
+  //
+  // 추가 개선(2026-04-30 라이브 검증): 추정 높이(340) 가 실제 높이(약 328) 보다 살짝 커서
+  // 가장자리 케이스에서 트리거를 10px 정도 가리는 회귀가 있었습니다. popoverRef 가 설정된
+  // 두 번째 패스에서 실측 높이로 다시 계산해 정확한 위치로 보정합니다.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const POPOVER_WIDTH = 264;
-    // 6주 그리드(32px×6) + 주 라벨 + header + footer + padding 의 보수적 추정. 실측 약 320~340px.
-    const POPOVER_HEIGHT_EST = 340;
+    // 첫 패스에선 보수적으로 추정, 두 번째 패스에선 실측값. 실측이 가능하면 추정은 안 씀.
+    const measuredH = popoverRef.current?.offsetHeight;
+    const POPOVER_HEIGHT = measuredH && measuredH > 0 ? measuredH : 332;
     const VIEWPORT_MARGIN = 8;
     const GAP = 4;
     const viewportH = window.innerHeight;
@@ -407,16 +412,16 @@ export const DatePicker: React.FC<DatePickerProps> = ({
     const spaceBelow = viewportH - rect.bottom - GAP - VIEWPORT_MARGIN;
     const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
     let top: number;
-    if (spaceBelow >= POPOVER_HEIGHT_EST) {
+    if (spaceBelow >= POPOVER_HEIGHT) {
       top = rect.bottom + GAP;
-    } else if (spaceAbove >= POPOVER_HEIGHT_EST) {
-      top = rect.top - POPOVER_HEIGHT_EST - GAP;
+    } else if (spaceAbove >= POPOVER_HEIGHT) {
+      top = rect.top - POPOVER_HEIGHT - GAP;
     } else if (spaceBelow >= spaceAbove) {
       // 아래도 부족하지만 위보다는 넓음 — 트리거 아래에 두고 하단 클립은 감수.
       top = rect.bottom + GAP;
     } else {
       // 위쪽이 더 넓음 — 위로 뒤집고 상단 마진을 보장.
-      top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT_EST - GAP);
+      top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT - GAP);
     }
 
     // 2) 가로: 트리거 좌측 기준으로 펼치되 우측 가장자리에 부딪히면 우측 정렬, 좌측에서도 8px 마진 보장.
@@ -427,7 +432,7 @@ export const DatePicker: React.FC<DatePickerProps> = ({
       const left = Math.max(VIEWPORT_MARGIN, rect.left);
       setPopoverPos({ top, left });
     }
-  }, [open]);
+  }, [open, view.year, view.month]);
 
   // 팝오버가 열린 동안 바깥을 클릭하거나 Esc를 누르면 자연스럽게 닫히도록 전역 리스너 연결.
   useEffect(() => {

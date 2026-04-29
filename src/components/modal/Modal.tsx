@@ -2,7 +2,7 @@
  * 역할: 모달 레이어를 통해 보조 입력 흐름을 처리하는 공통 컴포넌트입니다.
  * 위치: src\components\modal\Modal.tsx
  */
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import styled from "styled-components";
 import { media } from "../../tokens/breakpoints";
 import { tokens } from "../../styles/tokens";
@@ -111,6 +111,20 @@ export const Modal = ({
   children,
   dismissible = true,
 }: ModalProps) => {
+  // 접근성: ESC 로 모달 닫기 (모바일 키보드/접근성 키패드에서도 자연스럽게 동작).
+  // dismissible=false 인 경우(저장 진행 중 등) 닫지 않음.
+  useEffect(() => {
+    if (!isOpen || !dismissible) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.stopPropagation();
+        onClose();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [isOpen, dismissible, onClose]);
+
   if (!isOpen) {
     return null;
   }
