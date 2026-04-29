@@ -60,30 +60,6 @@ const EditorRow = styled.div`
   flex-wrap: wrap;
 `;
 
-const Input = styled.input`
-  flex: 1;
-  min-width: 220px;
-  height: 36px;
-  padding: 0 12px;
-  border: 1px solid ${tokens.color.line};
-  border-radius: ${tokens.radius.control};
-  background: ${tokens.color.panel};
-  color: ${tokens.color.ink1};
-  font-family: inherit;
-  font-size: ${tokens.type.bodySm.size};
-  outline: none;
-
-  &:focus {
-    border-color: ${tokens.color.accent};
-    box-shadow: ${tokens.shadow.focus};
-  }
-
-  ${media.mobile} {
-    min-width: 0;
-    width: 100%;
-  }
-`;
-
 const PasswordInput = styled(PasswordTextInput)`
   flex: 1;
   min-width: 220px;
