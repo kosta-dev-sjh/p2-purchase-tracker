@@ -546,7 +546,7 @@ const FoldedBanner = styled.div`
 /**
  * "쿠폰/추가 할인 적용" 영역.
  *
- * 정책: docs/Naver_OCR_Parsing_Strategy.md §6-1, §12-3.
+ * 정책:
  *   - 상품 가격에 자동 배분하지 않고 order 레벨에서만 차감액을 보존
  *   - 체크박스 OFF 면 차감액은 0(또는 undefined)으로 저장
  *   - 입력은 숫자만 허용(쉼표 자동 정리는 onChange 단계에서 처리)
@@ -865,7 +865,7 @@ export const OrderCard: React.FC<OrderCardProps> = ({
         {/*
          * 쿠폰/추가 할인 적용 영역.
          *
-         * 정책: docs/Naver_OCR_Parsing_Strategy.md §6-1, §12-3, §12-4.
+         * 정책:
          *   - OCR 수정 화면에서만 노출(수동입력 화면에는 추가하지 않는다)
          *   - 체크 OFF: 차감액은 적용되지 않고 totalAmount 는 상품합계 그대로
          *   - 체크 ON: 숫자 입력칸 노출 → 입력값이 totalAmount 에서 즉시 차감

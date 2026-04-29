@@ -87,7 +87,7 @@ export function normalizeAuthError(
     case "auth/invalid-api-key":
     case "auth/app-not-authorized":
     case "auth/invalid-app-credential":
-      return { code, message: "Firebase 인증 설정에 문제가 있어 로그인할 수 없어요. 관리자에게 문의해 주세요." };
+      return { code, message: "로그인 설정에 문제가 있어 로그인할 수 없어요. 관리자에게 문의해 주세요." };
     case "auth/internal-error":
       return { code, message: "인증 처리 중 내부 오류가 발생했어요. 잠시 후 다시 시도해 주세요." };
     case "functions/unavailable":
@@ -151,7 +151,7 @@ export function normalizeSessionSyncError(error: unknown): NormalizedSessionSync
     case "failed-precondition":
       return {
         code,
-        message: "Firebase 설정이 완전히 준비되지 않아 데이터를 불러오지 못하고 있어요.",
+        message: "서비스 설정이 아직 완전히 준비되지 않아 데이터를 불러오지 못하고 있어요.",
         retriable: false,
       };
     default:

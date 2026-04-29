@@ -74,7 +74,7 @@ export interface OcrOrder {
    *   - products[] 는 대표 상품 1개만 들어있을 수 있고 가격이 미확정일 수 있음
    *   - totalAmount 는 sectionTotal 기반으로 계산
    *   - UI 에 "접힌 주문 / 외 n건 숨김" 안내가 노출됨
-   * 자세한 정책은 docs/Naver_OCR_Parsing_Strategy.md §6, §12-5 참조.
+   * 접힌 주문은 대표 상품만 노출될 수 있으므로 관련 메타를 함께 보존합니다.
    */
   folded?: boolean;
   /** "포함 총 n건" 에서 추출한 실제 상품 개수 힌트. folded 일 때만 의미 있습니다. */

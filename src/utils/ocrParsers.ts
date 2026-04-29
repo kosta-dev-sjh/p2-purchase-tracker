@@ -20,8 +20,7 @@
  *     - 쿠팡 파서의 규칙을 복제하지 마세요. 투자 깊이는 쿠팡의 1/5 수준이면 충분.
  *
  *   신규 플랫폼 추가 시
- *     - 먼저 `docs/OCR_Architecture_Decision.md` §"의사결정 트리" 항목을 읽고 오세요.
- *     - 얕은 1차 파서 + `ocrQuality` bad 판정 → AI 보정 패턴이 기본 템플릿입니다.
+ *     - 얕은 1차 파서 + `ocrQuality` bad 판정 → AI 보정 패턴을 기본 템플릿으로 유지합니다.
  *
  * ──────────────────────────────────────────────────────────────────────────────
  */
@@ -54,8 +53,7 @@ export interface PurchaseOCRResult {
   /**
    * 네이버 "접힌 주문" 신호. 화면에 `포함 총 n건` 또는 `주문 펼쳐보기` 가 보일 때 파서가 true 로
    * 찍습니다. true 인 결과는 caller(buildFlatOrders) 가 OcrOrder.folded 메타와 sectionTotal 로
-   * 변환하고, 대표 상품 가격에 sectionTotal 을 강제 주입하지 않습니다. 자세한 정책은
-   * docs/Naver_OCR_Parsing_Strategy.md §6, §12-5 참고.
+   * 변환하고, 대표 상품 가격에 sectionTotal 을 강제 주입하지 않습니다.
    *
    * 이번 1차 구현은 image 단위로 fold 여부만 일괄 감지하는 얕은 버전입니다. section-first 파서
    * 정밀화는 Codex 후속 작업(strategy doc §15)으로 남겨두고, 이 단계에서는 UI/스토어/타입 흐름만
@@ -999,7 +997,7 @@ export function parseCoupangOrderText(rawText: string): PurchaseOCRResult[] {
 /**
  * 네이버쇼핑 주문내역 캡쳐의 1차 파서. 쿠팡 파서와 의도적으로 깊이가 다릅니다.
  *
- * 정책 (CLAUDE.md §9.1, docs/OCR_Architecture_Decision.md, docs/Naver_OCR_Parsing_Strategy.md §3):
+ * 정책:
  *   - 신규 플랫폼은 **얕은 1차 파서 + 이른 AI 보정** 조합으로 간다.
  *   - 1차 파서 책임: 카드 단위 분리 / 날짜·상태·상품명·가격의 **대략적** 추출 /
  *     명백한 쓰레기 라인 제거. 여기까지.
@@ -1034,7 +1032,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
   // - 일반 상품명/설명 문장에서 우연히 나올 가능성이 낮은 조합만
   const STATUS_KEYWORDS = [
     '구매확정완료', '결제완료', '결제취소', '취소완료', '환불완료',
-    '반품완료', '반품환불완료', // 2026-04-27 — web/184818 GT 관찰 (한일의료기 전기매트). docs/Naver_OCR_Pattern_Catalog §3.
+    '반품완료', '반품환불완료', // 2026-04-27 — web/184818 GT 관찰 (한일의료기 전기매트).
     '교환완료', // 2026-04-27 — web3/2.59.31 GT 관찰 (아유아유 페이스 제모기). literal 추가.
     '배송완료', '배송중', '주문완료', '상품준비중',
   ];
@@ -1042,7 +1040,7 @@ export function parseNaverOrderText(rawText: string): PurchaseOCRResult[] {
     /구\s*매\s*확\s*정\s*완\s*료/,
     /구\s*확정\s*완료/,
     /구\s*매확정\s*완료/,
-    /매화정오/, // docs/Naver_OCR_Pattern_Catalog §3 실측
+    /매화정오/, // 실측 OCR 변형
     /상품\s*준비\s*중/,
   ];
   const hasStatusKeyword = (line: string): boolean =>

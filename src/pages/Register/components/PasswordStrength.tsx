@@ -5,6 +5,7 @@
 import React from "react";
 import styled from "styled-components";
 import { tokens } from "../../../styles/tokens";
+import { scorePassword } from "../../../utils/passwordPolicy";
 
 const Wrap = styled.div`
   display: grid;
@@ -45,20 +46,6 @@ const Label = styled.div<{ $tone: "weak" | "mid" | "ok" }>`
   font-weight: 600;
 `;
 
-function scorePassword(value: string): 0 | 1 | 2 | 3 | 4 {
-  if (!value) {
-    return 0;
-  }
-
-  let score = 0;
-  if (value.length >= 8) score++;
-  if (/[A-Z]/.test(value)) score++;
-  if (/\d/.test(value)) score++;
-  if (/[^A-Za-z0-9]/.test(value)) score++;
-
-  return score as 0 | 1 | 2 | 3 | 4;
-}
-
 export const PasswordStrength: React.FC<{ value: string }> = ({ value }) => {
   const score = scorePassword(value);
 
@@ -80,4 +67,3 @@ export const PasswordStrength: React.FC<{ value: string }> = ({ value }) => {
     </Wrap>
   );
 };
-

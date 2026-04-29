@@ -198,7 +198,7 @@ export const EditForm: React.FC<EditFormProps> = ({ image, onOrderPatch, onProdu
        *  - 쿠팡: 한 캡쳐에 구매·환불·취소 카드가 섞이는 케이스가 흔하므로 "주문 단위 카드 분리" 강조
        *  - 네이버: list 뷰가 보통 동질 주문 묶음이거나 한 주문이라 "구매·환불 섞임" 표현이 맞지 않음
        *
-       * 정책: docs/Naver_OCR_Parsing_Strategy.md §12-1 — 차이는 보조 메타와 "파서 해석" 에서
+       * 정책: 차이는 보조 메타와 "파서 해석" 에서
        * 만들고 공통 데이터 형식은 유지. UI 카피도 플랫폼 차이에 맞춰 분기해 둡니다.
        */}
       <Hint>

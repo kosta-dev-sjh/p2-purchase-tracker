@@ -8,7 +8,7 @@
  *   4. 사용자 선택과 mismatch + 추정 confidence 가 충분히 높으면 confirm 모달
  *      → "이 이미지는 네이버 같아 보입니다. 정말 쿠팡으로 분석할까요?"
  *
- * 정책 (CLAUDE.md §9.1, docs/Naver_OCR_Pattern_Catalog §11):
+ * 정책:
  *   - **literal UI 라벨/배지** 시그널만 사용 — wordlist 하드코딩(상품명 변형) 아님
  *   - 양 platform 모두 정직하게 시그널 카운트, 우세도 계산
  *   - 약한 우세는 모달 안 띄움 (false alarm 방지)
