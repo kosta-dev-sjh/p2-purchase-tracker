@@ -219,14 +219,33 @@ export function startFirebaseSync(): void {
         reportBackgroundSyncIssue(error);
       }
 
-      try {
-        const restoreResult = await restorePendingDeletionIfNeeded();
-        if (restoreResult.status === "purged") {
-          await signOut(auth);
-          return;
-        }
-      } catch (error) {
-        reportBackgroundSyncIssue(error);
+      /*
+       * 성능 개선(2026-04-30, 최소 변경): restorePendingDeletion 만 critical path 에서
+       * 떼어냅니다. 이전에는 await 로 막혀 있어 매 로그인 직후 asia-northeast3 의
+       * Cloud Function cold-start (실측 ~2.2초) 가 사용자 체감 속도를 그만큼 깎고
+       * 있었습니다.
+       *
+       * 다른 흐름(ensureBootstrap → saveUserProfile email → subscribe* 순서) 은
+       * 그대로 유지해서 동작 변경 surface 를 최소화합니다.
+       *
+       * "purged" 응답(드뭄, 7일+ 그레이스 경과 후 재로그인) 이 오면 그때 signOut.
+       * 그 전엔 사용자에게 bootstrap 이 만든 default 빈 상태가 잠깐 보일 수 있지만,
+       * purged 계정은 어차피 데이터가 없어 시각적으로만 "빈 앱" 으로 보입니다.
+       */
+      const checkPurgedDeferred = () => {
+        restorePendingDeletionIfNeeded()
+          .then((restoreResult) => {
+            if (restoreResult.status === "purged") {
+              void signOut(auth);
+            }
+          })
+          .catch(reportBackgroundSyncIssue);
+      };
+      if (typeof window !== "undefined" && "requestIdleCallback" in window) {
+        (window as Window & { requestIdleCallback: (cb: IdleRequestCallback, opts?: IdleRequestOptions) => number })
+          .requestIdleCallback(checkPurgedDeferred, { timeout: 4000 });
+      } else {
+        setTimeout(checkPurgedDeferred, 0);
       }
 
       stopProfile = subscribeUserProfile(
