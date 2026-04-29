@@ -358,7 +358,12 @@ export const SubscriptionList: React.FC<SubscriptionListProps> = ({
                   <Icon $color={item.color} />
                   <NameWrap>
                     <Name title={item.name}>{item.name}</Name>
-                    <Next>다음 결제 {item.nextDate}</Next>
+                    {/*
+                     * "다음 결제" 라벨(2026-04-29): nextDate 는 마지막 결제일이 아니라
+                     * "한 달 뒤 추정값" 입니다(buildSubscriptions 에서 계산). 추정값임을
+                     * 명시해야 사용자가 실제 청구일과 혼동하지 않습니다.
+                     */}
+                    <Next>다음 결제 {item.nextDate ? `${item.nextDate} 추정` : "—"}</Next>
                   </NameWrap>
                   <TagChip $kind={item.tagKind}>{TAG_LABEL[item.tagKind]}</TagChip>
                   <Amount>

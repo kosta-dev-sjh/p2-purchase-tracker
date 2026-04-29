@@ -5,7 +5,6 @@
 import React from "react";
 import styled from "styled-components";
 import { Card, CardBd, CardHd, CardTitle } from "../../../components/primitives/Card";
-import { Chip } from "../../../components/primitives/Chip";
 import { tokens } from "../../../styles/tokens";
 import { formatKRW } from "../../../utils/format";
 
@@ -129,10 +128,16 @@ export const RepeatTop3: React.FC<{ items: RepeatItem[] }> = ({ items }) => (
    * 외부에서 import 하는 경로/식별자가 바뀌지 않게 하기 위해 라벨만 "TOP 5" 로 손봤습니다.
    * 사용자 화면 카피로는 "TOP 5" 만 보이며, 5건 미만이면 자연스럽게 적게 노출됩니다.
    */
+  /*
+   * 라벨(2026-04-29): 이전 "반복 구매 TOP 5" + "이번 달 3회 이상 구매" 칩 조합은
+   * 실제 데이터엔 1~2회 항목도 함께 노출돼 칩 문구가 사실과 어긋나 보였습니다(사용자
+   * 피드백). 기능을 "3회 이상만 보여주기" 로 좁히기보다는 "이번달 최다 구매 TOP 5" 로
+   * 문구를 정확하게 다시 잡았습니다 — 구매 횟수 순 상위 5개라는 의미를 그대로 전달.
+   * 칩은 제거 (제목이 시간 범위·정렬 기준을 모두 담아 부가 칩이 불필요).
+   */
   <Card>
     <CardHd>
-      <CardTitle>반복 구매 TOP 5</CardTitle>
-      <Chip $tone="info">이번 달 3회 이상 구매</Chip>
+      <CardTitle>이번달 최다 구매 TOP 5</CardTitle>
     </CardHd>
     <CardBd>
       {items.length === 0 ? (

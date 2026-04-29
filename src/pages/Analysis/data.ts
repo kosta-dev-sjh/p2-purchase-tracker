@@ -79,6 +79,33 @@ function parseDate(dateStr: string): { year: number; month: number; day: number 
   return { year: Number(match[1]), month: Number(match[2]), day: Number(match[3]) };
 }
 
+/**
+ * "다음 결제" 추정값 — 가장 최근 결제일을 한 달 뒤로 이동시켜 "M.D" 형식으로 반환합니다.
+ *
+ * 배경(2026-04-29): 이전엔 latest.date 의 월/일을 그대로 표기해 "다음 결제 4.10" 처럼
+ * 보였는데, 이는 사실상 "마지막 결제일" 이라 사용자에게 혼란을 줬습니다(사용자 피드백).
+ * 실제 의미인 "다음 결제 추정일(=한 달 뒤)" 로 한 단계 미루어 표시합니다.
+ *
+ * 일자 클램프: 1.31 → 2.31 처럼 다음 달이 더 짧을 경우 그 달의 말일로 고정. 자바스크립트
+ * Date 의 month overflow(2.31 → 3.3) 가 새는 걸 차단합니다.
+ *
+ * 일자 0-패딩(2026-04-29): "5.9" 와 "5.19" 가 한 컬럼에 섞이면 컬럼 폭이 들쑥날쑥해
+ * 우측 "추정" 라벨이 좌우로 흔들려 보였습니다(사용자 피드백 — UI 가 물결치는 느낌).
+ * "M.DD" 로 두 자리 고정하면 같은 달 안에서 모든 행이 동일 폭이 되어 정렬이 깔끔합니다.
+ *
+ * 표시용 라벨("추정") 은 UI 단에서 붙입니다 — `deriveDayOfMonth` 같은 후속 파서가
+ * trailing 숫자를 그대로 읽을 수 있도록, 데이터 필드는 깔끔한 "M.DD" 만 유지합니다.
+ */
+function projectNextPaymentDate(parsed: { year: number; month: number; day: number }): string {
+  const m = parsed.month;
+  const nextMonth1Indexed = m === 12 ? 1 : m + 1;
+  const nextYear = m === 12 ? parsed.year + 1 : parsed.year;
+  // new Date(year, monthIndex, 0) 트릭 → 그 monthIndex(1-based 로 보면 해당 월) 의 말일.
+  const lastDayOfNextMonth = new Date(nextYear, nextMonth1Indexed, 0).getDate();
+  const clampedDay = Math.min(parsed.day, lastDayOfNextMonth);
+  return `${nextMonth1Indexed}.${String(clampedDay).padStart(2, "0")}`;
+}
+
 function shiftMonthKey(monthKey: string, delta: number): string {
   const [yearStr, monthStr] = monthKey.split("-");
   const year = Number(yearStr);
@@ -512,7 +539,7 @@ export function buildSubscriptions(
             : billingMonths,
         isEstimated,
         patternVerified,
-        nextDate: parsed ? `${parsed.month}.${parsed.day}` : "",
+        nextDate: parsed ? projectNextPaymentDate(parsed) : "",
         latestTxId: latest?.id,
         tagKind,
         color: SUB_COLOR[latest?.title ?? ""] ?? tagColor,
