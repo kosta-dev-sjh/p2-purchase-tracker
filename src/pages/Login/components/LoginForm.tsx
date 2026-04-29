@@ -3,7 +3,7 @@
  * 위치: src\pages\Login\components\LoginForm.tsx
  */
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import styled from "styled-components";
 import { Button } from "../../../components/primitives/Button";
 import { FormField } from "../../../components/form/FormField";
@@ -11,7 +11,7 @@ import { PasswordTextInput, TextInput } from "../../../components/form/TextInput
 import { tokens } from "../../../styles/tokens";
 import { authStore, useAuthSession } from "../../../stores/authStore";
 import { normalizeAuthError } from "../../../lib/authError";
-import { signIn, signInWithGoogle } from "../../../lib/firebaseSync";
+import { resendVerificationEmailForLogin, signIn, signInWithGoogle } from "../../../lib/firebaseSync";
 
 interface LoginFieldErrors {
   email?: string;
@@ -107,17 +107,24 @@ const GoogleMark = () => (
 
 export const LoginForm: React.FC = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const { error: authError } = useAuthSession();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [errors, setErrors] = useState<LoginFieldErrors>({});
   const [submitting, setSubmitting] = useState(false);
+  const [lastErrorCode, setLastErrorCode] = useState("");
+  const [resendingVerification, setResendingVerification] = useState(false);
+  const notice = typeof location.state === "object" && location.state && "notice" in location.state
+    ? String((location.state as { notice?: string }).notice ?? "")
+    : "";
 
   return (
     <form
       onSubmit={async (event) => {
         event.preventDefault();
         authStore.clearError();
+        setLastErrorCode("");
         const nextErrors = validateLoginFields(email, password);
         if (Object.keys(nextErrors).length > 0) {
           setErrors(nextErrors);
@@ -132,6 +139,7 @@ export const LoginForm: React.FC = () => {
           navigate("/");
         } catch (err) {
           const normalized = normalizeAuthError(err, "password-login");
+          setLastErrorCode(normalized.code);
           if (
             normalized.code === "auth/invalid-credential" ||
             normalized.code === "auth/user-not-found" ||
@@ -196,9 +204,38 @@ export const LoginForm: React.FC = () => {
         </Remember>
         <ForgotLink to="/forgot-password">비밀번호를 잊으셨나요?</ForgotLink>
       </Row>
+      {notice && (
+        <div style={{ marginBottom: 12, color: tokens.color.pos, fontSize: 12.5, fontWeight: 600 }}>
+          {notice}
+        </div>
+      )}
       {(errors.form || authError) && (
         <div style={{ marginBottom: 12, color: tokens.color.neg, fontSize: 12.5, fontWeight: 600 }}>
           {errors.form ?? authError}
+        </div>
+      )}
+      {lastErrorCode === "auth/email-not-verified" && (
+        <div style={{ marginBottom: 12 }}>
+          <Button
+            variant="secondary"
+            size="sm"
+            type="button"
+            disabled={submitting || resendingVerification}
+            onClick={async () => {
+              setResendingVerification(true);
+              try {
+                await resendVerificationEmailForLogin(email, password);
+                setErrors({ form: "인증 메일을 다시 보냈어요. 메일 인증 후 로그인해 주세요." });
+              } catch (err) {
+                const normalized = normalizeAuthError(err, "password-login");
+                setErrors({ form: normalized.message });
+              } finally {
+                setResendingVerification(false);
+              }
+            }}
+          >
+            {resendingVerification ? "재전송 중..." : "인증 메일 다시 보내기"}
+          </Button>
         </div>
       )}
       <Button variant="primary" size="lg" block type="submit" disabled={submitting}>
@@ -216,14 +253,15 @@ export const LoginForm: React.FC = () => {
           setErrors({});
           authStore.clearError();
           setSubmitting(true);
-          try {
-            await signInWithGoogle();
-            navigate("/");
-          } catch (err) {
-            const normalized = normalizeAuthError(err, "google-login");
-            if (normalized.silent) return;
-            setErrors({ form: normalized.message });
-          } finally {
+        try {
+          await signInWithGoogle();
+          navigate("/");
+        } catch (err) {
+          const normalized = normalizeAuthError(err, "google-login");
+          setLastErrorCode(normalized.code);
+          if (normalized.silent) return;
+          setErrors({ form: normalized.message });
+        } finally {
             setSubmitting(false);
           }
         }}

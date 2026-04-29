@@ -54,6 +54,10 @@ export function normalizeAuthError(
       return { code, message: "올바른 이메일 형식을 입력해 주세요." };
     case "auth/email-already-in-use":
       return { code, message: "이미 가입된 이메일이에요. 로그인하거나 비밀번호 재설정을 이용해 주세요." };
+    case "auth/email-not-verified":
+      return { code, message: "이메일 인증 후 로그인해 주세요." };
+    case "auth/email-already-verified":
+      return { code, message: "이미 이메일 인증이 완료된 계정이에요. 다시 로그인해 주세요." };
     case "auth/missing-password":
       return { code, message: "비밀번호를 입력해 주세요." };
     case "auth/missing-email":
