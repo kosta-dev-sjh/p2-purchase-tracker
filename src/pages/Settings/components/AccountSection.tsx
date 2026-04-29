@@ -12,10 +12,12 @@ import { profileStore, useProfile } from "../../../stores/profileStore";
 import { todayAsDotDate } from "../../../utils/date";
 import { media } from "../../../tokens/breakpoints";
 import { useAuthSession } from "../../../stores/authStore";
-import { changeCurrentPassword, getAccountDeletionProvider } from "../../../lib/firebaseSync";
+import {
+  changeCurrentPassword,
+  getAccountDeletionProvider,
+  requestEmailChange,
+} from "../../../lib/firebaseSync";
 import { validatePasswordPolicy } from "../../../utils/passwordPolicy";
-
-const EMAIL_CHANGE_NOTICE = "이메일 변경은 현재 점검 중이며 다음 업데이트에서 지원될 예정이에요.";
 
 const Item = styled.div`
   display: flex;
@@ -56,6 +58,30 @@ const EditorRow = styled.div`
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
+`;
+
+const Input = styled.input`
+  flex: 1;
+  min-width: 220px;
+  height: 36px;
+  padding: 0 12px;
+  border: 1px solid ${tokens.color.line};
+  border-radius: ${tokens.radius.control};
+  background: ${tokens.color.panel};
+  color: ${tokens.color.ink1};
+  font-family: inherit;
+  font-size: ${tokens.type.bodySm.size};
+  outline: none;
+
+  &:focus {
+    border-color: ${tokens.color.accent};
+    box-shadow: ${tokens.shadow.focus};
+  }
+
+  ${media.mobile} {
+    min-width: 0;
+    width: 100%;
+  }
 `;
 
 const PasswordInput = styled(PasswordTextInput)`
@@ -117,7 +143,10 @@ const SideButtons = styled.div`
 
 export const AccountSection: React.FC = () => {
   const profile = useProfile();
-  const [editing, setEditing] = useState<null | "password">(null);
+  const [editing, setEditing] = useState<null | "email" | "password">(null);
+  const [emailDraft, setEmailDraft] = useState(profile.email);
+  const [emailPassword, setEmailPassword] = useState("");
+  const [savingEmail, setSavingEmail] = useState(false);
   const [currentPassword, setCurrentPassword] = useState("");
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -130,7 +159,10 @@ export const AccountSection: React.FC = () => {
   const emailVerified = Boolean(user?.emailVerified);
 
   const startEmail = () => {
-    setMessage({ tone: "error", text: EMAIL_CHANGE_NOTICE });
+    setEmailDraft(profile.email);
+    setEmailPassword("");
+    setEditing("email");
+    setMessage(null);
   };
 
   const startPassword = () => {
@@ -144,6 +176,65 @@ export const AccountSection: React.FC = () => {
   const cancel = () => {
     setEditing(null);
     setMessage(null);
+  };
+
+  const saveEmail = async () => {
+    const trimmedEmail = emailDraft.trim();
+    if (!/.+@.+\..+/.test(trimmedEmail)) {
+      setMessage({ tone: "error", text: "올바른 이메일 형식을 입력해 주세요." });
+      return;
+    }
+    if (trimmedEmail === profile.email.trim()) {
+      setMessage({ tone: "error", text: "현재와 다른 이메일 주소를 입력해 주세요." });
+      return;
+    }
+    if (needsCurrentPassword && !emailPassword) {
+      setMessage({ tone: "error", text: "현재 비밀번호를 입력해 주세요." });
+      return;
+    }
+
+    setSavingEmail(true);
+    try {
+      await requestEmailChange(trimmedEmail, emailPassword);
+      setEditing(null);
+      setMessage({
+        tone: "success",
+        text: "새 이메일 주소로 인증 메일을 보냈어요. 메일 인증을 마치면 다음 로그인부터 반영돼요.",
+      });
+    } catch (err) {
+      const code = (err as { code?: string }).code ?? "";
+      let text = "이메일 변경 요청에 실패했어요. 잠시 후 다시 시도해 주세요.";
+      switch (code) {
+        case "auth/invalid-email":
+          text = "올바른 이메일 형식을 입력해 주세요.";
+          break;
+        case "auth/email-already-in-use":
+          text = "이미 사용 중인 이메일 주소예요.";
+          break;
+        case "auth/missing-password":
+          text = "현재 비밀번호를 입력해 주세요.";
+          break;
+        case "auth/wrong-password":
+        case "auth/invalid-credential":
+          text = "현재 비밀번호가 일치하지 않아요.";
+          break;
+        case "auth/requires-recent-login":
+          text = "보안을 위해 다시 로그인한 뒤 시도해 주세요.";
+          break;
+        case "auth/popup-closed-by-user":
+          text = "재인증 창이 닫혀 이메일을 변경하지 못했어요.";
+          break;
+        case "auth/unsupported-provider":
+          text = "이 로그인 방식에서는 이메일을 직접 변경할 수 없어요.";
+          break;
+        case "auth/no-current-user":
+          text = "로그인 상태를 확인한 뒤 다시 시도해 주세요.";
+          break;
+      }
+      setMessage({ tone: "error", text });
+    } finally {
+      setSavingEmail(false);
+    }
   };
 
   const savePassword = async () => {
@@ -203,25 +294,63 @@ export const AccountSection: React.FC = () => {
   return (
     <SettingsBlock title="계정" subtitle="이메일과 비밀번호를 관리해요.">
       <Item>
-        <>
-          <div>
-            <div className="label">이메일</div>
-            <EmailMeta>
-              <div className="sub">{profile.email}</div>
-              <VerificationBadge $verified={emailVerified}>
-                {emailVerified ? "이메일 검증 완료" : "이메일 미검증"}
-              </VerificationBadge>
-            </EmailMeta>
-            <div className="sub">{EMAIL_CHANGE_NOTICE}</div>
-            {!emailVerified && (
-              <div className="sub">현재는 검증 상태만 안내하며, 출시 전 강제 적용할 예정이에요.</div>
+        {editing === "email" ? (
+          <EditorBody>
+            <div className="label">이메일 변경</div>
+            <EditorRow>
+              <Input
+                type="email"
+                value={emailDraft}
+                onChange={(event) => setEmailDraft(event.target.value)}
+                placeholder="new@example.com"
+                autoComplete="email"
+              />
+            </EditorRow>
+            {needsCurrentPassword && (
+              <EditorRow>
+                <PasswordInput
+                  value={emailPassword}
+                  onChange={(event) => setEmailPassword(event.target.value)}
+                  placeholder="현재 비밀번호"
+                  autoComplete="current-password"
+                />
+              </EditorRow>
             )}
-            {message && editing === null && <Msg $tone={message.tone}>{message.text}</Msg>}
-          </div>
-          <Button variant="ghost" size="sm" onClick={startEmail} disabled>
-            점검 중
-          </Button>
-        </>
+            {usesGoogleReauth && (
+              <div className="sub">저장 시 재인증 창이 열리고, 새 이메일로 확인 메일이 발송돼요.</div>
+            )}
+            <EditorRow>
+              <SideButtons>
+                <Button variant="secondary" size="sm" onClick={cancel} disabled={savingEmail}>
+                  취소
+                </Button>
+                <Button variant="primary" size="sm" onClick={saveEmail} disabled={savingEmail}>
+                  {savingEmail ? "요청 중..." : "저장"}
+                </Button>
+              </SideButtons>
+            </EditorRow>
+            {message && <Msg $tone={message.tone}>{message.text}</Msg>}
+          </EditorBody>
+        ) : (
+          <>
+            <div>
+              <div className="label">이메일</div>
+              <EmailMeta>
+                <div className="sub">{profile.email}</div>
+                <VerificationBadge $verified={emailVerified}>
+                  {emailVerified ? "이메일 검증 완료" : "이메일 미검증"}
+                </VerificationBadge>
+              </EmailMeta>
+              {!emailVerified && (
+                <div className="sub">이메일 인증을 마치면 로그인할 수 있어요.</div>
+              )}
+              {message && editing === null && <Msg $tone={message.tone}>{message.text}</Msg>}
+            </div>
+            <Button variant="ghost" size="sm" onClick={startEmail}>
+              변경
+            </Button>
+          </>
+        )}
       </Item>
       <Item>
         {editing === "password" ? (
