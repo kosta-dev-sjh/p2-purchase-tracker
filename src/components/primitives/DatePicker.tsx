@@ -380,16 +380,42 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   };
 
   // 팝오버가 열릴 때 트리거 버튼의 뷰포트 좌표를 기준으로 fixed 위치를 계산합니다.
-  // 오른쪽 공간이 부족하면 트리거 우측 끝에 맞춰 왼쪽으로 펼칩니다.
+  //
+  // 모바일 회귀 방지(2026-04-30): 모달 안에서 DatePicker 를 열면 트리거가 뷰포트 하단에
+  // 가까워 팝오버가 그대로 아래로 펼쳐지면 달력 마지막 주와 footer 가 잘려 보였습니다.
+  // 아래 공간이 부족하면 트리거 위쪽으로 뒤집어 펼치고, 좌/우 가장자리에서도 8px 이상
+  // 마진을 남기도록 클램프해 좁은 폭에서 잘리지 않게 합니다.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const POPOVER_WIDTH = 264;
-    const top = rect.bottom + 4;
-    if (rect.left + POPOVER_WIDTH > window.innerWidth) {
-      setPopoverPos({ top, right: window.innerWidth - rect.right });
+    // 6주 그리드(32px×6) + 주 라벨 + header + footer + padding 의 보수적 추정. 실측 약 320~340px.
+    const POPOVER_HEIGHT_EST = 340;
+    const VIEWPORT_MARGIN = 8;
+    const GAP = 4;
+    const viewportH = window.innerHeight;
+    const viewportW = window.innerWidth;
+
+    // 1) 세로: 아래로 펼칠 공간이 부족하면 위로 뒤집기. 위도 좁으면 가능한 한 화면 안쪽으로 클램프.
+    const spaceBelow = viewportH - rect.bottom - GAP - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
+    let top: number;
+    if (spaceBelow >= POPOVER_HEIGHT_EST || spaceBelow >= spaceAbove) {
+      // 아래에 충분하거나, 아래쪽이 위쪽보다 넓으면 아래로. 다만 마지막 안전망으로 상단도 클램프.
+      top = Math.min(rect.bottom + GAP, viewportH - POPOVER_HEIGHT_EST - VIEWPORT_MARGIN);
+      if (top < VIEWPORT_MARGIN) top = VIEWPORT_MARGIN;
     } else {
-      setPopoverPos({ top, left: rect.left });
+      // 위로 뒤집기 — 트리거 상단에서 팝오버 높이만큼 빼고 GAP 만큼 띄움.
+      top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT_EST - GAP);
+    }
+
+    // 2) 가로: 트리거 좌측 기준으로 펼치되 우측 가장자리에 부딪히면 우측 정렬, 좌측에서도 8px 마진 보장.
+    if (rect.left + POPOVER_WIDTH > viewportW - VIEWPORT_MARGIN) {
+      const right = Math.max(VIEWPORT_MARGIN, viewportW - rect.right);
+      setPopoverPos({ top, right });
+    } else {
+      const left = Math.max(VIEWPORT_MARGIN, rect.left);
+      setPopoverPos({ top, left });
     }
   }, [open]);
 

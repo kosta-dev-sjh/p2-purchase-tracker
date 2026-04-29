@@ -17,7 +17,12 @@ interface AuthLayoutProps {
 }
 
 const Page = styled.div`
-  min-height: 100vh;
+  /*
+   * 100vh 는 모바일 Chrome/Safari 의 URL 바 높이를 뺀 실제 가시영역보다 커서, place-items
+   * center 가 폼을 화면 아래쪽으로 밀어 "들어올 때 입력칸이 보이지 않는" 회귀가 있었습니다.
+   * dvh 는 URL 바 상태에 따라 갱신돼 실제 가시영역에 맞게 중앙 정렬됩니다(2026-04-30).
+   */
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 40px 16px;

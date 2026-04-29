@@ -38,10 +38,40 @@ const SubscriptionsPage = React.lazy(async () => ({
 }));
 const SettingsPage = React.lazy(async () => ({ default: (await import("./pages/Settings")).SettingsPage }));
 
+/**
+ * 인증 상태를 확인하는 동안 잠깐 보여주는 화면.
+ * 모바일에서 100vh 가 URL 바를 포함해 viewport 보다 길어지면 배경이 잘려 흰 띠가 보였고,
+ * 배경이 비어 있어 랜딩(#FAFBFF) → 로그인 사이를 오가다 흰 깜빡임이 보였습니다.
+ * 100dvh + 토큰 베이스 배경으로 깜빡임을 차단합니다(2026-04-30).
+ */
 const LoadingScreen = () => (
-  <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", fontSize: 14 }}>
+  <div
+    style={{
+      minHeight: "100dvh",
+      display: "grid",
+      placeItems: "center",
+      fontSize: 14,
+      background: "#FAFBFF",
+      color: "#475569",
+    }}
+  >
     계정 정보를 확인하는 중...
   </div>
+);
+
+/**
+ * 라우트 청크가 lazy 로 로드되는 동안 보여주는 fallback. 단순 페이지 전환에서
+ * "계정 정보를 확인하는 중..." 같은 잘못된 카피가 깜빡이지 않도록 텍스트를 빼고,
+ * 배경만 깔아 흰 깜빡임을 차단합니다.
+ */
+const RouteFallback = () => (
+  <div
+    style={{
+      minHeight: "100dvh",
+      background: "#FAFBFF",
+    }}
+    aria-hidden="true"
+  />
 );
 
 const ProtectedRoute: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -81,7 +111,7 @@ function App() {
     <BrowserRouter>
       {/* EC2/Firebase Hosting/Docker 기준 배포를 전제로 일반 경로 라우팅을 사용합니다.
           서버에서 SPA fallback(index.html 재서빙)만 맞춰 주면 깊은 링크도 자연스럽게 동작합니다. */}
-      <Suspense fallback={<LoadingScreen />}>
+      <Suspense fallback={<RouteFallback />}>
         <Routes>
           <Route path="/login" element={<PublicOnlyRoute><LoginPage /></PublicOnlyRoute>} />
           <Route path="/register" element={<PublicOnlyRoute><RegisterPage /></PublicOnlyRoute>} />
