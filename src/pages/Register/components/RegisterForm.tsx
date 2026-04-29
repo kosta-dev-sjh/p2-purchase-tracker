@@ -154,7 +154,12 @@ export const RegisterForm: React.FC = () => {
             email: email.trim(),
             password,
           });
-          navigate("/", { state: { showTutorial: true } });
+          navigate("/login", {
+            replace: true,
+            state: {
+              notice: "회원가입이 완료됐어요. 받은 편지함에서 이메일 인증을 마친 뒤 로그인해 주세요.",
+            },
+          });
         } catch (err) {
           const normalized = normalizeAuthError(err, "email-register");
           if (

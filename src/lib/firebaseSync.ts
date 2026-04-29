@@ -5,10 +5,12 @@ import {
   onAuthStateChanged,
   reauthenticateWithCredential,
   reauthenticateWithPopup,
+  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
+  verifyBeforeUpdateEmail,
   updatePassword,
   updateProfile,
   type User,
@@ -35,6 +37,7 @@ import {
 } from "./firebaseRepository";
 
 let started = false;
+let pendingPostSignOutError: string | null = null;
 
 export type AccountDeletionProvider = "password" | "google.com" | "session";
 
@@ -107,6 +110,23 @@ function createCodedError(code: string, message: string): Error & { code: string
   return error;
 }
 
+function isPasswordAccount(user: User): boolean {
+  return user.providerData.some((item) => item.providerId === "password");
+}
+
+function buildEmailActionSettings() {
+  if (typeof window === "undefined") return undefined;
+  return {
+    url: `${window.location.origin}/login`,
+    handleCodeInApp: false,
+  };
+}
+
+async function sendVerificationEmail(user: User): Promise<void> {
+  auth.languageCode = "ko";
+  await sendEmailVerification(user, buildEmailActionSettings());
+}
+
 export function getAccountDeletionProvider(
   user: User | null = auth.currentUser,
 ): AccountDeletionProvider {
@@ -168,6 +188,21 @@ export function startFirebaseSync(): void {
         authStore.clearError();
         clearBackgroundSyncIssue();
         resetLocalState();
+        if (pendingPostSignOutError) {
+          authStore.setError(pendingPostSignOutError);
+          pendingPostSignOutError = null;
+        }
+        return;
+      }
+
+      if (isPasswordAccount(user) && !user.emailVerified) {
+        try {
+          await sendVerificationEmail(user);
+        } catch {
+          // ignore resend failure here; login gating still takes precedence
+        }
+        pendingPostSignOutError = "이메일 인증 후 로그인해 주세요. 인증 메일을 다시 보냈어요.";
+        await signOut(auth);
         return;
       }
 
@@ -177,6 +212,9 @@ export function startFirebaseSync(): void {
 
       try {
         await ensureBootstrap(user);
+        if (user.email) {
+          await saveUserProfile(user.uid, { email: user.email });
+        }
       } catch (error) {
         reportBackgroundSyncIssue(error);
       }
@@ -235,7 +273,13 @@ export function startFirebaseSync(): void {
 }
 
 export async function signIn(email: string, password: string): Promise<void> {
-  await signInWithEmailAndPassword(auth, email, password);
+  const credential = await signInWithEmailAndPassword(auth, email, password);
+  if (isPasswordAccount(credential.user) && !credential.user.emailVerified) {
+    await sendVerificationEmail(credential.user);
+    pendingPostSignOutError = "이메일 인증 후 로그인해 주세요. 인증 메일을 다시 보냈어요.";
+    await signOut(auth);
+    throw createCodedError("auth/email-not-verified", pendingPostSignOutError);
+  }
 }
 
 export async function signInWithGoogle(): Promise<void> {
@@ -272,6 +316,9 @@ export async function registerAccount(payload: {
   });
   await bootstrapCategories(cred.user.uid, DEFAULT_CATEGORIES);
   transactionsStore.hydrate([]);
+  await sendVerificationEmail(cred.user);
+  pendingPostSignOutError = "회원가입이 완료됐어요. 받은 편지함에서 이메일 인증을 마친 뒤 로그인해 주세요.";
+  await signOut(auth);
 }
 
 export async function logOut(): Promise<void> {
@@ -290,6 +337,56 @@ export async function logOut(): Promise<void> {
 export async function sendPasswordReset(email: string): Promise<void> {
   auth.languageCode = "ko";
   await sendPasswordResetEmail(auth, email);
+}
+
+export async function resendVerificationEmailForLogin(
+  email: string,
+  password: string,
+): Promise<void> {
+  const credential = await signInWithEmailAndPassword(auth, email.trim(), password);
+  if (credential.user.emailVerified) {
+    await signOut(auth);
+    throw createCodedError("auth/email-already-verified", "이미 이메일 인증이 완료된 계정이에요. 다시 로그인해 주세요.");
+  }
+  await sendVerificationEmail(credential.user);
+  pendingPostSignOutError = "인증 메일을 다시 보냈어요. 메일 인증 후 로그인해 주세요.";
+  await signOut(auth);
+}
+
+export async function requestEmailChange(
+  nextEmail: string,
+  currentPassword?: string,
+): Promise<void> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw createCodedError("auth/no-current-user", "로그인 상태를 확인한 뒤 다시 시도해 주세요.");
+  }
+  const trimmedEmail = nextEmail.trim();
+  if (!trimmedEmail) {
+    throw createCodedError("auth/invalid-email", "올바른 이메일 형식을 입력해 주세요.");
+  }
+
+  const provider = getAccountDeletionProvider(user);
+  if (provider === "password") {
+    if (!currentPassword) {
+      throw createCodedError("auth/missing-password", "현재 비밀번호를 입력해 주세요.");
+    }
+    if (!user.email) {
+      throw createCodedError("auth/missing-email", "이 계정에는 이메일 정보가 없습니다.");
+    }
+    const credential = EmailAuthProvider.credential(user.email, currentPassword);
+    await reauthenticateWithCredential(user, credential);
+  } else if (provider === "google.com") {
+    await reauthenticateWithPopup(user, new GoogleAuthProvider());
+  } else {
+    throw createCodedError(
+      "auth/unsupported-provider",
+      "이 로그인 방식에서는 이메일을 직접 변경할 수 없어요.",
+    );
+  }
+
+  auth.languageCode = "ko";
+  await verifyBeforeUpdateEmail(user, trimmedEmail, buildEmailActionSettings());
 }
 
 export async function changeCurrentPassword(
