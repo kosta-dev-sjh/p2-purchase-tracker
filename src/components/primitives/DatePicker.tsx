@@ -380,18 +380,59 @@ export const DatePicker: React.FC<DatePickerProps> = ({
   };
 
   // 팝오버가 열릴 때 트리거 버튼의 뷰포트 좌표를 기준으로 fixed 위치를 계산합니다.
-  // 오른쪽 공간이 부족하면 트리거 우측 끝에 맞춰 왼쪽으로 펼칩니다.
+  //
+  // 모바일 회귀 방지(2026-04-30): 모달 안에서 DatePicker 를 열면 트리거가 뷰포트 하단에
+  // 가까워 팝오버가 그대로 아래로 펼쳐지면 달력 마지막 주와 footer 가 잘려 보였습니다.
+  // 아래 공간이 부족하면 트리거 위쪽으로 뒤집어 펼치고, 좌/우 가장자리에서도 8px 이상
+  // 마진을 남기도록 클램프해 좁은 폭에서 잘리지 않게 합니다.
+  //
+  // 추가 개선(2026-04-30 라이브 검증): 추정 높이(340) 가 실제 높이(약 328) 보다 살짝 커서
+  // 가장자리 케이스에서 트리거를 10px 정도 가리는 회귀가 있었습니다. popoverRef 가 설정된
+  // 두 번째 패스에서 실측 높이로 다시 계산해 정확한 위치로 보정합니다.
   useLayoutEffect(() => {
     if (!open || !triggerRef.current) return;
     const rect = triggerRef.current.getBoundingClientRect();
     const POPOVER_WIDTH = 264;
-    const top = rect.bottom + 4;
-    if (rect.left + POPOVER_WIDTH > window.innerWidth) {
-      setPopoverPos({ top, right: window.innerWidth - rect.right });
+    // 첫 패스에선 보수적으로 추정, 두 번째 패스에선 실측값. 실측이 가능하면 추정은 안 씀.
+    const measuredH = popoverRef.current?.offsetHeight;
+    const POPOVER_HEIGHT = measuredH && measuredH > 0 ? measuredH : 332;
+    const VIEWPORT_MARGIN = 8;
+    const GAP = 4;
+    const viewportH = window.innerHeight;
+    const viewportW = window.innerWidth;
+
+    // 1) 세로 위치: 아래/위 공간을 비교해 4단계로 분기합니다.
+    //   a) 아래에 충분 → 트리거 바로 아래로 (기본 케이스).
+    //   b) 위에 충분 → 트리거 위로 뒤집기 (모달에서 트리거가 하단에 가까울 때).
+    //   c) 어느 쪽도 부족 + 아래가 더 넓음 → 트리거 바로 아래에 두고 하단 클립을 허용.
+    //   d) 어느 쪽도 부족 + 위가 더 넓음 → 위로 뒤집고 상단 마진까지 클램프.
+    // 단순히 "min(rect.bottom+GAP, viewportH - H)" 로 클램프하면 트리거가 화면 중앙쯤에 있을 때
+    // 팝오버가 트리거를 가리는 회귀가 났습니다(2026-04-30 manual-entry 검증). 4단계 분기로 그
+    // 회귀를 피합니다.
+    const spaceBelow = viewportH - rect.bottom - GAP - VIEWPORT_MARGIN;
+    const spaceAbove = rect.top - GAP - VIEWPORT_MARGIN;
+    let top: number;
+    if (spaceBelow >= POPOVER_HEIGHT) {
+      top = rect.bottom + GAP;
+    } else if (spaceAbove >= POPOVER_HEIGHT) {
+      top = rect.top - POPOVER_HEIGHT - GAP;
+    } else if (spaceBelow >= spaceAbove) {
+      // 아래도 부족하지만 위보다는 넓음 — 트리거 아래에 두고 하단 클립은 감수.
+      top = rect.bottom + GAP;
     } else {
-      setPopoverPos({ top, left: rect.left });
+      // 위쪽이 더 넓음 — 위로 뒤집고 상단 마진을 보장.
+      top = Math.max(VIEWPORT_MARGIN, rect.top - POPOVER_HEIGHT - GAP);
     }
-  }, [open]);
+
+    // 2) 가로: 트리거 좌측 기준으로 펼치되 우측 가장자리에 부딪히면 우측 정렬, 좌측에서도 8px 마진 보장.
+    if (rect.left + POPOVER_WIDTH > viewportW - VIEWPORT_MARGIN) {
+      const right = Math.max(VIEWPORT_MARGIN, viewportW - rect.right);
+      setPopoverPos({ top, right });
+    } else {
+      const left = Math.max(VIEWPORT_MARGIN, rect.left);
+      setPopoverPos({ top, left });
+    }
+  }, [open, view.year, view.month]);
 
   // 팝오버가 열린 동안 바깥을 클릭하거나 Esc를 누르면 자연스럽게 닫히도록 전역 리스너 연결.
   useEffect(() => {
