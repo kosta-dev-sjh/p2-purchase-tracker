@@ -16,7 +16,7 @@
 | GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker |
 | 팀 | Toos / KOSTA 2차 프로젝트 |
 
-![SpendTrack landing after scroll reveal](docs/assets/readme/spendtrack-landing-revealed-desktop.png)
+![SpendTrack dashboard](docs/assets/readme/spendtrack-app-home.png)
 
 ## 1. 왜 만들었나
 
@@ -68,9 +68,15 @@ SpendTrack은 이 문제를 **"결제 건"이 아니라 "구매 상품"을 기�
 
 ## 4. 서비스 화면
 
-![SpendTrack landing after scroll reveal](docs/assets/readme/spendtrack-landing-revealed-desktop.png)
+| 홈 대시보드 | 입력 방식 선택 |
+| --- | --- |
+| ![SpendTrack home dashboard](docs/assets/readme/spendtrack-app-home.png) | ![SpendTrack input methods](docs/assets/readme/spendtrack-app-upload.png) |
 
-첫 화면은 "소비를 모으면 패턴이 보여요"라는 제품 메시지와 함께 입력 방식, 사용 단계, CTA, footer까지 이어지는 랜딩 흐름을 보여줍니다. README에서 스크린샷을 바로 노출한 이유는, 채용 담당자가 저장소에 들어왔을 때 **실제 배포된 서비스의 완성도**를 코드보다 먼저 확인할 수 있게 하기 위해서입니다.
+| 거래 내역 | 소비 분석 |
+| --- | --- |
+| ![SpendTrack transactions](docs/assets/readme/spendtrack-app-transactions.png) | ![SpendTrack analysis](docs/assets/readme/spendtrack-app-analysis.png) |
+
+서비스 화면은 로그인 이후 실제 사용자가 보는 주요 흐름을 기준으로 구성했습니다. 홈에서는 월별 지출·수입·플랫폼 비중을 요약하고, 입력 화면에서는 주문 캡처·수동 입력·카드 내역 업로드 중 하나를 선택합니다. 저장된 데이터는 거래 내역에서 검수·검색·필터링할 수 있고, 분석 화면에서는 플랫폼/카테고리별 소비와 반복결제 후보를 확인할 수 있습니다.
 
 ## 5. 사용자 플로우
 
