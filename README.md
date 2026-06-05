@@ -13,6 +13,7 @@
 | 운영 사이트 | https://spend-track.net |
 | Firebase 배포 주소 | https://spendtrack.web.app |
 | 발표자료 | https://spendtrack.web.app/presentation.html |
+| GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker |
 | 팀 | Toos / KOSTA 2차 프로젝트 |
 
 ![SpendTrack desktop landing](docs/assets/readme/spendtrack-landing-desktop.png)
@@ -232,10 +233,14 @@ PR은 Firebase Hosting preview workflow로 임시 URL을 생성하도록 구성�
 
 개발 과정에서 Claude, Cowork, Claude Design, Codex를 AI 협업 도구로 활용했습니다. 단순 코드 생성이 아니라 요구사항 정리, UI 개선, OCR 예외 케이스 정리, README 문서화에 보조 도구로 사용했습니다.
 
-## 14. 발표자료
+## 14. 산출물
 
-- 온라인: https://spendtrack.web.app/presentation.html
-- 로컬: [public/presentation.html](public/presentation.html)
+| 구분 | 링크 | 설명 |
+| --- | --- | --- |
+| 운영 서비스 | https://spend-track.net | Cloudflare DNS를 연결한 실제 서비스 도메인 |
+| Firebase 배포 주소 | https://spendtrack.web.app | Firebase Hosting 기본 배포 주소 |
+| 최종 발표자료 | https://spendtrack.web.app/presentation.html | `public/presentation.html`이 배포된 공개 발표자료 |
+| GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker | 소스 코드, README, 샘플 파일, 배포 설정 |
+| 샘플 파일 | [public/samples](public/samples) | CSV/XLSX 업로드 검증용 샘플 데이터 |
 
 발표자료는 Vite `public` 폴더에 포함되어 CI/CD 배포 시 자동으로 `dist/presentation.html`로 복사됩니다.
-
