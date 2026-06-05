@@ -16,7 +16,7 @@
 | GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker |
 | 팀 | Toos / KOSTA 2차 프로젝트 |
 
-![SpendTrack desktop landing](docs/assets/readme/spendtrack-landing-desktop.png)
+![SpendTrack landing after scroll reveal](docs/assets/readme/spendtrack-landing-revealed-desktop.png)
 
 ## 1. 왜 만들었나
 
@@ -68,7 +68,7 @@ SpendTrack은 이 문제를 **"결제 건"이 아니라 "구매 상품"을 기�
 
 ## 4. 서비스 화면
 
-![SpendTrack landing full page](docs/assets/readme/spendtrack-landing-desktop.png)
+![SpendTrack landing after scroll reveal](docs/assets/readme/spendtrack-landing-revealed-desktop.png)
 
 첫 화면은 "소비를 모으면 패턴이 보여요"라는 제품 메시지와 함께 입력 방식, 사용 단계, CTA, footer까지 이어지는 랜딩 흐름을 보여줍니다. README에서 스크린샷을 바로 노출한 이유는, 채용 담당자가 저장소에 들어왔을 때 **실제 배포된 서비스의 완성도**를 코드보다 먼저 확인할 수 있게 하기 위해서입니다.
 
