@@ -8,81 +8,61 @@
 [![Vite](https://img.shields.io/badge/Vite-8-646CFF?logo=vite&logoColor=white)](https://vite.dev)
 [![Firebase](https://img.shields.io/badge/Firebase-Hosting%20%7C%20Auth%20%7C%20Firestore%20%7C%20Functions-FFCA28?logo=firebase&logoColor=black)](https://firebase.google.com)
 
+![SpendTrack 홈 대시보드](docs/assets/readme/spendtrack-app-home.png)
+
+## 프로젝트 한눈에 보기
+
+| 구분 | 내용 |
+| --- | --- |
+| 프로젝트 | KOSTA 2차 팀 프로젝트 |
+| 팀 | Toos |
+| 핵심 목표 | 카드 결제 단위 데이터를 상품 단위 소비 기록으로 재구성 |
+| 주요 흐름 | 주문 캡처 업로드 -> OCR/AI 보정 -> 사용자 검수 -> 중복 병합 -> 분석 대시보드 |
+| 배포 | Firebase Hosting + Cloudflare DNS |
+| 검증 상태 | 2026-06-18 기준 운영 도메인 HTTP 200, production build 통과 |
+
+## 바로가기
+
 | 구분 | 링크 |
 | --- | --- |
-| 운영 사이트 | https://spend-track.net |
+| 운영 서비스 | https://spend-track.net |
 | Firebase 배포 주소 | https://spendtrack.web.app |
-| 발표자료 | https://spendtrack.web.app/presentation.html |
+| 최종 발표자료 | https://spendtrack.web.app/presentation.html |
 | GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker |
-| 팀 | Toos / KOSTA 2차 프로젝트 |
+| 샘플 파일 | [public/samples](public/samples) |
 
-![SpendTrack dashboard](docs/assets/readme/spendtrack-app-home.png)
+## 왜 만들었나
 
-## 1. 왜 만들었나
+온라인 쇼핑 결제 내역은 빠르게 쌓이지만, 카드 명세서에는 보통 `네이버페이 35,000원`, `쿠팡 128,400원`처럼 결제처와 총액만 남습니다. 실제로 어떤 상품을 샀는지, 일부 상품이 취소됐는지, 반복 결제인지 확인하려면 사용자가 쇼핑몰 주문 내역을 다시 찾아야 합니다.
 
-온라인 결제는 빠르지만 기록은 흩어집니다. 카드 명세서에는 `네이버페이 35,000원`, `쿠팡 128,400원`처럼 결제처와 총액만 남고, 실제로 산 상품·배송 상태·취소 항목·반복 결제 여부는 사용자가 다시 찾아야 합니다.
+SpendTrack은 이 문제를 **"결제 건을 기록하는 앱"이 아니라 "구매 상품 단위로 소비를 이해하는 앱"**으로 정의했습니다. 사용자는 주문 캡처나 카드 명세서를 올리고, 시스템이 만든 초안을 검수한 뒤, 월별 소비 흐름과 반복 지출을 확인할 수 있습니다.
 
-SpendTrack은 이 문제를 **"결제 건"이 아니라 "구매 상품"을 기준으로 소비를 기록하는 문제**로 정의했습니다. 사용자는 주문 화면 캡처나 카드 CSV를 올리고, OCR/AI가 만든 초안을 확인한 뒤, 한 달 소비 패턴을 대시보드에서 확인합니다.
+## 핵심 기능
 
-## 2. 채용 관점 핵심 요약
-
-| 평가 포인트 | 구현 내용 |
+| 사용자 흐름 | 구현 내용 |
 | --- | --- |
-| 문제 정의 | 카드 명세서의 결제 단위를 상품 단위 소비 데이터로 재구성 |
-| 사용자 경험 | 업로드 → OCR 분석 → 수정/중복 확인 → 저장 → 분석 대시보드 |
-| 기술 난이도 | OCR 전처리, 플랫폼 감지, 품질 게이트, AI 보정, CSV/XLSX 파싱, 중복 병합 |
-| 운영 경험 | Firebase Hosting, Auth, Firestore, Functions, GitHub Actions 자동 배포 |
-| 보안 의식 | Gemini API 키를 프론트 번들에 노출하지 않고 Firebase Functions secret으로 관리 |
-| 유지보수성 | 입력 경로별 로직을 분리하면서도 거래 저장/중복 판정 기준은 공통 유틸로 일원화 |
+| 주문 캡처 분석 | 쿠팡·네이버쇼핑 주문 캡처에서 날짜, 상품명, 금액, 주문 상태를 추출합니다. |
+| AI 보정 | OCR 품질이 낮은 상품 카드만 Gemini Vision 보정 경로로 보내 비용과 응답 지연을 줄입니다. |
+| 카드 명세서 업로드 | CSV/XLSX 파일의 날짜, 금액, 결제처, 상태, 카테고리 헤더를 정규화합니다. |
+| 직접 입력 | OCR/CSV로 잡히지 않는 지출을 상품 단위로 등록하고 필수값, 금액, 중복 여부를 확인합니다. |
+| 중복 병합 | 수동 입력, OCR 저장, CSV 업로드에서 들어온 거래를 공통 기준으로 비교해 중복 저장을 줄입니다. |
+| 소비 분석 | 월별 지출, 플랫폼 비중, 카테고리 지출, 반복 결제 후보, 주간 소비 패턴을 보여줍니다. |
 
-## 3. 주요 기능
+## 화면 미리보기
 
-### OCR 주문 캡처 분석
-
-- 쿠팡·네이버쇼핑 주문 캡처를 업로드하면 날짜, 상품명, 금액, 주문 상태를 추출합니다.
-- `tesseract.js` 기반 1차 OCR 이후, 품질이 낮은 카드만 Gemini Vision 보정 대상으로 보냅니다.
-- 긴 상품명 잘림, 가격 누락, 취소/반품 상태 오인식 같은 케이스를 `ocrQuality`, `ocrCorrection`, `ocrTruncation` 계층에서 보정합니다.
-
-### 카드 명세서 CSV/XLSX 업로드
-
-- 카드사 거래내역을 CSV 또는 XLSX로 업로드해 한 달치 소비를 빠르게 반영합니다.
-- 날짜, 금액, 결제처, 상태, 카테고리 헤더를 정규화해 다양한 파일 포맷을 처리합니다.
-- 이미 저장된 거래와 충돌하면 exact duplicate / item diff를 나누어 병합 또는 건너뛰기를 지원합니다.
-
-### 수동 입력과 빠른 추가
-
-- OCR/CSV로 잡히지 않는 현금성 지출이나 직접 입력 항목을 상품 단위로 등록합니다.
-- 필수값 검증, 오류 필드 포커스 이동, 중복 경고를 통해 입력 실수를 줄입니다.
-
-### 소비 분석 대시보드
-
-- 월별 총 지출, 수입, 평균 주문 금액, 플랫폼별 소비 비중을 보여줍니다.
-- 카테고리별 지출, 반복 결제 후보, 주간 소비 패턴을 계산합니다.
-- 넷플릭스, 유튜브 프리미엄, 통신 자동납부처럼 반복성이 높은 항목은 정기결제 흐름으로 분리합니다.
-
-### 사용자 계정과 동기화
-
-- Firebase Auth로 로그인/회원가입/비밀번호 재설정을 처리합니다.
-- Firestore에 사용자별 거래, 카테고리, 프로필, AI 인사이트 캐시를 분리 저장합니다.
-- 로컬 상태와 Firestore 동기화를 분리해 오프라인성 UX와 원격 저장을 함께 고려했습니다.
-
-## 4. 서비스 화면
-
-| 홈 대시보드 | 입력 방식 선택 |
+| 랜딩 | 입력 방식 선택 |
 | --- | --- |
-| ![SpendTrack home dashboard](docs/assets/readme/spendtrack-app-home.png) | ![SpendTrack input methods](docs/assets/readme/spendtrack-app-upload.png) |
+| ![SpendTrack 랜딩 화면](docs/assets/readme/spendtrack-landing-desktop.png) | ![SpendTrack 입력 방식 선택](docs/assets/readme/spendtrack-app-upload.png) |
 
 | 거래 내역 | 소비 분석 |
 | --- | --- |
-| ![SpendTrack transactions](docs/assets/readme/spendtrack-app-transactions.png) | ![SpendTrack analysis](docs/assets/readme/spendtrack-app-analysis.png) |
+| ![SpendTrack 거래 내역](docs/assets/readme/spendtrack-app-transactions.png) | ![SpendTrack 소비 분석](docs/assets/readme/spendtrack-app-analysis.png) |
 
-서비스 화면은 로그인 이후 실제 사용자가 보는 주요 흐름을 기준으로 구성했습니다. 홈에서는 월별 지출·수입·플랫폼 비중을 요약하고, 입력 화면에서는 주문 캡처·수동 입력·카드 내역 업로드 중 하나를 선택합니다. 저장된 데이터는 거래 내역에서 검수·검색·필터링할 수 있고, 분석 화면에서는 플랫폼/카테고리별 소비와 반복결제 후보를 확인할 수 있습니다.
-
-## 5. 사용자 플로우
+## 사용자 흐름
 
 ```mermaid
 flowchart LR
-  A["주문 캡처 / 카드 CSV / 수동 입력"] --> B["파싱 및 OCR 분석"]
+  A["주문 캡처 / 카드 CSV / 직접 입력"] --> B["파싱 및 OCR 분석"]
   B --> C["품질 게이트"]
   C -->|정상| D["편집 가능한 초안"]
   C -->|불확실| E["Gemini Vision 보정"]
@@ -92,56 +72,59 @@ flowchart LR
   G --> H["홈 / 거래 / 분석 / 반복결제 화면"]
 ```
 
-## 6. 기술 스택
-
-| 영역 | 기술 |
-| --- | --- |
-| Frontend | React 19, TypeScript, Vite 8, React Router DOM |
-| Styling | styled-components, design token 기반 색상/간격 관리 |
-| State | Zustand, localStorage hydration, Firebase sync |
-| Chart | Recharts |
-| OCR | tesseract.js, 이미지 전처리, 플랫폼별 parser |
-| AI | Gemini 2.5 Flash via Firebase Functions proxy |
-| File parsing | SheetJS `xlsx`, CSV parser |
-| Backend / Infra | Firebase Auth, Firestore, Functions, Hosting |
-| CI/CD | GitHub Actions → Firebase Hosting production deploy + PR preview |
-
-## 7. 구현 깊이
-
-### OCR 파이프라인
+## 시스템 구조
 
 ```mermaid
-flowchart TD
-  A["이미지 업로드"] --> B["전처리: 리사이즈 / 대비 / OCR 친화 캔버스"]
-  B --> C["Tesseract OCR"]
-  C --> D["플랫폼 감지: 쿠팡 / 네이버쇼핑 / fallback"]
-  D --> E["주문/상품 parser"]
-  E --> F["OCR 보정: 날짜, 가격, 상태, 상품명"]
-  F --> G["품질 평가 pickBadProducts"]
-  G -->|bad 없음| I["편집 화면"]
-  G -->|bad 있음| H["Gemini Vision fallback"]
-  H --> I
+flowchart TB
+  User["사용자"] --> App["React + Vite SPA"]
+  App --> Auth["Firebase Auth"]
+  App --> Store["Zustand Store"]
+  Store --> Firestore["Firestore"]
+  App --> OCR["Tesseract OCR + 전처리"]
+  OCR --> Parser["플랫폼별 Parser"]
+  Parser --> Quality["품질 평가"]
+  Quality -->|보정 필요| Fn["Firebase Functions"]
+  Fn --> Gemini["Gemini 2.5 Flash"]
+  Quality -->|충분함| Draft["사용자 검수 화면"]
+  Gemini --> Draft
+  Draft --> Merge["중복 판정 / 병합"]
+  Merge --> Firestore
 ```
 
-핵심은 AI를 무조건 호출하지 않는 것입니다. OCR 결과가 충분히 구조화되면 그대로 편집 화면으로 보내고, 가격 누락·날짜 결측·상품명 신뢰도 저하처럼 사용자가 직접 고치기 어려운 카드만 AI 보정 경로로 보냅니다. 이 구조는 비용, 응답 시간, API 장애 리스크를 함께 낮춥니다.
+## 기술 스택과 선택 이유
 
-### 중복 판정과 병합
+| 영역 | 기술 | 선택 이유 |
+| --- | --- | --- |
+| Frontend | React 19, TypeScript, Vite 8 | 입력 화면이 많고 상태 분기가 복잡해 컴포넌트 단위로 화면을 나누고 타입으로 거래 구조를 고정했습니다. |
+| Routing | React Router DOM 7 | 로그인 전 랜딩, 인증 화면, 보호 라우트를 한 SPA 안에서 분리했습니다. |
+| State | Zustand | OCR 초안, 거래 목록, 사용자 프로필처럼 페이지를 오가는 상태를 가볍게 공유했습니다. |
+| Styling | styled-components, design token | 대시보드와 입력 폼에서 색상, 간격, 카드 스타일을 일관되게 유지했습니다. |
+| Chart | Recharts | 월별 추이, 플랫폼 비중, 카테고리 지출을 빠르게 시각화했습니다. |
+| OCR | tesseract.js, canvas 전처리 | 쇼핑몰 캡처 이미지를 브라우저에서 먼저 분석해 AI 호출 전 기본 구조를 확보했습니다. |
+| AI | Gemini 2.5 Flash, Firebase Functions proxy | API 키를 브라우저 번들에 넣지 않고 서버 함수의 secret으로 관리했습니다. |
+| File parsing | SheetJS `xlsx`, CSV parser | 카드사 명세서의 CSV/XLSX 포맷을 모두 받을 수 있게 했습니다. |
+| Infra | Firebase Hosting, Auth, Firestore, Functions | 인증, 사용자별 데이터 저장, 정적 배포, AI 프록시를 한 프로젝트에서 관리했습니다. |
+| CI/CD | GitHub Actions | `main` 배포와 PR 미리보기 빌드를 Firebase Hosting 기준으로 자동화했습니다. |
 
-수동 입력, OCR 저장, CSV 업로드, 거래 수정은 모두 다른 화면에서 들어오지만 최종 데이터는 하나의 거래 목록입니다. 그래서 중복 판정은 `duplicateCheck.ts`, 데이터 보강은 `mergeEnrichment.ts`, 거래 CRUD는 `transactionsStore.ts`로 모았습니다.
+## 주요 설계 판단
 
-중복은 단순히 "같은 날짜 + 같은 금액"으로만 처리하지 않고, 결제처/상품명/상태 차이를 비교해 다음처럼 나눕니다.
+### OCR 결과를 바로 저장하지 않고 검수 화면을 둔 이유
 
-- **Exact duplicate**: 같은 거래로 보고 저장을 건너뜀
-- **Item diff**: 기존 거래에 없는 상품 정보가 있으면 병합 후보로 제안
-- **Manual review**: 자동 판단이 위험하면 사용자가 확인
+OCR은 상품명 줄바꿈, 취소/반품 상태, 가격 누락에서 오인식이 생길 수 있습니다. 그래서 분석 결과를 곧바로 저장하지 않고 `OcrEdit` 화면에서 사용자가 상품 단위로 확인한 뒤 저장하게 했습니다. 자동화보다 데이터 신뢰도를 우선한 판단입니다.
 
-### 보안과 운영
+### AI를 전체 이미지가 아니라 문제 상품에만 쓰는 이유
 
-Gemini API 키는 프론트엔드 환경 변수로 넣지 않습니다. 클라이언트는 Firebase callable function만 호출하고, Functions가 secret(`GEMINI_API_KEY`)을 읽어 Gemini API로 프록시합니다. 이 구조로 브라우저 번들에 키가 노출되는 문제를 피했습니다.
+모든 캡처를 AI로 보내면 비용과 응답 시간이 커지고, API 장애가 곧바로 핵심 흐름 장애가 됩니다. SpendTrack은 `ocrQuality`, `ocrCorrection`, `ocrTruncation` 계층에서 먼저 보정하고, 그래도 불확실한 상품만 Gemini 보정 대상으로 보냅니다.
 
-Firebase Hosting은 `dist`를 배포하고, Vite의 `public` 폴더에 둔 `presentation.html`도 함께 복사됩니다. 그래서 발표자료는 별도 서버 없이 `/presentation.html`로 바로 열립니다.
+### 입력 경로는 나누고 저장 기준은 합친 이유
 
-## 8. 프로젝트 구조
+OCR, CSV, 직접 입력은 화면과 파싱 방식이 다르지만 최종적으로는 같은 거래 목록에 저장됩니다. 그래서 중복 판정은 `duplicateCheck.ts`, 데이터 보강은 `mergeEnrichment.ts`, 거래 상태 관리는 `transactionsStore.ts` 중심으로 모아 입력 경로가 늘어도 저장 기준이 흔들리지 않게 했습니다.
+
+### 운영 키를 클라이언트에 두지 않은 이유
+
+Gemini API 키는 Vite 환경 변수로 주입하지 않고 Firebase Functions secret(`GEMINI_API_KEY`)으로 관리합니다. 클라이언트는 callable function만 호출하고, Functions가 Gemini API 요청을 대신 보내 브라우저 번들에 키가 노출되는 위험을 줄였습니다.
+
+## 프로젝트 구조
 
 ```text
 src/
@@ -153,6 +136,7 @@ src/
   pages/
     Landing/                      # 비로그인 랜딩
     Home/                         # 월간 요약
+    Upload/                       # 입력 방식 선택
     OcrUpload/                    # 이미지 업로드 및 OCR 분석
     OcrEdit/                      # OCR 결과 검수/수정/저장
     CsvUpload/                    # 카드 CSV/XLSX 업로드
@@ -165,34 +149,69 @@ src/
   utils/                          # OCR, CSV, 중복, 카테고리, 정규화 로직
 
 functions/
-  src/index.ts                    # Firebase Functions, Gemini proxy, account safety
+  src/index.ts                    # Gemini proxy, 계정 삭제 유예, 닉네임 변경 제한
 
 public/
-  presentation.html               # 최종 발표자료, 배포 후 /presentation.html
-  samples/                        # CSV/XLSX 샘플 파일
+  presentation.html               # 최종 발표자료
+  samples/                        # CSV/XLSX 업로드 검증용 샘플 데이터
 ```
 
-## 9. 라우트 맵
+## 라우트 맵
 
 | Route | 설명 |
 | --- | --- |
 | `/` | 로그인 상태면 홈, 비로그인이면 랜딩 |
 | `/login`, `/register`, `/forgot-password` | 인증 화면 |
-| `/upload` | 업로드 방식 선택 |
+| `/upload` | 입력 방식 선택 |
 | `/ocr-upload` | 주문 캡처 업로드 |
 | `/ocr-edit` | OCR 결과 편집 및 저장 |
 | `/csv-upload` | 카드 명세서 CSV/XLSX 업로드 |
-| `/manual-entry` | 수동 소비 입력 |
-| `/transactions` | 거래 목록/검색/필터/상세/수정 |
+| `/manual-entry` | 직접 소비 입력 |
+| `/transactions` | 거래 목록, 검색, 필터, 상세, 수정 |
 | `/analysis` | 월간 소비 분석 |
 | `/subscriptions` | 반복결제 관리 |
 | `/settings` | 프로필, 카테고리, 계정 설정 |
-| `/terms`, `/privacy` | 약관/개인정보 처리방침 |
+| `/terms`, `/privacy` | 약관, 개인정보 처리방침 |
 
-## 10. 실행 방법
+## 문제 해결 기록
+
+| 문제 | 원인/시도 | 해결 |
+| --- | --- | --- |
+| 첫 방문 사용자가 `/`에서 바로 로그인 화면으로 이동 | 루트 라우트가 보호 라우트처럼 동작해 서비스 설명을 보기 전에 인증 흐름으로 넘어감 | 로그인 흔적이 없으면 랜딩을 즉시 보여주고, 저장된 Firebase Auth 토큰이 있을 때만 세션 확인 화면을 노출 |
+| 주문 캡처 OCR 결과의 상품명·가격 일부 누락 | 쇼핑몰 캡처의 긴 상품명, 작은 가격 텍스트, 취소/반품 문구가 OCR 신뢰도를 낮춤 | 플랫폼 감지, 상품별 품질 평가, 상품명 잘림 보정, AI fallback을 단계적으로 적용 |
+| 카드 CSV/XLSX의 카드사별 헤더 차이 | 파일마다 날짜, 금액, 결제처, 승인 상태 컬럼명이 달라 단일 parser로 처리하기 어려움 | 헤더 정규화와 샘플 파일을 두고, 자동 매핑이 실패한 행은 보정 경로로 분리 |
+| Gemini API 키 노출 위험 | 프론트엔드 환경 변수에 키를 넣으면 빌드 산출물에서 노출될 수 있음 | Firebase Functions callable proxy와 secret 기반 키 관리를 적용 |
+
+## 배포와 CI/CD
+
+```mermaid
+flowchart LR
+  A["main push"] --> B["npm ci"]
+  B --> C["npm run build"]
+  C --> D["Firebase Hosting live deploy"]
+  D --> E["Firestore rules deploy"]
+  E --> F["spend-track.net / spendtrack.web.app"]
+```
+
+- `main` 브랜치 push 시 Firebase Hosting live 채널로 배포합니다.
+- PR 생성/갱신 시 Firebase Hosting preview 채널을 7일 만료 URL로 생성합니다.
+- `firebase.json`에서 SPA fallback과 정적 자산 캐시 헤더를 설정했습니다.
+- Functions 배포는 `functions/package.json`의 별도 스크립트로 분리되어 있습니다.
+
+## 검증한 항목
+
+| 항목 | 확인 내용 |
+| --- | --- |
+| 운영 도메인 | 2026-06-18 기준 `https://spend-track.net` HTTP 200 응답 확인 |
+| Production build | 2026-06-18 기준 `npm run build` 통과 |
+| 화면 자산 | README에 사용하는 랜딩, 홈, 입력, 거래, 분석 스크린샷 파일 존재 확인 |
+| 샘플 데이터 | CSV/XLSX 업로드 검증용 샘플 파일 제공 |
+| CI 설정 | Firebase Hosting live 배포와 PR preview workflow 존재 확인 |
+| 보안 구조 | Gemini API 키를 Functions secret으로 읽는 callable proxy 구조 확인 |
+
+## 로컬 실행
 
 ```bash
-# Node.js 20.19+ 또는 22.12+ 필요
 npm install
 npm run dev
 ```
@@ -203,48 +222,34 @@ npm run analyze    # dist/bundle-stats.html 생성
 npm run lint       # ESLint
 ```
 
-환경 변수는 `.env.local`에만 작성합니다. `.env*` 파일과 API 키는 커밋하지 않습니다.
+Node.js는 `package.json` 기준 `20.19+` 또는 `22.12+`가 필요합니다. Firebase와 Gemini 연동 값은 `.env.local`과 Firebase secret으로 관리하며, `.env*` 파일과 API 키는 커밋하지 않습니다.
 
-## 11. 배포와 CI/CD
-
-`main`에 push되면 GitHub Actions가 다음 순서로 배포합니다.
-
-```mermaid
-flowchart LR
-  A["main push"] --> B["npm install"]
-  B --> C["npm run build"]
-  C --> D["Firebase Hosting deploy"]
-  D --> E["Firestore rules deploy"]
-  E --> F["spend-track.net / spendtrack.web.app"]
-```
-
-PR은 Firebase Hosting preview workflow로 임시 URL을 생성하도록 구성되어 있습니다.
-
-## 12. 검증한 항목
-
-- TypeScript production build 통과
-- Vite build 산출물 생성
-- Firebase Hosting 배포 확인
-- `/presentation.html` 정적 파일 접근 확인
-- 데스크톱/모바일 랜딩 화면 캡처 확인
-
-## 13. 팀과 역할
+## 팀과 역할
 
 | 이름 | 역할 |
 | --- | --- |
 | 송정현 | Lead, 서비스 구조, OCR/AI 파이프라인, Firebase 배포, README/포트폴리오 정리 |
 | 이효도 | QA, 사용자 시나리오 검증, 발표 흐름 점검 |
 
-개발 과정에서 Claude, Cowork, Claude Design, Codex를 AI 협업 도구로 활용했습니다. 단순 코드 생성이 아니라 요구사항 정리, UI 개선, OCR 예외 케이스 정리, README 문서화에 보조 도구로 사용했습니다.
+개발 과정에서 Claude, Cowork, Claude Design, Codex를 요구사항 정리, UI 개선, OCR 예외 케이스 정리, 문서화 보조 도구로 활용했습니다.
 
-## 14. 산출물
+## 회고와 다음 개선
 
-| 구분 | 링크 | 설명 |
-| --- | --- | --- |
-| 운영 서비스 | https://spend-track.net | Cloudflare DNS를 연결한 실제 서비스 도메인 |
-| Firebase 배포 주소 | https://spendtrack.web.app | Firebase Hosting 기본 배포 주소 |
-| 최종 발표자료 | https://spendtrack.web.app/presentation.html | `public/presentation.html`이 배포된 공개 발표자료 |
-| GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker | 소스 코드, README, 샘플 파일, 배포 설정 |
-| 샘플 파일 | [public/samples](public/samples) | CSV/XLSX 업로드 검증용 샘플 데이터 |
+### 좋았던 점
 
-발표자료는 Vite `public` 폴더에 포함되어 CI/CD 배포 시 자동으로 `dist/presentation.html`로 복사됩니다.
+- 결제 내역을 상품 단위로 풀어내는 문제를 잡으면서 일반 가계부와 다른 사용 시나리오를 만들 수 있었습니다.
+- OCR, CSV, 직접 입력을 모두 받되 최종 저장 기준을 통일해 데이터 품질을 관리했습니다.
+- AI 호출을 품질 게이트 뒤에 배치해 비용과 장애 영향을 줄이는 구조를 실험했습니다.
+
+### 아쉬운 점
+
+- 쇼핑몰 캡처 UI가 바뀌면 parser 보정이 추가로 필요합니다.
+- 카드사별 CSV/XLSX 포맷을 더 많이 확보하면 자동 매핑 신뢰도를 높일 수 있습니다.
+- 현재 README에는 수동 QA 중심 검증이 많아, 핵심 유틸 단위 테스트를 더 보강할 여지가 있습니다.
+
+### 다음 개선 후보
+
+- OCR parser와 중복 판정 유틸의 단위 테스트 추가
+- 카드사 샘플 포맷 확대
+- 반복결제 후보 탐지 기준 고도화
+- 모바일 업로드 플로우 QA 보강
