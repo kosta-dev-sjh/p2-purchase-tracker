@@ -10,7 +10,7 @@
 
 ![SpendTrack 홈 대시보드](docs/assets/readme/spendtrack-app-home.png)
 
-## 프로젝트 한눈에 보기
+## 🧭 프로젝트 한눈에 보기
 
 | 구분 | 내용 |
 | --- | --- |
@@ -21,7 +21,7 @@
 | 배포 | Firebase Hosting + Cloudflare DNS |
 | 검증 상태 | 2026-06-18 기준 운영 도메인 HTTP 200, production build 통과 |
 
-## 바로가기
+## 🔗 주요 링크
 
 | 구분 | 링크 |
 | --- | --- |
@@ -31,13 +31,13 @@
 | GitHub Repository | https://github.com/kosta-dev-sjh/p2-purchase-tracker |
 | 샘플 파일 | [public/samples](public/samples) |
 
-## 왜 만들었나
+## 💡 왜 만들었나
 
 온라인 쇼핑 결제 내역은 빠르게 쌓이지만, 카드 명세서에는 보통 `네이버페이 35,000원`, `쿠팡 128,400원`처럼 결제처와 총액만 남습니다. 실제로 어떤 상품을 샀는지, 일부 상품이 취소됐는지, 반복 결제인지 확인하려면 사용자가 쇼핑몰 주문 내역을 다시 찾아야 합니다.
 
 SpendTrack은 이 문제를 **"결제 건을 기록하는 앱"이 아니라 "구매 상품 단위로 소비를 이해하는 앱"**으로 정의했습니다. 사용자는 주문 캡처나 카드 명세서를 올리고, 시스템이 만든 초안을 검수한 뒤, 월별 소비 흐름과 반복 지출을 확인할 수 있습니다.
 
-## 핵심 기능
+## ✨ 핵심 기능
 
 | 사용자 흐름 | 구현 내용 |
 | --- | --- |
@@ -48,7 +48,7 @@ SpendTrack은 이 문제를 **"결제 건을 기록하는 앱"이 아니라 "구
 | 중복 병합 | 수동 입력, OCR 저장, CSV 업로드에서 들어온 거래를 공통 기준으로 비교해 중복 저장을 줄입니다. |
 | 소비 분석 | 월별 지출, 플랫폼 비중, 카테고리 지출, 반복 결제 후보, 주간 소비 패턴을 보여줍니다. |
 
-## 화면 미리보기
+## 🖼️ 화면 미리보기
 
 | 랜딩 | 입력 방식 선택 |
 | --- | --- |
@@ -58,7 +58,7 @@ SpendTrack은 이 문제를 **"결제 건을 기록하는 앱"이 아니라 "구
 | --- | --- |
 | ![SpendTrack 거래 내역](docs/assets/readme/spendtrack-app-transactions.png) | ![SpendTrack 소비 분석](docs/assets/readme/spendtrack-app-analysis.png) |
 
-## 사용자 흐름
+## 🧭 사용자 흐름
 
 ```mermaid
 flowchart LR
@@ -72,7 +72,7 @@ flowchart LR
   G --> H["홈 / 거래 / 분석 / 반복결제 화면"]
 ```
 
-## 시스템 구조
+## 🏗️ 시스템 구조
 
 ```mermaid
 flowchart TB
@@ -91,7 +91,7 @@ flowchart TB
   Merge --> Firestore
 ```
 
-## 기술 스택과 선택 이유
+## 🛠️ 기술 스택과 선택 이유
 
 | 영역 | 기술 | 선택 이유 |
 | --- | --- | --- |
@@ -106,7 +106,7 @@ flowchart TB
 | Infra | Firebase Hosting, Auth, Firestore, Functions | 인증, 사용자별 데이터 저장, 정적 배포, AI 프록시를 한 프로젝트에서 관리했습니다. |
 | CI/CD | GitHub Actions | `main` 배포와 PR 미리보기 빌드를 Firebase Hosting 기준으로 자동화했습니다. |
 
-## 주요 설계 판단
+## 🎯 주요 설계 판단
 
 ### OCR 결과를 바로 저장하지 않고 검수 화면을 둔 이유
 
@@ -124,7 +124,7 @@ OCR, CSV, 직접 입력은 화면과 파싱 방식이 다르지만 최종적으�
 
 Gemini API 키는 Vite 환경 변수로 주입하지 않고 Firebase Functions secret(`GEMINI_API_KEY`)으로 관리합니다. 클라이언트는 callable function만 호출하고, Functions가 Gemini API 요청을 대신 보내 브라우저 번들에 키가 노출되는 위험을 줄였습니다.
 
-## 프로젝트 구조
+## 📁 프로젝트 구조
 
 ```text
 src/
@@ -156,7 +156,7 @@ public/
   samples/                        # CSV/XLSX 업로드 검증용 샘플 데이터
 ```
 
-## 라우트 맵
+## 🗺️ 라우트 맵
 
 | Route | 설명 |
 | --- | --- |
@@ -173,7 +173,7 @@ public/
 | `/settings` | 프로필, 카테고리, 계정 설정 |
 | `/terms`, `/privacy` | 약관, 개인정보 처리방침 |
 
-## 문제 해결 기록
+## 🔧 문제 해결 기록
 
 | 문제 | 원인/시도 | 해결 |
 | --- | --- | --- |
@@ -182,7 +182,7 @@ public/
 | 카드 CSV/XLSX의 카드사별 헤더 차이 | 파일마다 날짜, 금액, 결제처, 승인 상태 컬럼명이 달라 단일 parser로 처리하기 어려움 | 헤더 정규화와 샘플 파일을 두고, 자동 매핑이 실패한 행은 보정 경로로 분리 |
 | Gemini API 키 노출 위험 | 프론트엔드 환경 변수에 키를 넣으면 빌드 산출물에서 노출될 수 있음 | Firebase Functions callable proxy와 secret 기반 키 관리를 적용 |
 
-## 배포와 CI/CD
+## 🚢 배포와 CI/CD
 
 ```mermaid
 flowchart LR
@@ -198,7 +198,7 @@ flowchart LR
 - `firebase.json`에서 SPA fallback과 정적 자산 캐시 헤더를 설정했습니다.
 - Functions 배포는 `functions/package.json`의 별도 스크립트로 분리되어 있습니다.
 
-## 검증한 항목
+## ✅ 검증한 항목
 
 | 항목 | 확인 내용 |
 | --- | --- |
@@ -209,7 +209,7 @@ flowchart LR
 | CI 설정 | Firebase Hosting live 배포와 PR preview workflow 존재 확인 |
 | 보안 구조 | Gemini API 키를 Functions secret으로 읽는 callable proxy 구조 확인 |
 
-## 로컬 실행
+## 🚀 로컬 실행
 
 ```bash
 npm install
@@ -224,7 +224,7 @@ npm run lint       # ESLint
 
 Node.js는 `package.json` 기준 `20.19+` 또는 `22.12+`가 필요합니다. Firebase와 Gemini 연동 값은 `.env.local`과 Firebase secret으로 관리하며, `.env*` 파일과 API 키는 커밋하지 않습니다.
 
-## 팀과 역할
+## 👥 팀과 역할
 
 | 이름 | 역할 |
 | --- | --- |
@@ -233,7 +233,7 @@ Node.js는 `package.json` 기준 `20.19+` 또는 `22.12+`가 필요합니다. Fi
 
 개발 과정에서 Claude, Cowork, Claude Design, Codex를 요구사항 정리, UI 개선, OCR 예외 케이스 정리, 문서화 보조 도구로 활용했습니다.
 
-## 회고와 다음 개선
+## 🧩 회고와 다음 개선
 
 ### 좋았던 점
 
